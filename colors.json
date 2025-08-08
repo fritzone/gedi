@@ -1,0 +1,80 @@
+{
+    "Obsidian": {
+        "ui": {
+            "default": { "fg": "brightcyan", "bg": "black" },
+            "highlight": { "fg": "black", "bg": "brightcyan" },
+            "menu_bar": { "fg": "brightwhite", "bg": "blue" },
+            "menu_item": { "fg": "brightwhite", "bg": "blue" },
+            "menu_selected": { "fg": "black", "bg": "brightcyan" },
+            "list_box": { "fg": "brightcyan", "bg": "blue" },
+            "dialog": { "fg": "brightwhite", "bg": "blue" },
+            "dialog_button": { "fg": "black", "bg": "brightcyan" },
+            "dialog_title": { "fg": "brightyellow", "bg": "blue", "bold": true },
+            "selection": { "fg": "black", "bg": "brightyellow" },
+            "status_bar": { "fg": "black", "bg": "brightcyan" },
+            "status_bar_highlight": { "fg": "brightred", "bg": "brightcyan" },
+            "shadow": { "fg": "brightblack", "bg": "black" },
+            "changed_indicator": { "fg": "brightgreen", "bg": "black", "bold": true }
+        },
+        "syntax": {
+            "keyword": { "fg": "magenta", "bg": "black", "bold": true },
+            "comment": { "fg": "brightblue", "bg": "black" },
+            "string": { "fg": "brightgreen", "bg": "black" },
+            "number": { "fg": "brightred", "bg": "black" },
+            "preprocessor": { "fg": "brightyellow", "bg": "black" },
+            "register_variable": { "fg": "brightcyan", "bg": "black" }
+        }
+    },
+    "Borland Classic": {
+        "ui": {
+            "default": { "fg": "brightyellow", "bg": "blue" },
+            "highlight": { "fg": "black", "bg": "white" },
+            "menu_bar": { "fg": "black", "bg": "white" },
+            "menu_item": { "fg": "black", "bg": "white" },
+            "menu_selected": { "fg": "brightcyan", "bg": "black" },
+            "list_box": { "fg": "brightcyan", "bg": "blue" },
+            "dialog": { "fg": "black", "bg": "brightwhite" },
+            "dialog_button": { "fg": "brightyellow", "bg": "blue" },
+            "dialog_title": { "fg": "brightwhite", "bg": "blue", "bold": true },
+            "selection": { "fg": "brightwhite", "bg": "black" },
+            "status_bar": { "fg": "black", "bg": "brightcyan" },
+            "status_bar_highlight": { "fg": "brightred", "bg": "brightcyan" },
+            "shadow": { "fg": "brightblack", "bg": "black" },
+            "changed_indicator": { "fg": "brightwhite", "bg": "blue", "bold": true }
+        },
+        "syntax": {
+            "keyword": { "fg": "brightwhite", "bg": "blue", "bold": true },
+            "comment": { "fg": "brightcyan", "bg": "blue" },
+            "string": { "fg": "brightyellow", "bg": "blue" },
+            "number": { "fg": "brightyellow", "bg": "blue" },
+            "preprocessor": { "fg": "brightgreen", "bg": "blue" },
+            "register_variable": { "fg": "brightred", "bg": "blue" }
+        }
+    },
+    "Solarized Light": {
+        "ui": {
+            "default": { "fg": "blue", "bg": "brightwhite" },
+            "highlight": { "fg": "black", "bg": "brightyellow" },
+            "menu_bar": { "fg": "blue", "bg": "brightcyan" },
+            "menu_item": { "fg": "blue", "bg": "brightcyan" },
+            "menu_selected": { "fg": "brightwhite", "bg": "blue" },
+            "list_box": { "fg": "brightcyan", "bg": "blue" },
+            "dialog": { "fg": "blue", "bg": "brightcyan" },
+            "dialog_button": { "fg": "brightwhite", "bg": "blue" },
+            "dialog_title": { "fg": "brightred", "bg": "brightcyan", "bold": true },
+            "selection": { "fg": "brightwhite", "bg": "blue" },
+            "status_bar": { "fg": "blue", "bg": "brightcyan" },
+            "status_bar_highlight": { "fg": "brightred", "bg": "brightcyan" },
+            "shadow": { "fg": "brightblack", "bg": "black" },
+            "changed_indicator": { "fg": "green", "bg": "brightwhite", "bold": true }
+        },
+        "syntax": {
+            "keyword": { "fg": "brightgreen", "bg": "brightwhite" },
+            "comment": { "fg": "brightcyan", "bg": "brightwhite" },
+            "string": { "fg": "brightblue", "bg": "brightwhite" },
+            "number": { "fg": "brightmagenta", "bg": "brightwhite" },
+            "preprocessor": { "fg": "brightred", "bg": "brightwhite" },
+            "register_variable": { "fg": "brightgreen", "bg": "brightwhite" }
+        }
+    }
+}
