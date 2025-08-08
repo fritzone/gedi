@@ -1,5 +1,6 @@
 {
     "color_scheme": "Borland Classic",
     "indentation_width": 4,
+    "show_line_numbers": true,
     "smart_indentation": true
 }

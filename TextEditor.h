@@ -42,8 +42,9 @@ private:
 
     // --- Global state ---
     std::unique_ptr<Renderer> m_renderer;
-    bool m_smart_indentation = true; // Default setting
-    int m_indentation_width = 4; // Default indentation width in spaces
+    bool m_smart_indentation = true;
+    int m_indentation_width = 4;
+    bool m_show_line_numbers = true;
     std::vector<std::string> m_clipboard;
     json m_themes_data;
     std::string m_color_scheme_name = "Obsidian";
@@ -58,11 +59,12 @@ private:
     bool m_compile_output_visible = false;
     std::vector<CompileMessage> m_compile_output_lines;
     int m_compile_output_scroll_pos = 0;
-    int m_compile_output_cursor_pos = 0; // Tracks the selected message
-    ViewState m_pre_compile_view_state; // To restore view on ESC
+    int m_compile_output_cursor_pos = 0;
+    ViewState m_pre_compile_view_state;
 
     // UI Coordinates
     int m_text_area_start_x = 1, m_text_area_start_y = 2, m_text_area_end_x = 0, m_text_area_end_y = 0;
+    int m_gutter_width = 0;
 
     // --- Menus ---
     const std::vector<std::string> m_menus = {" &File " , " &Edit " , " &Search ", " &View "  , " &Build " , " &Window ", " &Options ", " &Help "  };
@@ -98,6 +100,7 @@ private:
     void insert_line_after(EditorBuffer& buffer, Line* current_p, const std::string& s);
     void process_key(wint_t ch);
     void handle_alt_key(wint_t key);
+    void handleSmartBlockClose(wint_t closing_char);
     void update_cursor_and_scroll();
     void handleResize();
     void ClearSelection();
@@ -116,6 +119,7 @@ private:
     void ActivateReplace();
     void PerformReplace();
     void PerformReplaceAll();
+    void GoToLineDialog();
     void GoToNextWord();
     void GoToPreviousWord();
     void GoToNextParagraph();

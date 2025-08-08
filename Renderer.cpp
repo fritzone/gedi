@@ -6,9 +6,9 @@
 
 #include <fstream>
 
+
 Renderer::Renderer() {
     setlocale(LC_ALL, ""); initscr();
-
 
     cbreak(); noecho();
     keypad(stdscr, TRUE); nodelay(stdscr, TRUE); curs_set(1);
@@ -16,15 +16,13 @@ Renderer::Renderer() {
     getmaxyx(stdscr, m_height, m_width);
     struct termios term;
     if (tcgetattr(STDIN_FILENO, &term) == 0) {
-        term.c_iflag &= ~(IXON | IXOFF); // Disable XON/XOFF flow control
+        term.c_iflag &= ~(IXON | IXOFF);
         tcsetattr(STDIN_FILENO, TCSANOW, &term);
     }
     m_color_map = {
-        // Standard Colors (0-7)
         {"black", COLOR_BLACK}, {"red", COLOR_RED}, {"green", COLOR_GREEN},
         {"yellow", COLOR_YELLOW}, {"blue", COLOR_BLUE}, {"magenta", COLOR_MAGENTA},
         {"cyan", COLOR_CYAN}, {"white", COLOR_WHITE},
-        // Bright Colors (8-15)
         {"brightblack", COLOR_BLACK + 8}, {"brightred", COLOR_RED + 8},
         {"brightgreen", COLOR_GREEN + 8}, {"brightyellow", COLOR_YELLOW + 8},
         {"brightblue", COLOR_BLUE + 8}, {"brightmagenta", COLOR_MAGENTA + 8},
@@ -39,8 +37,47 @@ Renderer::Renderer() {
         {"changed_indicator", CP_CHANGED_INDICATOR}, {"list_box", CP_LIST_BOX},
         {"keyword", CP_SYNTAX_KEYWORD}, {"comment", CP_SYNTAX_COMMENT},
         {"string", CP_SYNTAX_STRING}, {"number", CP_SYNTAX_NUMBER}, {"preprocessor", CP_SYNTAX_PREPROCESSOR},
-        {"register_variable", CP_SYNTAX_REGISTER_VAR}
+        {"register_variable", CP_SYNTAX_REGISTER_VAR},
+        // Add new mappings for gutter and buttons
+        {"gutter_bg", CP_GUTTER_BG}, {"gutter_fg", CP_GUTTER_FG},
+        {"button_text", CP_BUTTON_TEXT}, {"button_hotkey", CP_BUTTON_HOTKEY},
+        {"button_selected_text", CP_BUTTON_SELECTED_TEXT}, {"button_selected_hotkey", CP_BUTTON_SELECTED_HOTKEY},
+        {"button_shadow", CP_BUTTON_SHADOW}
     };
+}
+
+void Renderer::loadColors(const json &theme_data) {
+    m_style_attributes.clear();
+
+    auto init_colors_from_json = [&](const json& j) {
+        for (auto const& [key, val] : j.items()) {
+            if (m_color_pair_map.count(key)) {
+                int pair_id = m_color_pair_map[key];
+                init_pair(pair_id, m_color_map[val["fg"]], m_color_map[val["bg"]]);
+                if (val.contains("bold") && val["bold"].get<bool>()) {
+                    m_style_attributes[static_cast<ColorPairID>(pair_id)] = A_BOLD;
+                }
+            }
+        }
+    };
+
+    if (theme_data.contains("ui")) init_colors_from_json(theme_data["ui"]);
+    if (theme_data.contains("syntax")) init_colors_from_json(theme_data["syntax"]);
+
+    // Get colors from the theme to create our new composite color pairs
+    short dialog_fg, dialog_bg;
+    pair_content(CP_DIALOG, &dialog_fg, &dialog_bg);
+    short default_fg, default_bg;
+    pair_content(CP_DEFAULT_TEXT, &default_fg, &default_bg);
+    short sel_fg, sel_bg;
+    pair_content(CP_SELECTION, &sel_fg, &sel_bg);
+
+    // Initialize theme-independent colors
+    init_pair(CP_COMPILE_ERROR, COLOR_RED, dialog_bg);
+    init_pair(CP_COMPILE_WARNING, COLOR_YELLOW, dialog_bg);
+
+    // Initialize the new color pair for unselected text on a selected line
+    init_pair(CP_DEFAULT_ON_SELECTION, default_fg, sel_bg);
 }
 
 Renderer::~Renderer() { curs_set(1); endwin(); }
@@ -148,33 +185,45 @@ void Renderer::loadColors() { // This function will now be a wrapper
     loadColors("colors.json"); // Load a default, but this will be overridden
 }
 
-// In Renderer.cpp
-void Renderer::loadColors(const json &theme_data) {
-    m_style_attributes.clear();
+void Renderer::drawButton(int x, int y, const std::string& text, bool selected) {
+    // --- New Shadow Logic ---
+    cchar_t upper_shadow, lower_shadow;
+    setcchar(&upper_shadow, L"▀", WA_NORMAL, CP_BUTTON_SHADOW, NULL);
+    setcchar(&lower_shadow, L"▄", WA_NORMAL, CP_BUTTON_SHADOW, NULL);
 
-    auto init_colors_from_json = [&](const json& j) {
-        for (auto const& [key, val] : j.items()) {
-            if (m_color_pair_map.count(key)) {
-                int pair_id = m_color_pair_map[key];
-                init_pair(pair_id, m_color_map[val["fg"]], m_color_map[val["bg"]]);
-                if (val.contains("bold") && val["bold"].get<bool>()) {
-                    m_style_attributes[static_cast<ColorPairID>(pair_id)] = A_BOLD;
-                }
-            }
+    // Draw the shadow underneath (upper half block character at y+1)
+    for (size_t i = 0; i < text.length(); ++i) {
+        mvwadd_wch(stdscr, y + 1, x + 1 + i, &upper_shadow);
+    }
+    // Draw the shadow to the side (lower half block character at y)
+    mvwadd_wch(stdscr, y, x + text.length(), &lower_shadow);
+
+    // --- Existing Button Drawing Logic ---
+    // Determine colors
+    int text_color = selected ? CP_BUTTON_SELECTED_TEXT : CP_BUTTON_TEXT;
+    int hotkey_color = selected ? CP_BUTTON_SELECTED_HOTKEY : CP_BUTTON_HOTKEY;
+
+    // Draw button background
+    wattron(stdscr, COLOR_PAIR(text_color));
+    mvwaddstr(stdscr, y, x, std::string(text.length(), ' ').c_str());
+    wattroff(stdscr, COLOR_PAIR(text_color));
+
+    // Draw text and hotkey
+    wmove(stdscr, y, x);
+    for (size_t i = 0; i < text.length(); ++i) {
+        if (text[i] == '&' && i + 1 < text.length()) {
+            i++;
+            wattron(stdscr, COLOR_PAIR(hotkey_color) | A_BOLD);
+            waddch(stdscr, text[i]);
+            wattroff(stdscr, COLOR_PAIR(hotkey_color) | A_BOLD);
+        } else {
+            wattron(stdscr, COLOR_PAIR(text_color));
+            waddch(stdscr, text[i]);
+            wattroff(stdscr, COLOR_PAIR(text_color));
         }
-    };
-
-    if (theme_data.contains("ui")) init_colors_from_json(theme_data["ui"]);
-    if (theme_data.contains("syntax")) init_colors_from_json(theme_data["syntax"]);
-
-    // Now that the dialog color is set by the theme, get its background color
-    short dialog_fg, dialog_bg;
-    pair_content(CP_DIALOG, &dialog_fg, &dialog_bg);
-
-    // Initialize theme-independent colors for compile output using the dialog's background
-    init_pair(CP_COMPILE_ERROR, COLOR_RED, dialog_bg);
-    init_pair(CP_COMPILE_WARNING, COLOR_YELLOW, dialog_bg);
+    }
 }
+
 
 void Renderer::createDefaultColorsFile() {
     json j;

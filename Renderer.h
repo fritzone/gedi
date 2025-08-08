@@ -7,6 +7,7 @@ using json = nlohmann::json;
 
 class Renderer {
 public:
+
     enum ColorPairID {
         CP_DEFAULT_TEXT = 1, CP_HIGHLIGHT, CP_MENU_BAR, CP_MENU_ITEM,
         CP_MENU_SELECTED, CP_DIALOG, CP_DIALOG_BUTTON, CP_SELECTION,
@@ -15,8 +16,15 @@ public:
         CP_SYNTAX_KEYWORD, CP_SYNTAX_COMMENT, CP_SYNTAX_STRING,
         CP_SYNTAX_NUMBER, CP_SYNTAX_PREPROCESSOR, CP_SYNTAX_REGISTER_VAR,
 
-        // New theme-independent colors
-        CP_COMPILE_ERROR, CP_COMPILE_WARNING
+        CP_COMPILE_ERROR, CP_COMPILE_WARNING,
+
+        CP_BUTTON_TEXT, CP_BUTTON_HOTKEY,
+        CP_BUTTON_SELECTED_TEXT, CP_BUTTON_SELECTED_HOTKEY,
+        CP_BUTTON_SHADOW,
+
+        CP_DEFAULT_ON_SELECTION,
+
+        CP_GUTTER_BG, CP_GUTTER_FG
     };
 
     enum BoxStyle { SINGLE, DOUBLE };
@@ -31,6 +39,8 @@ public:
     void drawText(int x, int y, const std::string& text, int colorId, int flags = 0);
 
     void drawStyledText(int x, int y, const std::string& text, int colorId);
+
+    void drawButton(int x, int y, const std::string& text, bool selected);
 
     void drawBox(int x, int y, int w, int h, int colorId, BoxStyle style = SINGLE);
 
