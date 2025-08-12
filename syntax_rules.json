@@ -1,0 +1,60 @@
+{
+  "languages": [
+    {
+      "name": "C++",
+      "extensions": [".cpp", ".hpp", ".cxx", ".hxx", ".h", ".c"],
+      "rules": [
+        { "pattern": "//.*", "color": "comment" },
+        { "pattern": "/\\*[\\s\\S]*?\\*/", "color": "comment" },
+        { "pattern": "\"[^\"]*\"", "color": "string" },
+        { "pattern": "'(\\\\.|[^\\\\'])*'", "color": "string" },
+        { "pattern": "#\\s*\\w+", "color": "preprocessor" },
+        { "pattern": "\\b(auto|break|case|char|const|continue|default|do|double|else|enum|extern|float|for|goto|if|int|long|register|return|short|signed|sizeof|static|struct|switch|typedef|union|unsigned|void|volatile|while|class|public|private|protected|new|delete|this|friend|virtual|inline|try|catch|throw|namespace|using|template|typename|true|false|bool|asm|explicit|operator|nullptr)\\b", "color": "keyword" },
+        { "pattern": "\\b(u?int(8|16|32|64)_t|size_t|std::\\w+|string|vector|map|set|list|deque|stack|queue|pair)\\b", "color": "type" },
+        { "pattern": "\\b\\d+(\\.\\d+)?(f|L)?\\b", "color": "number" },
+        { "pattern": "\\b([a-zA-Z_]\\w*)\\s*\\(", "color": "function" }
+      ]
+    },
+    {
+      "name": "Python",
+      "extensions": [".py"],
+      "rules": [
+        { "pattern": "#.*", "color": "comment" },
+        { "pattern": "(\"\"\"|''')[\\s\\S]*?(\"\"\"|''')", "color": "comment" },
+        { "pattern": "\"[^\"]*\"", "color": "string" },
+        { "pattern": "'[^']*'", "color": "string" },
+        { "pattern": "\\b(and|as|assert|break|class|continue|def|del|elif|else|except|False|finally|for|from|global|if|import|in|is|lambda|None|nonlocal|not|or|pass|raise|return|True|try|while|with|yield)\\b", "color": "keyword" },
+        { "pattern": "\\b(int|float|str|list|dict|tuple|set|bool|object)\\b", "color": "type" },
+        { "pattern": "\\b\\d+(\\.\\d+)?\\b", "color": "number" },
+        { "pattern": "\\b([a-zA-Z_]\\w*)\\s*\\(", "color": "function" }
+      ]
+    },
+    {
+        "name": "JavaScript",
+        "extensions": [".js", ".mjs"],
+        "rules": [
+            { "pattern": "//.*", "color": "comment" },
+            { "pattern": "/\\*[\\s\\S]*?\\*/", "color": "comment" },
+            { "pattern": "\"[^\"]*\"", "color": "string" },
+            { "pattern": "'[^']*'", "color": "string" },
+            { "pattern": "`[^`]*`", "color": "string" },
+            { "pattern": "\\b(async|await|break|case|catch|class|const|continue|debugger|default|delete|do|else|export|extends|finally|for|function|if|import|in|instanceof|let|new|return|super|switch|this|throw|try|typeof|var|void|while|with|yield)\\b", "color": "keyword" },
+            { "pattern": "\\b(Array|Boolean|Date|Function|Number|Object|String|Symbol|Promise)\\b", "color": "type" },
+            { "pattern": "\\b\\d+(\\.\\d+)?\\b", "color": "number" },
+            { "pattern": "\\b([a-zA-Z_\\$][\\w\\$]*)\\s*\\(", "color": "function" }
+        ]
+    },
+    {
+        "name": "HTML",
+        "extensions": [".html", ".htm"],
+        "rules": [
+            { "pattern": "<!--[\\s\\S]*?-->", "color": "comment" },
+            { "pattern": "<!DOCTYPE[^>]+>", "color": "preprocessor" },
+            { "pattern": "<\\/?([a-zA-Z0-9]+)", "color": "keyword" },
+            { "pattern": "\\s([a-zA-Z-]+)=", "color": "type" },
+            { "pattern": "\"[^\"]*\"", "color": "string" },
+            { "pattern": "'[^']*'", "color": "string" }
+        ]
+    }
+  ]
+}

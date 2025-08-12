@@ -1,12 +1,25 @@
 #ifndef EDITORBUFFER_H
 #define EDITORBUFFER_H
 
-#include "Line.h"
-#include "UndoRecord.h"
-
 #include <vector>
 #include <string>
 #include <map>
+
+struct Line {
+    std::string text;
+    Line* prev = nullptr;
+    Line* next = nullptr;
+    bool selected = false;
+    int selection_start_col = 0;
+    int selection_end_col = 0;
+};
+
+struct UndoRecord {
+    std::vector<std::string> lines;
+    int cursor_line_num;
+    int cursor_col;
+    int first_visible_line_num;
+};
 
 struct EditorBuffer {
     Line *document_head = nullptr;

@@ -63,3 +63,35 @@ std::string wchar_to_utf8(wchar_t wc) {
     else if (wc < 0x110000) { str.push_back(static_cast<char>(0xF0 | (wc >> 18))); str.push_back(static_cast<char>(0x80 | ((wc >> 12) & 0x3F))); str.push_back(static_cast<char>(0x80 | ((wc >> 6) & 0x3F))); str.push_back(static_cast<char>(0x80 | (wc & 0x3F))); }
     return str;
 }
+
+std::vector<std::string> wrap_text(const std::string& text, int width) {
+    std::vector<std::string> lines;
+    if (width <= 0) {
+        lines.push_back(text);
+        return lines;
+    }
+
+    std::string current_line;
+    std::string current_word;
+    std::stringstream ss(text);
+
+    while(ss >> current_word) {
+        if (current_line.length() + current_word.length() + 1 > (size_t)width) {
+            lines.push_back(current_line);
+            current_line = current_word;
+        } else {
+            if (!current_line.empty()) {
+                current_line += " ";
+            }
+            current_line += current_word;
+        }
+    }
+    if (!current_line.empty()) {
+        lines.push_back(current_line);
+    }
+    if (lines.empty() && !text.empty()) {
+        lines.push_back(text);
+    }
+
+    return lines;
+}

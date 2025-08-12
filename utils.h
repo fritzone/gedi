@@ -2,6 +2,7 @@
 #define UTILS_H
 
 #include <string>
+#include <vector>
 
 // Formats file size into a human-readable string (B, KB, MB)
 std::string formatSize(off_t size);
@@ -17,5 +18,6 @@ std::string wchar_to_utf8(wchar_t wc);
 
 bool ends_with(const std::string& str, const std::string& suffix);
 
+std::vector<std::string> wrap_text(const std::string& text, int width);
 
 #endif // UTILS_H

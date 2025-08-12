@@ -22,6 +22,14 @@ struct SyntaxToken {
     int flags = 0;
 };
 
+// A struct to hold the results of a compilation
+struct CompilationResult {
+    std::vector<std::string> output_lines;
+    std::string executable_name;
+    bool success;
+    std::string full_command;
+};
+
 // A struct to hold parsed compiler message information
 enum CompileMessageType { CMSG_NONE, CMSG_ERROR, CMSG_WARNING, CMSG_NOTE };
 struct CompileMessage {
@@ -30,7 +38,6 @@ struct CompileMessage {
     int line = -1;
     int col = -1;
 };
-
 
 class TextEditor {
 private:
@@ -45,6 +52,16 @@ private:
     bool m_smart_indentation = true;
     int m_indentation_width = 4;
     bool m_show_line_numbers = true;
+
+    // --- New Compile Options ---
+    int m_compile_mode = -1; // -1: None, 0: Debug, 1: Release
+    int m_optimization_level = -1; // -1: None, 0-4 for O0-Os
+    std::vector<bool> m_security_flags = {true, true, true, true}; // Corresponds to the security options
+    std::string m_extra_compile_flags;
+
+    // Cache for compile commands to avoid re-running cguess.py
+    std::map<std::string, std::string> m_compile_command_cache;
+
     std::vector<std::string> m_clipboard;
     json m_themes_data;
     std::string m_color_scheme_name = "Obsidian";
@@ -67,15 +84,14 @@ private:
     int m_gutter_width = 0;
 
     // --- Menus ---
-    const std::vector<std::string> m_menus = {" &File " , " &Edit " , " &Search ", " &View "  , " &Build " , " &Window ", " &Options ", " &Help "  };
-    const std::vector<int> m_menu_positions = {2        , 9         , 17        , 26       , 33       , 41         , 49       , 58       };
+    const std::vector<std::string> m_menus = {" &File " , " &Edit " , " &Search ", " &Build " , " &Window ", " &Options ", " &Help "  };
+    const std::vector<int> m_menu_positions = {2, 9, 17, 26, 34, 43, 53};
 
     const std::vector<std::string> m_submenu_file = {" &New           Ctrl+N", " &Open...       Ctrl+O", " -------------- ", " &Save          Ctrl+S", " Save &As...    ", " -------------- ", " E&xit          Alt+X"};
     const std::vector<std::string> m_submenu_edit = {" &Undo       Alt+BckSp", " &Redo           Alt+Y", " -------------- ", " Cu&t           Ctrl+X", " &Copy          Ctrl+C", " &Paste         Ctrl+V", " &Delete        ", " -------------- ", " Comment Line   ", " Uncomment Line "};
     const std::vector<std::string> m_submenu_search = {" &Find...       Ctrl+F", " Find &Next      ", " Find Pre&vious ", " &Replace...    Ctrl+R", " -------------- ", " &Go To Line... "};
-    const std::vector<std::string> m_submenu_view = {" &Output Screen   F5", " Line &Numbers  ", " &Syntax Hi-Lite "};
-    const std::vector<std::string> m_submenu_build = {" &Run             F9", " &Compile     S-F9"};
-    const std::vector<std::string> m_submenu_window = {" &Next Window         F6", " &Previous Window  S-F6", " &Close Window     Alt+W"};
+    const std::vector<std::string> m_submenu_build = {" &Run               F9", " &Compile       S-F9", " Compile &Options..."};
+    const std::vector<std::string> m_submenu_window = {" &Output Screen       F5", " -------------- ", " &Next Window         F6", " &Previous Window  S-F6", " &Close Window     Alt+W"};
     const std::vector<std::string> m_submenu_options = {" Editor &Settings... "};
     const std::vector<std::string> m_submenu_help = {" &View Help...  ", " &About...      "};
 
@@ -141,13 +157,15 @@ private:
     void compileAndRun();
     void compileOnly();
     void showOutputScreen();
-
+    void CompileOptionsDialog();
     void setSyntaxType(EditorBuffer& buffer);
     void loadKeywords(EditorBuffer& buffer);
     std::vector<SyntaxToken> parseLine(EditorBuffer& buffer, const std::string& line);
-    void drawHighlightedLine(const std::vector<SyntaxToken>& tokens, int screen_y);
     void noti() { msgwin("Not Implemented yet."); }
-    void about_box() { msgwin("TEE C++ Editor - by Gemini"); }
+    void about_box() { msgwin("gedi C++ Editor"); }
+    void handleToggleComment();
+    void showScrollableOutputDialog(const std::vector<std::string>& lines);
+    CompilationResult runCompilationProcess();
 };
 
 #endif // TEXTEDITOR_H

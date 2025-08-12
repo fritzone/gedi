@@ -2,10 +2,9 @@
 #include "Renderer.h"
 
 #include <ncurses.h>
-#include <termios.h> // For disabling Ctrl+S terminal behavior
+#include <termios.h>
 
 #include <fstream>
-
 
 Renderer::Renderer() {
     setlocale(LC_ALL, ""); initscr();
@@ -40,44 +39,11 @@ Renderer::Renderer() {
         {"register_variable", CP_SYNTAX_REGISTER_VAR},
         // Add new mappings for gutter and buttons
         {"gutter_bg", CP_GUTTER_BG}, {"gutter_fg", CP_GUTTER_FG},
-        {"button_text", CP_BUTTON_TEXT}, {"button_hotkey", CP_BUTTON_HOTKEY},
+        {"button_bg", CP_BUTTON_BG}, {"button_text", CP_BUTTON_TEXT},
+        {"button_hotkey", CP_BUTTON_HOTKEY}, {"button_selected_bg", CP_BUTTON_SELECTED_BG},
         {"button_selected_text", CP_BUTTON_SELECTED_TEXT}, {"button_selected_hotkey", CP_BUTTON_SELECTED_HOTKEY},
         {"button_shadow", CP_BUTTON_SHADOW}
     };
-}
-
-void Renderer::loadColors(const json &theme_data) {
-    m_style_attributes.clear();
-
-    auto init_colors_from_json = [&](const json& j) {
-        for (auto const& [key, val] : j.items()) {
-            if (m_color_pair_map.count(key)) {
-                int pair_id = m_color_pair_map[key];
-                init_pair(pair_id, m_color_map[val["fg"]], m_color_map[val["bg"]]);
-                if (val.contains("bold") && val["bold"].get<bool>()) {
-                    m_style_attributes[static_cast<ColorPairID>(pair_id)] = A_BOLD;
-                }
-            }
-        }
-    };
-
-    if (theme_data.contains("ui")) init_colors_from_json(theme_data["ui"]);
-    if (theme_data.contains("syntax")) init_colors_from_json(theme_data["syntax"]);
-
-    // Get colors from the theme to create our new composite color pairs
-    short dialog_fg, dialog_bg;
-    pair_content(CP_DIALOG, &dialog_fg, &dialog_bg);
-    short default_fg, default_bg;
-    pair_content(CP_DEFAULT_TEXT, &default_fg, &default_bg);
-    short sel_fg, sel_bg;
-    pair_content(CP_SELECTION, &sel_fg, &sel_bg);
-
-    // Initialize theme-independent colors
-    init_pair(CP_COMPILE_ERROR, COLOR_RED, dialog_bg);
-    init_pair(CP_COMPILE_WARNING, COLOR_YELLOW, dialog_bg);
-
-    // Initialize the new color pair for unselected text on a selected line
-    init_pair(CP_DEFAULT_ON_SELECTION, default_fg, sel_bg);
 }
 
 Renderer::~Renderer() { curs_set(1); endwin(); }
@@ -137,8 +103,37 @@ void Renderer::drawBoxWithTitle(int x, int y, int w, int h, int colorId, BoxStyl
     drawBox(x, y, w, h, colorId, style);
     if (!title.empty()) {
         std::string spaced_title = " " + title + " ";
-        if (spaced_title.length() < (size_t)w - 2) {
-            drawText(x + (w - spaced_title.length()) / 2, y, spaced_title, title_color, title_flags);
+
+        // Calculate the visible length of the title (ignoring '&') to center it correctly
+        size_t visible_len = 0;
+        for (size_t i = 0; i < spaced_title.length(); ++i) {
+            if (spaced_title[i] == '&' && i + 1 < spaced_title.length()) {
+                i++; // Skip the ampersand itself, the next char is the hotkey
+            }
+            visible_len++;
+        }
+
+        if (visible_len < (size_t)w - 2) {
+            int start_x = x + (w - visible_len) / 2;
+
+            // Draw the title with hotkey processing
+            wattron(stdscr, COLOR_PAIR(title_color));
+            if (title_flags & A_BOLD) wattron(stdscr, A_BOLD);
+
+            wmove(stdscr, y, start_x);
+            for (size_t i = 0; i < spaced_title.length(); ++i) {
+                if (spaced_title[i] == '&' && i + 1 < spaced_title.length()) {
+                    i++;
+                    wattron(stdscr, A_UNDERLINE);
+                    waddch(stdscr, spaced_title[i]);
+                    wattroff(stdscr, A_UNDERLINE);
+                } else {
+                    waddch(stdscr, spaced_title[i]);
+                }
+            }
+
+            if (title_flags & A_BOLD) wattroff(stdscr, A_BOLD);
+            wattroff(stdscr, COLOR_PAIR(title_color));
         }
     }
 }
@@ -153,6 +148,7 @@ void Renderer::drawShadow(int x, int y, int w, int h) {
             setcchar(&shadow_char, char_buffer, A_NORMAL, CP_SHADOW, NULL); mvadd_wch(row, x + w, &shadow_char);
         }
     }
+
     for (int col = x + 1; col < x + w + 1; ++col) {
         if ((y + h) < m_height && col < m_width) {
             mvin_wch(y + h, col, &underlying_char);
@@ -181,34 +177,55 @@ int Renderer::getStyleFlags(ColorPairID id) const {
     return 0;
 }
 
-void Renderer::loadColors() { // This function will now be a wrapper
-    loadColors("colors.json"); // Load a default, but this will be overridden
+void Renderer::loadColors(const json &theme_data) {
+    m_style_attributes.clear();
+
+    auto init_colors_from_json = [&](const json& j) {
+        for (auto const& [key, val] : j.items()) {
+            if (m_color_pair_map.count(key)) {
+                int pair_id = m_color_pair_map[key];
+                init_pair(pair_id, m_color_map[val["fg"]], m_color_map[val["bg"]]);
+                if (val.contains("bold") && val["bold"].get<bool>()) {
+                    m_style_attributes[static_cast<ColorPairID>(pair_id)] = A_BOLD;
+                }
+            }
+        }
+    };
+
+    if (theme_data.contains("ui")) init_colors_from_json(theme_data["ui"]);
+    if (theme_data.contains("syntax")) init_colors_from_json(theme_data["syntax"]);
+
+    short dialog_fg, dialog_bg;
+    pair_content(CP_DIALOG, &dialog_fg, &dialog_bg);
+    short default_fg, default_bg;
+    pair_content(CP_DEFAULT_TEXT, &default_fg, &default_bg);
+    short sel_fg, sel_bg;
+    pair_content(CP_SELECTION, &sel_fg, &sel_bg);
+
+    init_pair(CP_COMPILE_ERROR, COLOR_RED, dialog_bg);
+    init_pair(CP_COMPILE_WARNING, COLOR_YELLOW, dialog_bg);
+    init_pair(CP_DEFAULT_ON_SELECTION, default_fg, sel_bg);
 }
 
+
 void Renderer::drawButton(int x, int y, const std::string& text, bool selected) {
-    // --- New Shadow Logic ---
     cchar_t upper_shadow, lower_shadow;
     setcchar(&upper_shadow, L"▀", WA_NORMAL, CP_BUTTON_SHADOW, NULL);
     setcchar(&lower_shadow, L"▄", WA_NORMAL, CP_BUTTON_SHADOW, NULL);
 
-    // Draw the shadow underneath (upper half block character at y+1)
     for (size_t i = 0; i < text.length(); ++i) {
         mvwadd_wch(stdscr, y + 1, x + 1 + i, &upper_shadow);
     }
-    // Draw the shadow to the side (lower half block character at y)
     mvwadd_wch(stdscr, y, x + text.length(), &lower_shadow);
 
-    // --- Existing Button Drawing Logic ---
-    // Determine colors
+    int bg_color = selected ? CP_BUTTON_SELECTED_BG : CP_BUTTON_BG;
     int text_color = selected ? CP_BUTTON_SELECTED_TEXT : CP_BUTTON_TEXT;
     int hotkey_color = selected ? CP_BUTTON_SELECTED_HOTKEY : CP_BUTTON_HOTKEY;
 
-    // Draw button background
-    wattron(stdscr, COLOR_PAIR(text_color));
+    wattron(stdscr, COLOR_PAIR(bg_color));
     mvwaddstr(stdscr, y, x, std::string(text.length(), ' ').c_str());
-    wattroff(stdscr, COLOR_PAIR(text_color));
+    wattroff(stdscr, COLOR_PAIR(bg_color));
 
-    // Draw text and hotkey
     wmove(stdscr, y, x);
     for (size_t i = 0; i < text.length(); ++i) {
         if (text[i] == '&' && i + 1 < text.length()) {
@@ -223,7 +240,6 @@ void Renderer::drawButton(int x, int y, const std::string& text, bool selected) 
         }
     }
 }
-
 
 void Renderer::createDefaultColorsFile() {
     json j;

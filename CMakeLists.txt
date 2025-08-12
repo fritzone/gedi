@@ -18,10 +18,11 @@ if(CURSES_FOUND)
         EditorBuffer.h
         Renderer.h
         TextEditor.h
-        Line.h
-        UndoRecord.h
+
+
         utils.h
         utils.cpp
+        syntax_rules.json
     )
     target_link_libraries(${PROJECT_NAME} ${CURSES_LIBRARIES})
 else()

@@ -7,7 +7,6 @@ using json = nlohmann::json;
 
 class Renderer {
 public:
-
     enum ColorPairID {
         CP_DEFAULT_TEXT = 1, CP_HIGHLIGHT, CP_MENU_BAR, CP_MENU_ITEM,
         CP_MENU_SELECTED, CP_DIALOG, CP_DIALOG_BUTTON, CP_SELECTION,
@@ -24,7 +23,9 @@ public:
 
         CP_DEFAULT_ON_SELECTION,
 
-        CP_GUTTER_BG, CP_GUTTER_FG
+        CP_GUTTER_BG, CP_GUTTER_FG,
+
+        CP_BUTTON_BG, CP_BUTTON_SELECTED_BG
     };
 
     enum BoxStyle { SINGLE, DOUBLE };
