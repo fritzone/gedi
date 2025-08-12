@@ -39,6 +39,23 @@ struct CompileMessage {
     int col = -1;
 };
 
+enum TextStyle { STYLE_NORMAL, STYLE_BOLD, STYLE_LINK };
+
+struct TextSegment {
+    std::string text;
+    TextStyle style = STYLE_NORMAL;
+    std::string target_id; // Only used for STYLE_LINK
+};
+
+struct HelpLine {
+    std::vector<TextSegment> segments;
+};
+
+struct HelpSection {
+    std::string id;
+    std::vector<HelpLine> lines;
+};
+
 class TextEditor {
 private:
     bool main_loop_running = true;
@@ -61,6 +78,10 @@ private:
 
     // Cache for compile commands to avoid re-running cguess.py
     std::map<std::string, std::string> m_compile_command_cache;
+
+    // Help
+    std::map<std::string, HelpSection> m_help_data;
+    std::vector<std::string> m_help_history;
 
     std::vector<std::string> m_clipboard;
     json m_themes_data;
@@ -166,6 +187,8 @@ private:
     void handleToggleComment();
     void showScrollableOutputDialog(const std::vector<std::string>& lines);
     CompilationResult runCompilationProcess();
+    void loadHelpFile();
+    void showHelpDialog();
 };
 
 #endif // TEXTEDITOR_H

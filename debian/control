@@ -1,0 +1,15 @@
+Source: gedi
+Section: editors
+Priority: optional
+Maintainer: Ferenc Deak <fritzone@gmail.com>
+Build-Depends: debhelper (>= 10), g++, libncurses-dev
+Standards-Version: 4.1.3
+Homepage: https://github.com/fritzone/gedi
+
+Package: gedi
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: A simple yet powerful console-based C++ text editor
+ gedit is a lightweight and feature-rich text editor
+ that runs in the terminal. It provides syntax highlighting, a build system,
+ a custom help system, and more.

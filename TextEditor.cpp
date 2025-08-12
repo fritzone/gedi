@@ -47,6 +47,7 @@ struct FileEntry {
 void TextEditor::run(int argc, char* argv[]) {
     m_renderer = std::make_unique<Renderer>();
     loadConfig();
+    loadHelpFile();
 
     if (m_themes_data.contains(m_color_scheme_name)) {
         m_renderer->loadColors(m_themes_data[m_color_scheme_name]);
@@ -1872,8 +1873,8 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
                 break;
             case 6: // Options
                 EditorSettingsDialog(); break;
-            case 7: // Help (was 8)
-                if (selection == 1) noti();
+            case 7: // Help
+                if (selection == 1) showHelpDialog();
                 else if (selection == 2) about_box();
                 break;
             default: noti(); break;
@@ -2227,21 +2228,21 @@ void TextEditor::createDefaultConfigFile() {
     j["smart_indentation"] = true;
     j["indentation_width"] = 4;
     j["show_line_numbers"] = true;
-    j["color_scheme"] = "colors.json";
+    j["color_scheme"] = "/usr/share/gedi/colors.json";
     j["compile_mode"] = -1; // -1 for None
     j["optimization_level"] = -1; // -1 for None
     j["security_flags"] = {true, true, true, true, true};
     j["extra_compile_flags"] = "-Wall";
-    std::ofstream o("config.json");
+    std::ofstream o("/usr/share/gedi/config.json");
     o << std::setw(4) << j << std::endl;
 }
 
 void TextEditor::loadConfig() {
-    if (!std::filesystem::exists("config.json")) {
+    if (!std::filesystem::exists("/usr/share/gedi/config.json")) {
         createDefaultConfigFile();
     }
     try {
-        std::ifstream f("config.json");
+        std::ifstream f("/usr/share/gedi/config.json");
         json data = json::parse(f);
         if (data.contains("smart_indentation")) m_smart_indentation = data["smart_indentation"];
         if (data.contains("indentation_width")) m_indentation_width = data["indentation_width"];
@@ -2252,15 +2253,15 @@ void TextEditor::loadConfig() {
         if (data.contains("security_flags")) m_security_flags = data["security_flags"].get<std::vector<bool>>();
         if (data.contains("extra_compile_flags")) m_extra_compile_flags = data["extra_compile_flags"];
     } catch (const json::parse_error& e) {
-        msgwin("Error parsing config.json. Using defaults.");
+        msgwin("Error parsing /usr/share/gedi/config.json. Using defaults.");
     }
 
-    if (std::filesystem::exists("colors.json")) {
+    if (std::filesystem::exists("/usr/share/gedi/colors.json")) {
         try {
-            std::ifstream f("colors.json");
+            std::ifstream f("/usr/share/gedi/colors.json");
             m_themes_data = json::parse(f);
         } catch (const json::parse_error& e) {
-            msgwin("Error parsing colors.json!");
+            msgwin("Error parsing /usr/share/gedi/colors.json!");
         }
     }
 }
@@ -2275,7 +2276,7 @@ void TextEditor::saveConfig() {
     j["optimization_level"] = m_optimization_level;
     j["security_flags"] = m_security_flags;
     j["extra_compile_flags"] = m_extra_compile_flags;
-    std::ofstream o("config.json");
+    std::ofstream o("/usr/share/gedi/config.json");
     o << std::setw(4) << j << std::endl;
 }
 
@@ -2616,7 +2617,7 @@ CompilationResult TextEditor::runCompilationProcess() {
     } else {
         // Cache MISS
         result.output_lines.push_back("Running cguess.py to find build command...");
-        std::string cguess_cmd = "python3 cguess.py \"" + buffer.filename + "\" 2>&1";
+        std::string cguess_cmd = "python3 /usr/lib/python3/dist-packages/gedi/cguess.py \"" + buffer.filename + "\" 2>&1";
         char buffer_arr[512];
 
         FILE* cguess_pipe = popen(cguess_cmd.c_str(), "r");
@@ -3294,7 +3295,7 @@ void TextEditor::CompileOptionsDialog() {
         "Stack Protector", "PIE", "Fortify Source", "Stack Clash", "RELRO"
     };
 
-    std::string cguess_cmd = "python3 cguess.py \"" + currentBuffer().filename + "\" 2>/dev/null";
+    std::string cguess_cmd = "python3 /usr/lib/python3/dist-packages/gedi/cguess.py \"" + currentBuffer().filename + "\" 2>/dev/null";
     std::string base_cmd;
     FILE* pipe = popen(cguess_cmd.c_str(), "r");
     if (pipe) {
@@ -3430,6 +3431,223 @@ void TextEditor::CompileOptionsDialog() {
 
     copywin(behind, stdscr, 0, 0, starty, startx, h, w, FALSE); delwin(behind);
     nodelay(stdscr, TRUE);
+    m_renderer->showCursor();
+    handleResize();
+}
+
+void TextEditor::loadHelpFile() {
+    std::ifstream f("/usr/share/gedi/help.hlp");
+    if (!f.is_open()) {
+        return;
+    }
+
+    m_help_data.clear();
+    std::string line;
+    HelpSection* current_section = nullptr;
+    // --- FIX: Anchor regex to the start of the line to avoid matching in-text brackets ---
+    std::regex section_re(R"(^\[(\w+)\])");
+    std::regex link_re(R"(\[\[(\w+)(?:\|([^\]]+))?\]\])");
+    std::regex bold_re(R"(\*\*([^\*]+)\*\*)");
+
+    while (std::getline(f, line)) {
+        std::smatch match;
+        if (std::regex_match(line, match, section_re)) {
+            std::string id = match[1].str();
+            m_help_data[id] = HelpSection{id};
+            current_section = &m_help_data[id];
+        } else if (current_section) {
+            HelpLine help_line;
+            std::string remaining_text = line;
+
+            // This loop tokenizes the line for links and bold text
+            while (!remaining_text.empty()) {
+                auto link_match = std::sregex_iterator(remaining_text.begin(), remaining_text.end(), link_re);
+                auto bold_match = std::sregex_iterator(remaining_text.begin(), remaining_text.end(), bold_re);
+
+                // Find the first token of either type
+                auto first_token = (link_match != std::sregex_iterator() && bold_match != std::sregex_iterator())
+                                       ? (link_match->position() < bold_match->position() ? link_match : bold_match)
+                                       : (link_match != std::sregex_iterator() ? link_match : bold_match);
+
+                if (first_token == std::sregex_iterator()) {
+                    // No more special tokens, add the rest of the text
+                    if (!remaining_text.empty()) {
+                        help_line.segments.push_back({remaining_text, STYLE_NORMAL});
+                    }
+                    break;
+                }
+
+                // Add the plain text before the token
+                if (first_token->position() > 0) {
+                    help_line.segments.push_back({remaining_text.substr(0, first_token->position()), STYLE_NORMAL});
+                }
+
+                // Process the token
+                if (first_token->str().starts_with("[[")) { // It's a link
+                    help_line.segments.push_back({
+                        first_token->operator[](2).matched ? first_token->operator[](2).str() : first_token->operator[](1).str(),
+                        STYLE_LINK,
+                        first_token->operator[](1).str()
+                    });
+                } else { // It's bold text
+                    help_line.segments.push_back({first_token->operator[](1).str(), STYLE_BOLD});
+                }
+
+                remaining_text = first_token->suffix().str();
+            }
+            current_section->lines.push_back(help_line);
+        }
+    }
+}
+void TextEditor::showHelpDialog() {
+    if (m_help_data.find("main") == m_help_data.end()) {
+        msgwin("Error: /usr/share/gedi/help.hlp is missing or invalid.");
+        return;
+    }
+
+    m_renderer->hideCursor();
+    if(m_help_history.empty()){
+        m_help_history.push_back("main");
+    }
+
+    int h = 20, w = 70;
+    int starty = (m_renderer->getHeight() - h) / 2;
+    int startx = (m_renderer->getWidth() - w) / 2;
+
+    WINDOW* win = newwin(h, w, starty, startx);
+    keypad(win, TRUE);
+    nodelay(win, FALSE);
+
+    int scroll_offset = 0;
+    int selected_link_idx = 0;
+
+    while(true) {
+        werase(win);
+        wbkgd(win, COLOR_PAIR(Renderer::CP_DIALOG));
+
+        const std::string& current_id = m_help_history.back();
+        const HelpSection& section = m_help_data.at(current_id);
+
+        // --- FIX: Pre-process lines with correct wrapping logic ---
+        std::vector<HelpLine> render_lines;
+        struct LinkInfo { const TextSegment* segment; int y_pos; };
+        std::vector<LinkInfo> all_links;
+        int content_width = w - 4; // Margins on both sides
+
+        for (const auto& original_line : section.lines) {
+            HelpLine current_render_line;
+            int current_x = 0;
+
+            if (original_line.segments.empty()) {
+                render_lines.push_back(HelpLine());
+                continue;
+            }
+
+            for (const auto& segment : original_line.segments) {
+                std::string remaining_text = segment.text;
+                while (!remaining_text.empty()) {
+                    int space_left = content_width - current_x;
+                    if (space_left <= 0) {
+                        render_lines.push_back(current_render_line);
+                        current_render_line.segments.clear();
+                        current_x = 0;
+                        space_left = content_width;
+                    }
+
+                    std::string part = remaining_text.substr(0, space_left);
+                    current_render_line.segments.push_back({part, segment.style, segment.target_id});
+                    current_x += part.length();
+                    remaining_text = remaining_text.substr(part.length());
+                }
+            }
+            render_lines.push_back(current_render_line);
+        }
+
+        for(size_t y = 0; y < render_lines.size(); ++y) {
+            for (const auto& segment : render_lines[y].segments) {
+                if (segment.style == STYLE_LINK) {
+                    all_links.push_back({&segment, (int)y});
+                }
+            }
+        }
+
+        if (selected_link_idx >= (int)all_links.size()) {
+            selected_link_idx = all_links.empty() ? -1 : 0;
+        }
+
+        box(win, 0, 0);
+        wattron(win, COLOR_PAIR(Renderer::CP_DIALOG_TITLE));
+        mvwprintw(win, 0, (w - 14) / 2, " Help System ");
+        wattroff(win, COLOR_PAIR(Renderer::CP_DIALOG_TITLE));
+
+        int max_view_lines = h - 2;
+        for (int i = 0; i < max_view_lines; ++i) {
+            int line_idx = scroll_offset + i;
+            if (line_idx < (int)render_lines.size()) {
+                const HelpLine& help_line = render_lines[line_idx];
+                int current_x = 2;
+                wmove(win, i + 1, current_x);
+
+                for (const auto& segment : help_line.segments) {
+                    int style_flags = 0;
+                    int color = Renderer::CP_DIALOG;
+
+                    if (segment.style == STYLE_BOLD) {
+                        style_flags = A_BOLD;
+                    } else if (segment.style == STYLE_LINK) {
+                        bool is_selected = !all_links.empty() && selected_link_idx >= 0 && &segment == all_links[selected_link_idx].segment;
+                        color = is_selected ? Renderer::CP_MENU_SELECTED : Renderer::CP_HIGHLIGHT;
+                        style_flags = A_BOLD;
+                    }
+
+                    wattron(win, COLOR_PAIR(color) | style_flags);
+                    waddstr(win, segment.text.c_str());
+                    wattroff(win, COLOR_PAIR(color) | style_flags);
+                }
+            }
+        }
+        wrefresh(win);
+
+        int ch = wgetch(win);
+        switch(ch) {
+        case KEY_UP:
+            if (scroll_offset > 0) scroll_offset--;
+            break;
+        case KEY_DOWN:
+            if (scroll_offset + max_view_lines < (int)render_lines.size()) scroll_offset++;
+            break;
+        case 9: // Tab key for link navigation
+            if (!all_links.empty()) {
+                selected_link_idx = (selected_link_idx + 1) % all_links.size();
+                int link_y_pos = all_links[selected_link_idx].y_pos;
+                if (link_y_pos < scroll_offset) scroll_offset = link_y_pos;
+                if (link_y_pos >= scroll_offset + max_view_lines) scroll_offset = link_y_pos - max_view_lines + 1;
+            }
+            break;
+        case KEY_ENTER: case 10: case 13:
+            if (selected_link_idx >= 0 && selected_link_idx < (int)all_links.size()) {
+                const std::string& target_id = all_links[selected_link_idx].segment->target_id;
+                if (m_help_data.count(target_id)) {
+                    m_help_history.push_back(target_id);
+                    scroll_offset = 0;
+                    selected_link_idx = 0;
+                }
+            }
+            break;
+        case KEY_BACKSPACE: case 127: case 8:
+            if (m_help_history.size() > 1) {
+                m_help_history.pop_back();
+                scroll_offset = 0;
+                selected_link_idx = 0;
+            }
+            break;
+        case 27: // ESC
+            goto end_help_loop;
+        }
+    }
+
+end_help_loop:
+    delwin(win);
     m_renderer->showCursor();
     handleResize();
 }

@@ -1,0 +1,158 @@
+[main]
+**TEE C++ Editor - Main Help**
+
+Welcome to the TEE (Text Editor by Example) help system. This guide provides detailed information on all of the editor's features.
+
+**How to use this guide:**
+* Use the **Up** and **Down arrow keys** to select a link (highlighted text).
+* Press **Enter** to navigate to the selected topic.
+* Press **Backspace** to return to the previous topic you viewed.
+* Press **Escape** at any time to close the help dialog.
+
+---
+**## Main Topics ##**
+
+[[file_ops|File Operations]]
+[[editing|Editing and Selection]]
+[[navigation|Navigation and Search]]
+[[building|Compiling and Running]]
+[[windows|Window Management]]
+[[options|Configuration Options]]
+[[hotkeys|Quick Hotkey Reference]]
+
+[file_ops]
+**## File Operations ##**
+
+All file operations are available under the **File** menu (**Alt+F**).
+
+* **New** (**Ctrl+N**): Creates a new, empty buffer with a default name (e.g., `noname00.cpp`).
+
+* **Open** (**Ctrl+O**): Opens the file browser dialog to select a file from your system. The browser shows file details like permissions, size, and modification date.
+
+* **Save** (**Ctrl+S**): Saves the current file. If the file is new, it will open the "Save As" browser.
+
+* **Save As...**: Opens the file browser, allowing you to save the current buffer to a new file or location.
+
+* **Exit** (**Alt+X**): Closes the editor. You will be prompted to save any unsaved changes.
+
+Return to [[main|Main Menu]].
+
+[editing]
+**## Editing and Selection ##**
+
+Standard text editing is enhanced with clipboard operations, undo/redo, and a powerful comment toggle. Most features are in the **Edit** menu (**Alt+E**).
+
+* **Undo** (**Alt+Backspace**): Reverts the last change made to the text.
+* **Redo** (**Alt+Y**): Re-applies an action that was just undone.
+* **Cut/Copy/Paste** (**Ctrl+X**, **Ctrl+C**, **Ctrl+V**): Uses the system clipboard for integration with other applications.
+
+**Selection:**
+Text can be selected using **Shift + Arrow Keys** (or Home/End, PageUp/Down). Most editing commands, like Cut, Copy, and Comment, operate on the selected text. Press **Escape** to clear a selection.
+
+**Toggle Comment** (**Ctrl+/**):
+This is a smart comment/uncomment feature.
+* **No Selection**: It adds or removes a C++ style (`//`) comment at the beginning of the current line.
+* **With Selection**: It adds or removes a `//` comment from **every** line within the selection. This is useful for commenting out large blocks of code.
+
+Return to [[main|Main Menu]].
+
+[navigation]
+**## Navigation and Search ##**
+
+Quickly move through your code and find what you're looking for using these tools, available in the **Search** menu (**Alt+S**).
+
+**Cursor Movement:**
+* **Ctrl+Left/Right**: Move by one word at a time.
+* **Ctrl+Up/Down**: Move to the previous/next empty line, effectively jumping between paragraphs or code blocks.
+* **Home/End**: Move to the absolute start or end of the current line's text.
+
+**Search and Replace:**
+* **Find** (**Ctrl+F**): Opens a search prompt in the status bar. As you type, the editor will highlight the next match. Press **Enter** to jump to it or **Escape** to cancel.
+* **Replace** (**Ctrl+R**): Opens a dialog to find text and replace it with something else, one instance at a time or all at once.
+* **Go To Line...**: Opens a dialog prompting for a line number to jump to directly.
+
+Return to [[main|Main Menu]].
+
+[building]
+**## Compiling and Running ##**
+
+The editor provides a powerful, integrated build system, available in the **Build** menu (**Alt+B**).
+
+The system uses the `cguess.py` script to automatically detect dependencies and generate a build command. For efficiency, this command is **cached** for each file and is only regenerated when you save the file.
+
+* **Compile Only** (**Shift+F9**): Compiles the current file. A dialog will pop up showing the live output from the compiler. If there are errors, a navigable error list will appear at the bottom of the screen.
+
+* **Compile and Run** (**F9**): First compiles the file. If successful, it then runs the resulting executable and displays its output in a full-screen view.
+
+* **Compile Options...**: Opens a detailed dialog where you can configure the build process:
+    * **Mode**: Choose between **Debug** (`-g`) and **Release** (`-O3 -DNDEBUG`).
+    * **Optimization**: Manually set the optimization level from -O0 to -Os.
+    * **Security**: Toggle common security flags like Stack Protectors and PIE.
+    * **Optional Flags**: Add any other flags (`-Wall`, `-lm`, etc.) to the command.
+    These settings are saved in `config.json`.
+
+Return to [[main|Main Menu]].
+
+[windows]
+**## Window Management ##**
+
+Manage multiple open files and view program output from the **Window** menu (**Alt+W**).
+
+* **Output Screen** (**F5**): Toggles the full-screen view that shows the output of your program after running it with **F9**. Press any key to return to the editor.
+
+* **Next Window** (**F6**): Switch focus to the next open file buffer.
+* **Previous Window** (**Shift+F6**): Switch focus to the previous open file buffer.
+
+* **Close Window** (**Alt+W**): Closes the currently active file. You will be prompted to save if there are unsaved changes.
+
+* **Window List** (**Alt+1**, **Alt+2**, etc.): The Window menu contains a dynamic list of all open files. You can quickly switch to a specific file using its corresponding Alt+Number hotkey.
+
+Return to [[main|Main Menu]].
+
+[options]
+**## Configuration Options ##**
+
+Customize the editor's behavior via the **Editor Settings** dialog, found in the **Options** menu (**Alt+O**).
+
+The settings dialog allows you to configure:
+* **Smart Indentation**: Automatically indents the next line after you type an opening brace `{`.
+* **Tab Size**: Set the number of spaces inserted when you press the Tab key.
+* **Show Line Numbers**: Toggle the visibility of the line number gutter on the left side of the editor.
+* **Color Scheme**: Choose from available themes defined in `colors.json`.
+
+Your preferences are automatically saved to `config.json` when you click **Save**.
+
+Return to [[main|Main Menu]].
+
+[hotkeys]
+**## Quick Hotkey Reference ##**
+
+**[File]**
+  **Ctrl+N** - New File
+  **Ctrl+O** - Open File
+  **Ctrl+S** - Save File
+  **Alt+X** - Exit
+
+**[Edit]**
+  **Ctrl+C** - Copy
+  **Ctrl+X** - Cut
+  **Ctrl+V** - Paste
+  **Alt+Backspace**- Undo
+  **Alt+Y** - Redo
+  **Ctrl+/** - Toggle Comment
+
+**[Search]**
+  **Ctrl+F** - Find
+  **Ctrl+R** - Replace
+
+**[Build]**
+  **F9** - Compile and Run
+  **Shift+F9** - Compile Only
+
+**[Window]**
+  **F5** - Show/Hide Program Output
+  **F6** - Next Window
+  **Shift+F6** - Previous Window
+  **Alt+W** - Close Window
+
+Return to [[main|Main Menu]].

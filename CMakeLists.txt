@@ -14,17 +14,32 @@ if(CURSES_FOUND)
         tedit.cpp
         Renderer.cpp
         TextEditor.cpp
-
         EditorBuffer.h
         Renderer.h
         TextEditor.h
-
-
         utils.h
         utils.cpp
-        syntax_rules.json
     )
     target_link_libraries(${PROJECT_NAME} ${CURSES_LIBRARIES})
 else()
     message(FATAL_ERROR "Curses library (with wide character support) not found. Please install ncurses-devel or equivalent.")
 endif()
+
+install(TARGETS ${PROJECT_NAME} DESTINATION bin)
+
+# Install the configs, help file and python script to a shared data directory
+install(
+    FILES
+        help.hlp
+        colors.json
+        /usr/share/gedi/config.json
+    DESTINATION
+        share/gedi
+)
+
+install(
+    FILES
+        cguess.py
+    DESTINATION
+        lib/python3/dist-packages/${PROJECT_NAME}
+)

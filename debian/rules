@@ -1,0 +1,31 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE=1
+export DH_COLORS=always
+export DPKG_COLORS=always
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+DPKG_EXPORT_BUILDFLAGS = 1
+include /usr/share/dpkg/default.mk
+
+export DEB_LDFLAGS_SET=
+
+%:
+	dh $@ --parallel --buildsystem=cmake
+
+override_dh_auto_configure:
+	QT_SELECT=5 dh_auto_configure -- --no-warn-unused-cli 
+
+override_dh_missing:
+	dh_missing --fail-missing
+
+override_dh_shlibdeps:
+	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info
+
+override_dh_installinit:
+	true
+
+# The deb package archive running on our server is using Debian and has had some problems with
+# Ubuntu 22.04 deb packages because of unsupported tar compression in control.tar.zst.
+override_dh_builddeb:
+	dh_builddeb -- -Zgzip

@@ -266,6 +266,6 @@ void Renderer::createDefaultColorsFile() {
         {"preprocessor", {{"fg", "cyan"}, {"bg", "blue"}}},
         {"register_variable", {{"fg", "yellow"}, {"bg", "blue"}}}
     };
-    std::ofstream o("colors.json");
+    std::ofstream o("/usr/share/gedi/colors.json");
     o << std::setw(4) << j << std::endl;
 }
