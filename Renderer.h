@@ -55,8 +55,8 @@ public:
     void drawText(int x, int y, const std::string& text, int colorId, int flags = 0);
     void drawStyledText(int x, int y, const std::string& text, int colorId);
     void drawButton(int x, int y, const std::string& text, bool selected);
-    void drawBox(int x, int y, int w, int h, int colorId, BoxStyle style = SINGLE);
-    void drawBoxWithTitle(int x, int y, int w, int h, int colorId, BoxStyle style, const std::string& title, int title_color, int title_flags);
+    void drawBox(int x, int y, int w, int h, int colorId, BoxStyle style = DOUBLE);
+    void drawBoxWithTitle(int x, int y, int w, int h, int colorId, BoxStyle style = DOUBLE, const std::string& title = "", int title_color = Renderer::CP_DIALOG_TITLE, int title_flags = 0);
     void drawShadow(int x, int y, int w, int h);
     wint_t getChar();
     void hideCursor();

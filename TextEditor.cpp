@@ -408,7 +408,7 @@ int TextEditor::msgwin_yesno(const std::string& question, const std::string& fil
     copywin(stdscr, behind, starty, startx, 0, 0, h, w, FALSE);
 
     m_renderer->drawShadow(startx, starty, w, h);
-    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::SINGLE, " Question ", Renderer::CP_DIALOG_TITLE, A_BOLD);
+    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Question ", Renderer::CP_DIALOG_TITLE, A_BOLD);
 
     wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
     for (int i = 1; i < h - 1; ++i) {
@@ -426,7 +426,7 @@ int TextEditor::msgwin_yesno(const std::string& question, const std::string& fil
     std::string yes_text = " &Yes ";
     std::string no_text = " &No ";
     int total_width = yes_text.length() + no_text.length() + 5;
-    int btn_y = starty + h - 2;
+    int btn_y = starty + h - 3;
     int yes_x = startx + (w - total_width) / 2;
     int no_x = yes_x + yes_text.length() + 5;
 
@@ -1416,7 +1416,7 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
     int selection = 1;
     wint_t ch;
     while(true) {
-        m_renderer->drawBox(x, y, w, h, Renderer::CP_MENU_ITEM, Renderer::SINGLE);
+        m_renderer->drawBox(x, y, w, h, Renderer::CP_MENU_ITEM, Renderer::DOUBLE);
         for (size_t i = 0; i < finalMenuItems.size(); ++i) {
             if(finalMenuItems[i].find("---") != std::string::npos) {
                 wattron(stdscr, COLOR_PAIR(Renderer::CP_MENU_ITEM));
@@ -1662,7 +1662,7 @@ void TextEditor::EditorSettingsDialog() {
     std::string cancel_btn_text = " &Cancel "; // Hotkey is now Alt+C
 
     m_renderer->drawShadow(startx, starty, w, h);
-    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::SINGLE, " Editor Settings ", Renderer::CP_DIALOG_TITLE, A_BOLD);
+    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Editor Settings ", Renderer::CP_DIALOG_TITLE, A_BOLD);
 
     bool dialog_active = true;
     while(dialog_active) {
@@ -1699,8 +1699,8 @@ void TextEditor::EditorSettingsDialog() {
             }
         }
 
-        m_renderer->drawButton(startx + w / 2 - 15, starty + h - 2, save_btn_text, focus_group == 3 && focus_item[3] == 0);
-        m_renderer->drawButton(startx + w / 2 + 5, starty + h - 2, cancel_btn_text, focus_group == 3 && focus_item[3] == 1);
+        m_renderer->drawButton(startx + w / 2 - 15, starty + h - 3, save_btn_text, focus_group == 3 && focus_item[3] == 0);
+        m_renderer->drawButton(startx + w / 2 + 5, starty + h - 3, cancel_btn_text, focus_group == 3 && focus_item[3] == 1);
 
         m_renderer->hideCursor();
         m_renderer->refresh();
@@ -1834,7 +1834,7 @@ void TextEditor::showScrollableOutputDialog(const std::vector<std::string>& line
     nodelay(stdscr, FALSE);
 
     m_renderer->drawShadow(startx, starty, w, h);
-    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::SINGLE, " Build Output ", Renderer::CP_DIALOG_TITLE, A_BOLD);
+    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Build Output ", Renderer::CP_DIALOG_TITLE, A_BOLD);
 
     while (true) {
         wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
@@ -1855,7 +1855,7 @@ void TextEditor::showScrollableOutputDialog(const std::vector<std::string>& line
             mvaddch(starty + 1, startx + w - 1, ACS_UARROW);
         }
         if ((scroll_offset + max_view_lines) < (int)wrapped_lines.size()) {
-            mvaddch(starty + h - 2, startx + w - 1, ACS_DARROW);
+            mvaddch(starty + h - 3, startx + w - 1, ACS_DARROW);
         }
         attroff(COLOR_PAIR(Renderer::CP_HIGHLIGHT));
 
@@ -2092,7 +2092,7 @@ void TextEditor::ActivateReplace() {
     std::string cancel_btn_text = " &Cancel ";
 
     m_renderer->drawShadow(startx, starty, w, h);
-    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::SINGLE, " Replace ", Renderer::CP_DIALOG_TITLE, A_BOLD);
+    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Replace ", Renderer::CP_DIALOG_TITLE, A_BOLD);
 
     while (true) {
         wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
@@ -2109,7 +2109,7 @@ void TextEditor::ActivateReplace() {
         m_renderer->drawText(startx + 18, starty + 2, find_buf, Renderer::CP_LIST_BOX);
         m_renderer->drawText(startx + 18, starty + 4, replace_buf, Renderer::CP_LIST_BOX);
 
-        int btn_y = starty + h - 2;
+        int btn_y = starty + h - 3;
         m_renderer->drawButton(startx + 4, btn_y, replace_btn_text, focus == 2);
         m_renderer->drawButton(startx + 18, btn_y, replace_all_btn_text, focus == 3);
         m_renderer->drawButton(startx + w - 14, btn_y, cancel_btn_text, focus == 4);
@@ -2327,11 +2327,11 @@ void TextEditor::msgwin(const std::string& s) {
     wattroff(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
 
     m_renderer->drawShadow(startx, starty, w, h);
-    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::SINGLE, " Message ", Renderer::CP_DIALOG_TITLE, A_BOLD);
+    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Message ", Renderer::CP_DIALOG_TITLE, A_BOLD);
     m_renderer->drawText(startx + 2, starty + 3, s, Renderer::CP_DIALOG);
 
     std::string ok_text = " &Ok "; // Standardized button text
-    m_renderer->drawButton(startx + (w - ok_text.length()) / 2, starty + h - 2, ok_text, true);
+    m_renderer->drawButton(startx + (w - ok_text.length()) / 2, starty + h - 3, ok_text, true);
 
     m_renderer->refresh();
 
@@ -2376,7 +2376,7 @@ void TextEditor::GoToLineDialog() {
     std::string cancel_btn_text = " &Cancel ";
 
     m_renderer->drawShadow(startx, starty, w, h);
-    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::SINGLE, " Go To Line ", Renderer::CP_DIALOG_TITLE, A_BOLD);
+    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Go To Line ", Renderer::CP_DIALOG_TITLE, A_BOLD);
 
     while (true) {
         wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
@@ -2389,7 +2389,7 @@ void TextEditor::GoToLineDialog() {
         m_renderer->drawText(startx + 18, starty + 2, std::string(w - 22, ' '), Renderer::CP_LIST_BOX);
         m_renderer->drawText(startx + 19, starty + 2, line_buf, Renderer::CP_LIST_BOX);
 
-        int btn_y = starty + h - 2;
+        int btn_y = starty + h - 3;
         m_renderer->drawButton(startx + w / 2 - 12, btn_y, ok_btn_text, focus == 1);
         m_renderer->drawButton(startx + w / 2 + 2, btn_y, cancel_btn_text, focus == 2);
 
@@ -2506,7 +2506,7 @@ void TextEditor::CompileOptionsDialog() {
     std::string cancel_btn_text = " &Cancel ";
 
     m_renderer->drawShadow(startx, starty, w, h);
-    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::SINGLE, " Compile Options ", Renderer::CP_DIALOG_TITLE, A_BOLD);
+    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Compile Options ", Renderer::CP_DIALOG_TITLE, A_BOLD);
 
     bool dialog_active = true;
     while (dialog_active) {
@@ -2541,8 +2541,8 @@ void TextEditor::CompileOptionsDialog() {
                 m_renderer->drawText(startx + 4, starty + 16 + i, wrapped_cmd[i], Renderer::CP_DIALOG);
             }
         }
-        m_renderer->drawButton(startx + w / 2 - 15, starty + h - 2, ok_btn_text, focus_group == 4 && focus_item[4] == 0);
-        m_renderer->drawButton(startx + w / 2 + 5, starty + h - 2, cancel_btn_text, focus_group == 4 && focus_item[4] == 1);
+        m_renderer->drawButton(startx + w / 2 - 15, starty + h - 3, ok_btn_text, focus_group == 4 && focus_item[4] == 0);
+        m_renderer->drawButton(startx + w / 2 + 5, starty + h - 3, cancel_btn_text, focus_group == 4 && focus_item[4] == 1);
 
         if (focus_group == 3) {
             m_renderer->showCursor();
@@ -2663,7 +2663,7 @@ void TextEditor::showHelpDialog() {
     int selected_link_idx = 0;
 
     m_renderer->drawShadow(startx, starty, w, h);
-    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::SINGLE, " Help System ", Renderer::CP_DIALOG_TITLE, A_BOLD);
+    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Help System ", Renderer::CP_DIALOG_TITLE, A_BOLD);
 
     while(true) {
         wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
