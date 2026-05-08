@@ -1,0 +1,46 @@
+#ifndef BUILDSYSTEM_H
+#define BUILDSYSTEM_H
+
+#include <string>
+#include <vector>
+#include <map>
+#include "EditorBuffer.h"
+#include "ConfigManager.h" // For Config
+
+// A struct to hold the results of a compilation
+struct CompilationResult {
+    std::vector<std::string> output_lines;
+    std::string executable_name;
+    bool success;
+    std::string full_command;
+};
+
+// A struct to hold parsed compiler message information
+struct CompileMessage {
+
+    enum CompileMessageType { CMSG_NONE, CMSG_ERROR, CMSG_WARNING, CMSG_NOTE };
+
+    std::string full_text;
+    CompileMessageType type = CMSG_NONE;
+    int line = -1;
+    int col = -1;
+};
+
+class BuildSystem {
+public:
+    BuildSystem(const Config& config);
+    
+    CompilationResult runCompilationProcess(EditorBuffer& buffer);
+    std::vector<CompileMessage> parseCompilerOutput(const std::string& full_output_str, std::vector<std::string>& output_lines_out);
+
+    void setConfig(const Config& config) { m_config = config; }
+    void invalidateCache(const std::string& filename) { m_compile_command_cache.erase(filename); }
+
+    std::string get_full_compile_command(const std::string& base_command, int mode, int opt_level, const std::vector<bool>& security_flags, const std::string& extra_flags);
+
+private:
+    Config m_config;
+    std::map<std::string, std::string> m_compile_command_cache;
+};
+
+#endif // BUILDSYSTEM_H
