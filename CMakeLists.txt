@@ -14,11 +14,26 @@ if(CURSES_FOUND)
         tedit.cpp
         Renderer.cpp
         TextEditor.cpp
+        SyntaxHighlighter.cpp
+        FileBrowser.cpp
+        ConfigManager.cpp
+        BuildSystem.cpp
+        SearchEngine.cpp
+        HelpProvider.cpp
+        BufferManager.cpp
         EditorBuffer.h
         Renderer.h
         TextEditor.h
+        SyntaxHighlighter.h
+        FileBrowser.h
+        ConfigManager.h
+        BuildSystem.h
+        SearchEngine.h
+        HelpProvider.h
+        BufferManager.h
         utils.h
         utils.cpp
+        EditorBuffer.cpp
     )
     target_link_libraries(${PROJECT_NAME} ${CURSES_LIBRARIES})
 else()
@@ -32,7 +47,7 @@ install(
     FILES
         help.hlp
         colors.json
-        /usr/share/gedi/config.json
+        config.json
     DESTINATION
         share/gedi
 )

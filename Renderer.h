@@ -5,50 +5,59 @@
 
 using json = nlohmann::json;
 
-class Renderer {
+class Renderer final
+{
 public:
+
     enum ColorPairID {
-        CP_DEFAULT_TEXT = 1, CP_HIGHLIGHT, CP_MENU_BAR, CP_MENU_ITEM,
-        CP_MENU_SELECTED, CP_DIALOG, CP_DIALOG_BUTTON, CP_SELECTION,
-        CP_STATUS_BAR, CP_STATUS_BAR_HIGHLIGHT, CP_SHADOW,
-        CP_DIALOG_TITLE, CP_CHANGED_INDICATOR, CP_LIST_BOX,
-        CP_SYNTAX_KEYWORD, CP_SYNTAX_COMMENT, CP_SYNTAX_STRING,
-        CP_SYNTAX_NUMBER, CP_SYNTAX_PREPROCESSOR, CP_SYNTAX_REGISTER_VAR,
-
-        CP_COMPILE_ERROR, CP_COMPILE_WARNING,
-
-        CP_BUTTON_TEXT, CP_BUTTON_HOTKEY,
-        CP_BUTTON_SELECTED_TEXT, CP_BUTTON_SELECTED_HOTKEY,
+        CP_DEFAULT_TEXT = 1,
+        CP_HIGHLIGHT,
+        CP_MENU_BAR,
+        CP_MENU_ITEM,
+        CP_MENU_SELECTED,
+        CP_DIALOG,
+        CP_DIALOG_BUTTON,
+        CP_SELECTION,
+        CP_STATUS_BAR,
+        CP_STATUS_BAR_HIGHLIGHT,
+        CP_SHADOW,
+        CP_DIALOG_TITLE,
+        CP_CHANGED_INDICATOR,
+        CP_LIST_BOX,
+        CP_SYNTAX_KEYWORD,
+        CP_SYNTAX_COMMENT,
+        CP_SYNTAX_STRING,
+        CP_SYNTAX_NUMBER,
+        CP_SYNTAX_PREPROCESSOR,
+        CP_SYNTAX_REGISTER_VAR,
+        CP_COMPILE_ERROR,
+        CP_COMPILE_WARNING,
+        CP_BUTTON_TEXT,
+        CP_BUTTON_HOTKEY,
+        CP_BUTTON_SELECTED_TEXT,
+        CP_BUTTON_SELECTED_HOTKEY,
         CP_BUTTON_SHADOW,
-
         CP_DEFAULT_ON_SELECTION,
-
-        CP_GUTTER_BG, CP_GUTTER_FG,
-
-        CP_BUTTON_BG, CP_BUTTON_SELECTED_BG
+        CP_GUTTER_BG,
+        CP_GUTTER_FG,
+        CP_BUTTON_BG,
+        CP_BUTTON_SELECTED_BG
     };
 
     enum BoxStyle { SINGLE, DOUBLE };
 
     Renderer();
-
     ~Renderer();
+
     void clear();
     void refresh();
     void updateDimensions();
-
     void drawText(int x, int y, const std::string& text, int colorId, int flags = 0);
-
     void drawStyledText(int x, int y, const std::string& text, int colorId);
-
     void drawButton(int x, int y, const std::string& text, bool selected);
-
     void drawBox(int x, int y, int w, int h, int colorId, BoxStyle style = SINGLE);
-
     void drawBoxWithTitle(int x, int y, int w, int h, int colorId, BoxStyle style, const std::string& title, int title_color, int title_flags);
-
     void drawShadow(int x, int y, int w, int h);
-
     wint_t getChar();
     void hideCursor();
     void showCursor();
@@ -56,13 +65,8 @@ public:
     int getHeight() const;
     void setCursor(int x, int y);
     int getStyleFlags(ColorPairID id) const;
-
-
     void loadColors();
-
     void loadColors(const json& theme_data);
-
-
     void createDefaultColorsFile();
 
 private:

@@ -70,9 +70,9 @@ void Renderer::drawStyledText(int x, int y, const std::string &text, int colorId
     for (size_t i = 0; i < text.length(); ++i) {
         if (text[i] == '&' && i + 1 < text.length()) {
             i++;
-            wattron(stdscr, A_UNDERLINE);
+            wattron(stdscr, A_UNDERLINE | A_BOLD);
             waddch(stdscr, text[i]);
-            wattroff(stdscr, A_UNDERLINE);
+            wattroff(stdscr, A_UNDERLINE | A_BOLD);
         } else { waddch(stdscr, text[i]); }
     }
     wattroff(stdscr, COLOR_PAIR(colorId));

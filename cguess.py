@@ -78,7 +78,6 @@ class Cache:
                 cursor_check.execute("SELECT distro_id FROM packages LIMIT 1")
                 conn_check.close()
             except sqlite3.OperationalError:
-                print("Cache schema is outdated. Clearing and recreating.", file=sys.stderr)
                 conn_check.close()
                 os.remove(self.db_path)
 
@@ -140,9 +139,6 @@ class Cache:
         cache_file = os.path.join(os.path.expanduser("~"), ".cache", "cguess", "cache.db")
         if os.path.exists(cache_file):
             os.remove(cache_file)
-            print("Cache cleared.", file=sys.stderr)
-        else:
-            print("No cache file to clear.", file=sys.stderr)
 
 def run_command(command: List[str]) -> str:
     """Executes a shell command and returns its stdout."""
@@ -273,10 +269,8 @@ def get_distro() -> Tuple[Optional[str], Optional[PackageManager]]:
 
 def get_compiler_version(compiler: str) -> Optional[int]:
     """Gets the major version number of the system's compiler."""
-    print(f"   -> Checking {compiler} version...", file=sys.stderr)
     output = run_command([compiler, '--version'])
     if not output:
-        print(f"Warning: Could not find {compiler}. Is it installed and in your PATH?", file=sys.stderr)
         return None
         
     # Regex for GCC-like and Clang-like version strings
@@ -284,22 +278,18 @@ def get_compiler_version(compiler: str) -> Optional[int]:
     if match:
         version = int(match.group(1))
         return version
-    print(f"Warning: Could not parse {compiler} version string.", file=sys.stderr)
     return None
 
 def get_max_supported_standard(compiler_version: Optional[int]) -> Optional[str]:
     """Determines the highest C++ standard flag supported by the given compiler version."""
     if not compiler_version: return None
-    print(f"   -> Detected compiler version {compiler_version}.", file=sys.stderr)
     # This mapping is a good approximation for both modern GCC and Clang.
     if compiler_version >= 11: standard = 'c++20'
     elif compiler_version >= 7: standard = 'c++17'
     elif compiler_version >= 5: standard = 'c++14'
     elif compiler_version >= 4: standard = 'c++11'
     else:
-        print("   -> Compiler version is too old to reliably set a modern C++ standard.", file=sys.stderr)
         return None
-    print(f"   -> Setting highest supported standard to C++{standard[3:]}.", file=sys.stderr)
     return f'-std={standard}'
 
 def extract_headers_from_file(file_path: str) -> Set[Tuple[str, str]]:
@@ -315,7 +305,7 @@ def extract_headers_from_file(file_path: str) -> Set[Tuple[str, str]]:
     except FileNotFoundError:
         pass
     except Exception as e:
-        print(f"Warning: Could not read file '{file_path}': {e}", file=sys.stderr)
+        pass
     return headers
 
 def analyze_source_for_symbols(file_path: str) -> Set[str]:
@@ -353,7 +343,6 @@ def find_header_candidates(header: str, pm: PackageManager, cache: Cache) -> Lis
     """Finds all possible Debian packages and paths for a system header, using a cache."""
     cached_candidates = cache.get('system_headers', header)
     if cached_candidates:
-        print(f"   -> Found candidates for '{header}' in cache.", file=sys.stderr)
         return cached_candidates
 
     candidates = pm.find_header_candidates(header)
@@ -364,7 +353,6 @@ def find_package_info(package_name: str, pm: PackageManager, cache: Cache) -> Tu
     """Finds all include paths and libraries within a given Debian package, using a cache."""
     cached_info = cache.get('packages', package_name)
     if cached_info:
-        print(f"      -> Found info for package '{package_name}' in cache.", file=sys.stderr)
         return (set(cached_info[0]), set(cached_info[1]))
 
     include_paths, libs = pm.find_package_info(package_name)
@@ -412,7 +400,6 @@ clean:
 """
     with open("Makefile", "w") as f:
         f.write(makefile_content.strip())
-    print("✅ Generated Makefile.", file=sys.stderr)
 
 def generate_cmakefile(output_name, source_files, mode, std_flag, include_paths, libs):
     """Generates a CMakeLists.txt file."""
@@ -454,8 +441,7 @@ target_link_libraries({output_name} PRIVATE
 """
     with open("CMakeLists.txt", "w") as f:
         f.write(cmake_content.strip())
-    print("✅ Generated CMakeLists.txt.", file=sys.stderr)
-
+    
 
 def main():
     parser = argparse.ArgumentParser(description="Generates a full compiler command or build file for a C++ project.")
@@ -477,8 +463,6 @@ def main():
         print("Error: Could not determine Linux distribution or distribution is not supported.", file=sys.stderr)
         sys.exit(1)
     
-    print(f"🐧 Detected Distro: {distro_id.capitalize()}", file=sys.stderr)
-
     cache = Cache(distro_id, enabled=not args.no_cache)
     compiler = args.compiler
 
@@ -486,18 +470,14 @@ def main():
     project_root = os.path.dirname(main_source_file)
     output_name = args.output or os.path.splitext(os.path.basename(main_source_file))[0]
 
-    print(f"🔍 Analyzing project starting from '{main_source_file}'...", file=sys.stderr)
-    
     compiler_version = get_compiler_version(compiler)
     cpp_standard_flag = get_max_supported_standard(compiler_version)
     
     mode_flags = []
     if args.mode == 'debug':
         mode_flags.append('-g')
-        print("🔧 Build mode: debug (-g)", file=sys.stderr)
     elif args.mode == 'release':
         mode_flags.extend(['-O3', '-DNDEBUG'])
-        print("🚀 Build mode: release (-O3 -DNDEBUG)", file=sys.stderr)
 
     all_source_files = {main_source_file}
     all_include_paths = set()
@@ -519,14 +499,12 @@ def main():
 
         if local_header_path:
             abs_local_header_path = os.path.abspath(local_header_path)
-            print(f"   -> Found local header: {local_header_path}", file=sys.stderr)
             processed_local_headers.add(abs_local_header_path)
             all_include_paths.add(os.path.dirname(abs_local_header_path))
 
             base_name = os.path.splitext(abs_local_header_path)[0]
             cpp_file = f"{base_name}.cpp"
             if os.path.exists(cpp_file):
-                print(f"      - Found corresponding source file: {cpp_file}", file=sys.stderr)
                 all_source_files.add(cpp_file)
             
             new_headers = extract_headers_from_file(abs_local_header_path)
@@ -535,16 +513,13 @@ def main():
                     headers_to_process.append(h)
             continue
 
-        print(f"\n--- Processing system header '{header_name}' ---", file=sys.stderr)
         source_symbols = analyze_source_for_symbols(main_source_file)
         candidates = find_header_candidates(header_name, pm, cache)
         if not candidates:
-            print(f"   -> Could not find a package for header '{header_name}'.", file=sys.stderr)
             continue
         
         best_candidate = candidates[0]
         if len(candidates) > 1:
-            print(f"   -> Found {len(candidates)} candidates. Disambiguating...", file=sys.stderr)
             best_candidate = max(candidates, key=lambda c: score_header_match(source_symbols, c['full_path']))
 
         package = best_candidate['package']
@@ -552,12 +527,10 @@ def main():
             continue
         
         processed_system_packages.add(package)
-        print(f"   -> Found in package '{package}'. Analyzing package...", file=sys.stderr)
         
         package_includes, package_libs = find_package_info(package, pm, cache)
         all_include_paths.update(package_includes)
         all_libs.update(package_libs)
-        print(f"      - Found {len(package_includes)} include paths and {len(package_libs)} libraries.", file=sys.stderr)
 
     # --- Final Output ---
     if args.generate == 'makefile':
@@ -579,10 +552,7 @@ def main():
 
         full_command = " ".join(command_parts)
 
-        print("\n----------------------------------------", file=sys.stderr)
-        print("✅ Generated compiler command:", file=sys.stderr)
-        print(full_command)
-        print("----------------------------------------", file=sys.stderr)
+        print("GUESS:", full_command)
 
     cache.close()
 

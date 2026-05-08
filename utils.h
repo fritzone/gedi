@@ -20,4 +20,8 @@ bool ends_with(const std::string& str, const std::string& suffix);
 
 std::vector<std::string> wrap_text(const std::string& text, int width);
 
+std::string get_full_path(const std::string& filename_part);
+
+std::string get_filename_from_path(const std::string& full_path);
+
 #endif // UTILS_H

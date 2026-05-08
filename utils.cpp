@@ -10,6 +10,9 @@
 #include <cctype>
 #include <iostream>
 #include <iomanip>
+#include <filesystem>
+
+namespace fs = std::filesystem;
 
 std::string formatPermissions(mode_t mode) {
     std::string perms = "----------";
@@ -94,4 +97,34 @@ std::vector<std::string> wrap_text(const std::string& text, int width) {
     }
 
     return lines;
+}
+
+std::string get_full_path(const std::string &filename_part) {
+    // Trim leading and trailing spaces
+    std::string filename = filename_part;
+    filename.erase(0, filename.find_first_not_of(" \t\n\r\f\v"));
+    filename.erase(filename.find_last_not_of(" \t\n\r\f\v") + 1);
+
+    fs::path p(filename);
+
+    // If the path is not absolute, make it absolute relative to the current working directory
+    if (!p.is_absolute()) {
+        p = fs::absolute(p);
+    }
+
+    // Resolve all . and .. elements
+    try {
+        p = fs::canonical(p);
+    } catch (const fs::filesystem_error& e) {
+        // Handle error (e.g., file does not exist)
+        return filename_part;
+    }
+
+    return p.string();
+}
+
+std::string get_filename_from_path(const std::string &full_path)
+{
+    fs::path p(full_path);
+    return p.filename().string();
 }
