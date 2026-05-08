@@ -8,7 +8,7 @@
 
 Renderer::Renderer() {
     setlocale(LC_ALL, ""); initscr();
-
+    set_escdelay(25);
     cbreak(); noecho();
     keypad(stdscr, TRUE); nodelay(stdscr, TRUE); curs_set(1);
     start_color(); use_default_colors();

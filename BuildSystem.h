@@ -6,6 +6,7 @@
 #include <map>
 #include "EditorBuffer.h"
 #include "ConfigManager.h" // For Config
+#include "CompilerSettings.h"
 
 // A struct to hold the results of a compilation
 struct CompilationResult {
@@ -36,6 +37,7 @@ public:
     void setConfig(const Config& config) { m_config = config; }
     void invalidateCache(const std::string& filename) { m_compile_command_cache.erase(filename); }
 
+    std::string get_full_compile_command(const std::string& base_command, const CompilerSettings& settings);
     std::string get_full_compile_command(const std::string& base_command, int mode, int opt_level, const std::vector<bool>& security_flags, const std::string& extra_flags);
 
 private:

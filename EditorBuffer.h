@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include "CompilerSettings.h"
 
 struct Line {
     std::string text;
@@ -62,6 +63,7 @@ public:
     int bufferNr = 1;
     std::vector<UndoRecord> undo_stack;
     std::vector<UndoRecord> redo_stack;
+    CompilerSettings compiler_settings;
 
 };
 

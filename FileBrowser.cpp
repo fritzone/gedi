@@ -165,11 +165,11 @@ std::string FileBrowser::open(Renderer& renderer) {
             return a.name < b.name;
         });
 
-        drawDialogFrame(renderer, startx, starty, w, h-1, "Open File");
+        drawDialogFrame(renderer, startx, starty, w, h, "Open File");
         drawPathHeader(renderer, startx, starty, w, current_path);
 
         int list_w = (w * 3) / 5;
-        int visible_items = h - 10;
+        int visible_items = h - 12; // More space for gaps
         int details_x = startx + list_w + 2;
 
         drawFileList(renderer, startx + 1, starty + 3, list_w, visible_items, entries, selection, top_of_list, focus == 0);
@@ -311,11 +311,11 @@ std::string FileBrowser::save(Renderer& renderer, const std::string& current_fil
             return a.name < b.name;
         });
 
-        drawDialogFrame(renderer, startx, starty, w, h-1, "Save File As");
+        drawDialogFrame(renderer, startx, starty, w, h, "Save File As");
         drawPathHeader(renderer, startx, starty, w, current_path);
 
         int list_w = (w * 3) / 5;
-        int visible_items = h - 10; // Even more space for gaps
+        int visible_items = h - 12; // More space for gaps
         int details_x = startx + list_w + 2;
 
         drawFileList(renderer, startx + 1, starty + 3, list_w, visible_items, entries, selection, top_of_list, focus == 0);

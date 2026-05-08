@@ -1,6 +1,8 @@
 #include "TextEditor.h"
 #include "SyntaxHighlighter.h"
 #include "FileBrowser.h"
+#include "ComboBox.h"
+#include "TabControl.h"
 #include "utils.h"
 
 #include <ncurses.h>
@@ -1416,7 +1418,7 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
     int selection = 1;
     wint_t ch;
     while(true) {
-        m_renderer->drawBox(x, y, w, h, Renderer::CP_MENU_ITEM, Renderer::DOUBLE);
+        m_renderer->drawBox(x, y, w, h, Renderer::CP_MENU_ITEM, Renderer::SINGLE);
         for (size_t i = 0; i < finalMenuItems.size(); ++i) {
             if(finalMenuItems[i].find("---") != std::string::npos) {
                 wattron(stdscr, COLOR_PAIR(Renderer::CP_MENU_ITEM));
@@ -2466,167 +2468,220 @@ end_goto_dialog:
 }
 
 void TextEditor::CompileOptionsDialog() {
-    int h = 25, w = 78;
+    int h = 32, w = 84;
     int starty = (m_renderer->getHeight() - h) / 2;
     int startx = (m_renderer->getWidth() - w) / 2;
 
     WINDOW* behind = newwin(h + 1, w + 1, starty, startx);
     copywin(stdscr, behind, starty, startx, 0, 0, h, w, FALSE);
 
-    int temp_mode = m_config.compile_mode;
-    int temp_opt = m_config.optimization_level;
-    std::vector<bool> temp_sec_flags = m_config.security_flags;
-    std::string temp_extra_flags = m_config.extra_compile_flags;
+    CompilerSettings& settings = currentBuffer().compiler_settings;
+    CompilerSettings temp_settings = settings;
 
-    const std::vector<std::string> opt_labels = {
-        "-O0 (None)", "-O1 (Basic)", "-O2 (Default)", "-O3 (Full)", "-Os (Size)"
-    };
-    const std::vector<std::string> sec_labels = {
-        "Stack Protector", "PIE", "Fortify Source", "Stack Clash", "RELRO"
+    std::vector<std::string> standards = {"c++11", "c++14", "c++17", "c++20", "c++23", "c++26"};
+    int std_idx = 0;
+    for(size_t i=0; i<standards.size(); ++i) if(standards[i] == temp_settings.cpp_standard) std_idx = i;
+    ComboBox stdCombo(standards, std_idx);
+
+    TabControl tabs({"Basic", "Advanced", "Expert"});
+    int focus_area = 0; // 0: Combobox, 1: Tabs, 2: Content, 3: Optional, 4: Buttons
+    int sub_focus = 0;
+
+    struct Option {
+        std::string label;
+        std::string group;
+        bool is_radio;
+        int radio_val;
+        bool* b_val;
+        int* i_val;
     };
 
-    std::string cguess_cmd = "python3 /usr/local/lib/python3/dist-packages/gedi/cguess.py \"" + currentBuffer().filename + "\" 2>/dev/null";
+    auto get_options = [&](int tab_idx) {
+        std::vector<Option> opts;
+        if (tab_idx == 0) {
+            opts = {
+                {"Generate debug symbols (-g)", "Optimization", false, 0, &temp_settings.debug_symbols, nullptr},
+                {"Disable optimisation (-O0)", "Optimization", true, 0, nullptr, &temp_settings.optimization_level},
+                {"Balanced optimisation (-O2)", "Optimization", true, 1, nullptr, &temp_settings.optimization_level},
+                {"High optimisation (-O3)", "Optimization", true, 2, nullptr, &temp_settings.optimization_level},
+                {"Enable common warnings (-Wall)", "Warnings", false, 0, &temp_settings.wall, nullptr},
+                {"Enable extra warnings (-Wextra)", "Warnings", false, 0, &temp_settings.wextra, nullptr},
+                {"Strict ISO compliance (-Wpedantic)", "Warnings", false, 0, &temp_settings.wpedantic, nullptr},
+                {"Treat warnings as errors (-Werror)", "Warnings", false, 0, &temp_settings.werror, nullptr}
+            };
+        } else if (tab_idx == 1) {
+            opts = {
+                {"Warn on implicit conversions (-Wconversion)", "Warnings", false, 0, &temp_settings.wconversion, nullptr},
+                {"Warn on signed/unsigned conv (-Wsign-conversion)", "Warnings", false, 0, &temp_settings.wsign_conversion, nullptr},
+                {"Warn on variable shadowing (-Wshadow)", "Warnings", false, 0, &temp_settings.wshadow, nullptr},
+                {"Warn on non-virtual destructors (-Wnon-virtual-dtor)", "Warnings", false, 0, &temp_settings.wnon_virtual_dtor, nullptr},
+                {"Warn on old-style casts (-Wold-style-cast)", "Warnings", false, 0, &temp_settings.wold_style_cast, nullptr},
+                {"Warn on overloaded virtuals (-Woverloaded-virtual)", "Warnings", false, 0, &temp_settings.woverloaded_virtual, nullptr},
+                {"Warn on null dereference (-Wnull-dereference)", "Warnings", false, 0, &temp_settings.wnull_dereference, nullptr},
+                {"Warn on double promotion (-Wdouble-promotion)", "Warnings", false, 0, &temp_settings.wdouble_promotion, nullptr},
+                {"Strict format string checking (-Wformat=2)", "Warnings", false, 0, &temp_settings.wformat_2, nullptr},
+                {"Keep frame pointer (-fno-omit-frame-pointer)", "Sanitizer", false, 0, &temp_settings.fno_omit_frame_pointer, nullptr},
+                {"Enable ASan and UBSan (-fsanitize=address,ub)", "Sanitizer", false, 0, &temp_settings.fsanitize_address_ub, nullptr},
+                {"Enable LeakSanitizer (-fsanitize=leak)", "Sanitizer", false, 0, &temp_settings.fsanitize_leak, nullptr},
+                {"Enable LTO (-flto)", "Sanitizer", false, 0, &temp_settings.flto, nullptr},
+                {"Optimise for host CPU (-march=native)", "Optimizer", false, 0, &temp_settings.march_native, nullptr},
+                {"Tune for host CPU (-mtune=native)", "Optimizer", false, 0, &temp_settings.mtune_native, nullptr}
+            };
+        } else {
+            opts = {
+                {"Warn on cast alignment (-Wcast-align)", "Warnings", false, 0, &temp_settings.wcast_align, nullptr},
+                {"Warn on cast qualifiers (-Wcast-qual)", "Warnings", false, 0, &temp_settings.wcast_qual, nullptr},
+                {"Warn on missing enum cases (-Wswitch-enum)", "Warnings", false, 0, &temp_settings.wswitch_enum, nullptr},
+                {"Warn on undefined macros (-Wundef)", "Warnings", false, 0, &temp_settings.wundef, nullptr},
+                {"Warn on redundant decls (-Wredundant-decls)", "Warnings", false, 0, &temp_settings.wredundant_decls, nullptr},
+                {"Warn on logical op issues (-Wlogical-op)", "Warnings", false, 0, &temp_settings.wlogical_op, nullptr},
+                {"Warn on useless casts (-Wuseless-cast)", "Warnings", false, 0, &temp_settings.wuseless_cast, nullptr},
+                {"Effective C++ warnings (-Weffc++)", "Warnings", false, 0, &temp_settings.weffcxx, nullptr},
+                {"Disable exceptions (-fno-exceptions)", "Functionality", false, 0, &temp_settings.fno_exceptions, nullptr},
+                {"Disable RTTI (-fno-rtti)", "Functionality", false, 0, &temp_settings.fno_rtti, nullptr},
+                {"Hide symbols by default (-fvisibility=hidden)", "Functionality", false, 0, &temp_settings.fvisibility_hidden, nullptr},
+                {"Enable strict aliasing (-fstrict-aliasing)", "Functionality", false, 0, &temp_settings.fstrict_aliasing, nullptr},
+                {"Sanitise ptr comparisons (-fsanitize=ptr-cmp)", "Sanitizer", false, 0, &temp_settings.fsanitize_pointer_compare, nullptr},
+                {"Sanitise ptr arithmetic (-fsanitize=ptr-sub)", "Sanitizer", false, 0, &temp_settings.fsanitize_pointer_subtract, nullptr},
+                {"Linker: remove unused deps (--as-needed)", "Linker", false, 0, &temp_settings.wl_as_needed, nullptr},
+                {"Linker: optimise linking (-Wl,-O1)", "Linker", false, 0, &temp_settings.wl_o1, nullptr}
+            };
+        }
+        return opts;
+    };
+
     std::string base_cmd;
-
+    std::string cguess_cmd = "python3 /usr/local/lib/python3/dist-packages/gedi/cguess.py \"" + currentBuffer().filename + "\" 2>/dev/null";
     FILE* pipe = popen(cguess_cmd.c_str(), "r");
     if (pipe) {
-        char line[512];
-        if (fgets(line, sizeof(line), pipe) != NULL) { base_cmd = line; }
+        char l[512];
+        if (fgets(l, sizeof(l), pipe)) base_cmd = l;
         pclose(pipe);
-        base_cmd = base_cmd.find("GUESS: ") != std::string::npos ? base_cmd.substr(base_cmd.find("GUESS: ") + 7) : base_cmd;
+        if (base_cmd.find("GUESS: ") != std::string::npos) base_cmd = base_cmd.substr(base_cmd.find("GUESS: ") + 7);
         base_cmd.erase(std::remove(base_cmd.begin(), base_cmd.end(), '\n'), base_cmd.end());
     }
 
-    int focus_group = 0;
-    std::vector<int> focus_item(5, 0);
-
     nodelay(stdscr, FALSE);
-
-    std::string ok_btn_text = " &Ok "; // Standardized button text
-    std::string cancel_btn_text = " &Cancel ";
-
-    m_renderer->drawShadow(startx, starty, w, h);
-    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Compile Options ", Renderer::CP_DIALOG_TITLE, A_BOLD);
-
     bool dialog_active = true;
+    int top_opt = 0;
+    int last_tab = -1;
+
     while (dialog_active) {
-        std::string final_cmd = m_buildSystem->get_full_compile_command(base_cmd, temp_mode, temp_opt, temp_sec_flags, temp_extra_flags);
-        std::vector<std::string> wrapped_cmd = wrap_text(final_cmd, w - 8);
+        if (tabs.getActiveTab() != last_tab) {
+            top_opt = 0; sub_focus = 0;
+            last_tab = tabs.getActiveTab();
+        }
+
+        m_renderer->drawShadow(startx, starty, w, h);
+        m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Compiler Options ", Renderer::CP_DIALOG_TITLE, A_BOLD);
 
         wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
         for (int i = 1; i < h - 1; ++i) mvwaddstr(stdscr, starty + i, startx + 1, std::string(w - 2, ' ').c_str());
         wattroff(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-        m_renderer->drawBoxWithTitle(startx + 2, starty + 2, 20, 4, Renderer::CP_DIALOG, Renderer::SINGLE, " &Mode ", Renderer::CP_DIALOG, (focus_group == 0 ? A_BOLD : 0));
-        m_renderer->drawText(startx + 4, starty + 3, (temp_mode == 0 ? "[X]" : "[ ]"), (focus_group == 0 && focus_item[0] == 0) ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
-        m_renderer->drawText(startx + 8, starty + 3, "Debug", Renderer::CP_DIALOG);
-        m_renderer->drawText(startx + 4, starty + 4, (temp_mode == 1 ? "[X]" : "[ ]"), (focus_group == 0 && focus_item[0] == 1) ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
-        m_renderer->drawText(startx + 8, starty + 4, "Release", Renderer::CP_DIALOG);
-        m_renderer->drawBoxWithTitle(startx + 24, starty + 2, 22, 8, Renderer::CP_DIALOG, Renderer::SINGLE, " Op&timization ", Renderer::CP_DIALOG, (focus_group == 1 ? A_BOLD : 0));
-        for (size_t i = 0; i < opt_labels.size(); ++i) {
-            m_renderer->drawText(startx + 26, starty + 3 + i, (temp_opt == (int)i ? "(•)" : "( )"), (focus_group == 1 && focus_item[1] == (int)i) ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
-            m_renderer->drawText(startx + 30, starty + 3 + i, opt_labels[i], Renderer::CP_DIALOG);
+
+        m_renderer->drawText(startx + 2, starty + 2, "C++ Standard:", Renderer::CP_DIALOG);
+        stdCombo.draw(*m_renderer, startx + 17, starty + 2, 12, focus_area == 0);
+
+        tabs.draw(*m_renderer, startx + 2, starty + 4, w - 4, focus_area == 1);
+
+        auto current_opts = get_options(tabs.getActiveTab());
+        int visible_opt_rows = h - 18;
+        int opt_y = starty + 6;
+
+        struct Row { bool is_group; std::string text; int opt_idx; };
+        std::vector<Row> rows;
+        std::string last_group;
+        for (int i = 0; i < (int)current_opts.size(); ++i) {
+            if (current_opts[i].group != last_group) {
+                last_group = current_opts[i].group;
+                rows.push_back({true, "- Group: " + last_group, -1});
+            }
+            bool val = current_opts[i].is_radio ? (*current_opts[i].i_val == current_opts[i].radio_val) : *current_opts[i].b_val;
+            std::string mark = current_opts[i].is_radio ? (val ? "(•)" : "( )") : (val ? "[X]" : "[ ]");
+            rows.push_back({false, mark + " " + current_opts[i].label, i});
         }
-        m_renderer->drawBoxWithTitle(startx + 48, starty + 2, 28, 8, Renderer::CP_DIALOG, Renderer::SINGLE, " &Security ", Renderer::CP_DIALOG, (focus_group == 2 ? A_BOLD : 0));
-        for (size_t i = 0; i < sec_labels.size(); ++i) {
-            m_renderer->drawText(startx + 50, starty + 3 + i, (temp_sec_flags[i] ? "[X]" : "[ ]"), (focus_group == 2 && focus_item[2] == (int)i) ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
-            m_renderer->drawText(startx + 54, starty + 3 + i, sec_labels[i], Renderer::CP_DIALOG);
-        }
-        m_renderer->drawBoxWithTitle(startx + 2, starty + 11, w - 4, 3, Renderer::CP_DIALOG, Renderer::SINGLE, " Optional &Flags ", Renderer::CP_DIALOG, (focus_group == 3 ? A_BOLD : 0));
-        m_renderer->drawText(startx + 4, starty + 12, std::string(w - 8, ' '), Renderer::CP_LIST_BOX);
-        m_renderer->drawText(startx + 4, starty + 12, temp_extra_flags, Renderer::CP_LIST_BOX);
-        m_renderer->drawBoxWithTitle(startx + 2, starty + 15, w - 4, 6, Renderer::CP_DIALOG, Renderer::SINGLE, " Final Command ", Renderer::CP_DIALOG, 0);
-        for (size_t i = 0; i < 4; ++i) {
-            m_renderer->drawText(startx + 4, starty + 16 + i, std::string(w - 8, ' '), Renderer::CP_DIALOG);
-            if (i < wrapped_cmd.size()) {
-                m_renderer->drawText(startx + 4, starty + 16 + i, wrapped_cmd[i], Renderer::CP_DIALOG);
+
+        int selected_row = -1;
+        for(int i=0; i<(int)rows.size(); ++i) if(!rows[i].is_group && rows[i].opt_idx == sub_focus) selected_row = i;
+        if (selected_row < top_opt) top_opt = selected_row;
+        if (selected_row >= top_opt + visible_opt_rows) top_opt = selected_row - visible_opt_rows + 1;
+
+        for (int i = 0; i < visible_opt_rows && (top_opt + i) < (int)rows.size(); ++i) {
+            const auto& row = rows[top_opt + i];
+            if (row.is_group) m_renderer->drawText(startx + 2, opt_y + i, row.text, Renderer::CP_DIALOG, A_BOLD);
+            else {
+                int color = (focus_area == 2 && row.opt_idx == sub_focus) ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG;
+                m_renderer->drawText(startx + 4, opt_y + i, row.text, color);
             }
         }
-        m_renderer->drawButton(startx + w / 2 - 15, starty + h - 3, ok_btn_text, focus_group == 4 && focus_item[4] == 0);
-        m_renderer->drawButton(startx + w / 2 + 5, starty + h - 3, cancel_btn_text, focus_group == 4 && focus_item[4] == 1);
 
-        if (focus_group == 3) {
-            m_renderer->showCursor();
-            move(starty + 12, startx + 4 + temp_extra_flags.length());
-        } else {
-            m_renderer->hideCursor();
-        }
+        m_renderer->drawBoxWithTitle(startx + 2, starty + h - 11, w - 4, 3, Renderer::CP_DIALOG, Renderer::SINGLE, " Optional flags ", Renderer::CP_DIALOG, (focus_area == 3 ? A_BOLD : 0));
+        m_renderer->drawText(startx + 4, starty + h - 10, std::string(w - 8, ' '), Renderer::CP_LIST_BOX);
+        m_renderer->drawText(startx + 4, starty + h - 10, temp_settings.optional_flags, Renderer::CP_LIST_BOX);
+
+        std::string final_cmd = m_buildSystem->get_full_compile_command(base_cmd, temp_settings);
+        std::vector<std::string> wrapped = wrap_text(final_cmd, w - 8);
+        m_renderer->drawBoxWithTitle(startx + 2, starty + h - 8, w - 4, 4, Renderer::CP_DIALOG, Renderer::SINGLE, " Final Command ", Renderer::CP_DIALOG, 0);
+        for (size_t i = 0; i < 2; ++i) if (i < wrapped.size()) m_renderer->drawText(startx + 4, starty + h - 7 + i, wrapped[i], Renderer::CP_DIALOG);
+
+        m_renderer->drawButton(startx + w/2 - 12, starty + h - 3, " &Ok ", focus_area == 4 && sub_focus == 0);
+        m_renderer->drawButton(startx + w/2 + 2, starty + h - 3, " &Cancel ", focus_area == 4 && sub_focus == 1);
+
+        if (focus_area == 3) { m_renderer->showCursor(); move(starty + h - 10, startx + 4 + temp_settings.optional_flags.length()); }
+        else m_renderer->hideCursor();
         m_renderer->refresh();
 
         wint_t ch = m_renderer->getChar();
         if (ch == 27) {
-            timeout(50);
-            wint_t next_ch = m_renderer->getChar();
-            timeout(-1);
-            if (next_ch == ERR) { dialog_active = false; break; }
-            switch (tolower(next_ch)) {
-            case 'm': focus_group = 0; focus_item[0] = 0; break;
-            case 't': focus_group = 1; focus_item[1] = 0; break;
-            case 'p': focus_group = 1; focus_item[1] = 0; break; // Allow Alt+P for Optimization
-            case 's': focus_group = 2; focus_item[2] = 0; break;
-            case 'f': focus_group = 3; break;
-            case 'k': focus_group = 4; focus_item[4] = 0; goto handle_enter_compile; // Keep Alt+K for legacy OK
-            case 'c': focus_group = 4; focus_item[4] = 1; goto handle_enter_compile;
-            case 'o': focus_group = 4; focus_item[4] = 0; goto handle_enter_compile;
+            timeout(1); wint_t nch = m_renderer->getChar(); timeout(-1);
+            if (nch == ERR) { dialog_active = false; break; }
+            switch(tolower(nch)) {
+                case 'o': focus_area = 4; sub_focus = 0; break;
+                case 'c': dialog_active = false; break;
             }
-
         } else {
-            switch (ch) {
-            case 9:
-                focus_group = (focus_group + 1) % 5;
-                focus_item[focus_group] = 0;
-                break;
-            case KEY_UP:
-                if (focus_group == 0 && focus_item[0] > 0) focus_item[0]--;
-                if (focus_group == 1 && focus_item[1] > 0) focus_item[1]--;
-                if (focus_group == 2 && focus_item[2] > 0) focus_item[2]--;
-                break;
-            case KEY_DOWN:
-                if (focus_group == 0 && focus_item[0] < 1) focus_item[0]++;
-                if (focus_group == 1 && focus_item[1] < (int)opt_labels.size() - 1) focus_item[1]++;
-                if (focus_group == 2 && focus_item[2] < (int)sec_labels.size() - 1) focus_item[2]++;
-                break;
-            case KEY_LEFT:
-                if (focus_group == 4 && focus_item[4] > 0) focus_item[4]--;
-                break;
-            case KEY_RIGHT:
-                if (focus_group == 4 && focus_item[4] < 1) focus_item[4]++;
-                break;
-            case ' ':
-            case KEY_ENTER:
-            case 10:
-            case 13:
-            handle_enter_compile:
-                if (focus_group == 0) temp_mode = (temp_mode == focus_item[0]) ? -1 : focus_item[0];
-                else if (focus_group == 1) temp_opt = (temp_opt == focus_item[1]) ? -1 : focus_item[1];
-                else if (focus_group == 2) temp_sec_flags[focus_item[2]] = !temp_sec_flags[focus_item[2]];
-                else if (focus_group == 4) {
-                    if (focus_item[4] == 0) { // OK
-                        m_config.compile_mode = temp_mode;
-                        m_config.optimization_level = temp_opt;
-                        m_config.security_flags = temp_sec_flags;
-                        m_config.extra_compile_flags = temp_extra_flags;
-                        m_configManager->saveConfig(m_config);
-                        m_buildSystem->setConfig(m_config);
+            switch(ch) {
+                case 9: focus_area = (focus_area + 1) % 5; sub_focus = 0; break;
+                case KEY_BTAB: focus_area = (focus_area + 4) % 5; sub_focus = 0; break;
+                case KEY_UP:
+                    if (focus_area == 2 && sub_focus > 0) sub_focus--;
+                    else if (focus_area > 0) { focus_area--; if (focus_area == 2) sub_focus = current_opts.size() - 1; else sub_focus = 0; }
+                    break;
+                case KEY_DOWN:
+                    if (focus_area == 2 && sub_focus < (int)current_opts.size() - 1) sub_focus++;
+                    else if (focus_area < 4) { focus_area++; sub_focus = 0; }
+                    break;
+                case KEY_LEFT:
+                    if (focus_area == 0) { stdCombo.handleInput(ch); temp_settings.cpp_standard = stdCombo.getSelectedText(); }
+                    else if (focus_area == 1) tabs.handleInput(ch);
+                    else if (focus_area == 4 && sub_focus > 0) sub_focus--;
+                    break;
+                case KEY_RIGHT:
+                    if (focus_area == 0) { stdCombo.handleInput(ch); temp_settings.cpp_standard = stdCombo.getSelectedText(); }
+                    else if (focus_area == 1) tabs.handleInput(ch);
+                    else if (focus_area == 4 && sub_focus < 1) sub_focus++;
+                    break;
+                case ' ': case KEY_ENTER: case 10: case 13:
+                    if (focus_area == 2) {
+                        if (current_opts[sub_focus].is_radio) *current_opts[sub_focus].i_val = current_opts[sub_focus].radio_val;
+                        else *current_opts[sub_focus].b_val = !*current_opts[sub_focus].b_val;
+                    } else if (focus_area == 4) {
+                        settings = temp_settings;
+                        dialog_active = false;
                     }
-                    dialog_active = false;
-                }
-                break;
-            case KEY_BACKSPACE: case 127: case 8:
-                if (focus_group == 3 && !temp_extra_flags.empty()) temp_extra_flags.pop_back();
-                break;
-            default:
-                if (focus_group == 3 && ch > 31 && ch < KEY_MIN) {
-                    temp_extra_flags += wchar_to_utf8(ch);
-                }
-                break;
+                    break;
+                case KEY_BACKSPACE: case 127: case 8:
+                    if (focus_area == 3 && !temp_settings.optional_flags.empty()) temp_settings.optional_flags.pop_back();
+                    break;
+                default:
+                    if (focus_area == 3 && ch > 31 && ch < KEY_MIN) temp_settings.optional_flags += wchar_to_utf8(ch);
+                    break;
             }
         }
     }
 
     copywin(behind, stdscr, 0, 0, starty, startx, h, w, FALSE); delwin(behind);
-    nodelay(stdscr, TRUE);
-    m_renderer->showCursor();
-    handleResize();
+    nodelay(stdscr, TRUE); m_renderer->showCursor(); handleResize();
 }
 
 void TextEditor::AboutBox() { msgwin("gedi C++ Editor"); }

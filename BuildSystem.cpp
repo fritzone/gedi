@@ -44,7 +44,7 @@ CompilationResult BuildSystem::runCompilationProcess(EditorBuffer& buffer) {
     }
 
     // Step 2: Run Compiler
-    result.full_command = get_full_compile_command(base_compile_cmd, m_config.compile_mode, m_config.optimization_level, m_config.security_flags, m_config.extra_compile_flags);
+    result.full_command = get_full_compile_command(base_compile_cmd, buffer.compiler_settings);
     result.output_lines.push_back("");
     result.output_lines.push_back("Compiling...");
     result.output_lines.push_back("> " + result.full_command);
@@ -91,6 +91,73 @@ std::vector<CompileMessage> BuildSystem::parseCompilerOutput(const std::string& 
         }
     }
     return messages;
+}
+
+std::string BuildSystem::get_full_compile_command(const std::string& base_command, const CompilerSettings& settings) {
+    if (base_command.empty()) return "";
+
+    std::string flags;
+    flags += "-std=" + settings.cpp_standard + " ";
+    
+    // Tab 1: Basic
+    if (settings.debug_symbols) flags += "-g ";
+    if (settings.optimization_level == 0) flags += "-O0 ";
+    else if (settings.optimization_level == 1) flags += "-O2 ";
+    else if (settings.optimization_level == 2) flags += "-O3 ";
+    
+    if (settings.wall) flags += "-Wall ";
+    if (settings.wextra) flags += "-Wextra ";
+    if (settings.wpedantic) flags += "-Wpedantic ";
+    if (settings.werror) flags += "-Werror ";
+
+    // Tab 2: Advanced
+    if (settings.wconversion) flags += "-Wconversion ";
+    if (settings.wsign_conversion) flags += "-Wsign-conversion ";
+    if (settings.wshadow) flags += "-Wshadow ";
+    if (settings.wnon_virtual_dtor) flags += "-Wnon-virtual-dtor ";
+    if (settings.wold_style_cast) flags += "-Wold-style-cast ";
+    if (settings.woverloaded_virtual) flags += "-Woverloaded-virtual ";
+    if (settings.wnull_dereference) flags += "-Wnull-dereference ";
+    if (settings.wdouble_promotion) flags += "-Wdouble-promotion ";
+    if (settings.wformat_2) flags += "-Wformat=2 ";
+    
+    if (settings.fno_omit_frame_pointer) flags += "-fno-omit-frame-pointer ";
+    if (settings.fsanitize_address_ub) flags += "-fsanitize=address,undefined ";
+    if (settings.fsanitize_leak) flags += "-fsanitize=leak ";
+    if (settings.flto) flags += "-flto ";
+    
+    if (settings.march_native) flags += "-march=native ";
+    if (settings.mtune_native) flags += "-mtune=native ";
+
+    // Tab 3: Expert
+    if (settings.wcast_align) flags += "-Wcast-align ";
+    if (settings.wcast_qual) flags += "-Wcast-qual ";
+    if (settings.wswitch_enum) flags += "-Wswitch-enum ";
+    if (settings.wundef) flags += "-Wundef ";
+    if (settings.wredundant_decls) flags += "-Wredundant-decls ";
+    if (settings.wlogical_op) flags += "-Wlogical-op ";
+    if (settings.wuseless_cast) flags += "-Wuseless-cast ";
+    if (settings.weffcxx) flags += "-Weffc++ ";
+    
+    if (settings.fno_exceptions) flags += "-fno-exceptions ";
+    if (settings.fno_rtti) flags += "-fno-rtti ";
+    if (settings.fvisibility_hidden) flags += "-fvisibility=hidden ";
+    if (settings.fstrict_aliasing) flags += "-fstrict-aliasing ";
+    
+    if (settings.fsanitize_pointer_compare) flags += "-fsanitize=pointer-compare ";
+    if (settings.fsanitize_pointer_subtract) flags += "-fsanitize=pointer-subtract ";
+    
+    if (settings.wl_as_needed) flags += "-Wl,--as-needed ";
+    if (settings.wl_o1) flags += "-Wl,-O1 ";
+
+    if (!settings.optional_flags.empty()) {
+        flags += settings.optional_flags + " ";
+    }
+
+    size_t compiler_pos = base_command.find(' ');
+    if (compiler_pos == std::string::npos) return base_command + " " + flags;
+
+    return base_command.substr(0, compiler_pos) + " " + flags + " " + base_command.substr(compiler_pos + 1);
 }
 
 std::string BuildSystem::get_full_compile_command(const std::string& base_command, int mode, int opt_level, const std::vector<bool>& security_flags, const std::string& extra_flags) {

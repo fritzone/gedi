@@ -75,46 +75,46 @@ private:
                 45  // Help
     };
 
-    const std::vector<std::string> m_submenu_file = {" &New           Ctrl+N",
-                                                     " &Open...       Ctrl+O",
+    const std::vector<std::string> m_submenu_file = {" &New           Ctrl+N ",
+                                                     " &Open...       Ctrl+O ",
                                                      " -------------- ",
-                                                     " &Save          Ctrl+S",
-                                                     " Save &As...    ",
+                                                     " &Save          Ctrl+S ",
+                                                     " Save &As...           ",
                                                      " -------------- ",
-                                                     " E&xit          Alt+X"};
+                                                     " E&xit           Alt+X "};
 
-    const std::vector<std::string> m_submenu_edit = {" &Undo       Alt+BckSp",
-                                                     " &Redo           Alt+Y",
+    const std::vector<std::string> m_submenu_edit = {" &Undo       Alt+BckSp ",
+                                                     " &Redo           Alt+Y ",
                                                      " -------------- ",
-                                                     " Cu&t           Ctrl+X",
-                                                     " &Copy          Ctrl+C",
-                                                     " &Paste         Ctrl+V",
-                                                     " &Delete        ",
+                                                     " Cu&t           Ctrl+X ",
+                                                     " &Copy          Ctrl+C ",
+                                                     " &Paste         Ctrl+V ",
+                                                     " &Delete               ",
                                                      " -------------- ",
-                                                     " Comment Line   ",
-                                                     " Uncomment Line "};
+                                                     " Comment Line          ",
+                                                     " Uncomment Line        "};
 
-    const std::vector<std::string> m_submenu_search = {" &Find...       Ctrl+F",
-                                                       " Find &Next      ",
-                                                       " Find Pre&vious  ",
-                                                       " &Replace...    Ctrl+R",
+    const std::vector<std::string> m_submenu_search = {" &Find...       Ctrl+F ",
+                                                       " Find &Next            ",
+                                                       " Find Pre&vious        ",
+                                                       " &Replace...    Ctrl+R ",
                                                        " -------------- ",
-                                                       " &Go To Line... "};
+                                                       " &Go To Line...        "};
 
-    const std::vector<std::string> m_submenu_build = {" &Run               F9",
-                                                      " &Compile     Shift+F9",
-                                                      " Compile &Options...  "};
+    const std::vector<std::string> m_submenu_build = {" &Run               F9 ",
+                                                      " &Compile     Shift+F9 ",
+                                                      " Compile &Options...   "};
 
-    const std::vector<std::string> m_submenu_window = {" &Output Screen           F5",
+    const std::vector<std::string> m_submenu_window = {" &Output Screen           F5 ",
                                                        " -------------- ",
-                                                       " &Next Window             F6",
-                                                       " &Previous Window   Shift+F6",
-                                                       " &Close Window        Ctrl+W"};
+                                                       " &Next Window             F6 ",
+                                                       " &Previous Window   Shift+F6 ",
+                                                       " &Close Window        Ctrl+W "};
 
     const std::vector<std::string> m_submenu_options = {" Editor &Settings... "};
 
-    const std::vector<std::string> m_submenu_help = {" &View Help...  ",
-                                                     " &About...      "};
+    const std::vector<std::string> m_submenu_help = {" &View Help... ",
+                                                     " &About...     "};
 
 public:
     void run(int argc, char* argv[]);

@@ -21,6 +21,8 @@ if(CURSES_FOUND)
         SearchEngine.cpp
         HelpProvider.cpp
         BufferManager.cpp
+        ComboBox.cpp
+        TabControl.cpp
         EditorBuffer.h
         Renderer.h
         TextEditor.h
