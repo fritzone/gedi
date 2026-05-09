@@ -10,38 +10,15 @@ CompilationResult BuildSystem::runCompilationProcess(EditorBuffer& buffer) {
     CompilationResult result;
     result.success = false;
 
-    std::string base_compile_cmd;
-
-    // --- Step 1: Check cache or run cguess.py ---
-    if (m_compile_command_cache.count(buffer.filename)) {
-        base_compile_cmd = m_compile_command_cache[buffer.filename];
-        result.output_lines.push_back("Using cached build command...");
-    } else {
-        result.output_lines.push_back("Running cguess.py to find build command...");
-        std::string cguess_cmd = "python3 /usr/local/lib/python3/dist-packages/gedi/cguess.py \"" + buffer.filename + "\" 2>&1";
-        char buffer_arr[512];
-
-        FILE* cguess_pipe = popen(cguess_cmd.c_str(), "r");
-        std::string full_cguess_output;
-        if (cguess_pipe) {
-            while (fgets(buffer_arr, sizeof(buffer_arr), cguess_pipe) != NULL) {
-                full_cguess_output += buffer_arr;
-            }
-            pclose(cguess_pipe);
-        }
-
-        std::size_t found = full_cguess_output.find("GUESS: ");
-        if (found != std::string::npos) {
-            base_compile_cmd = full_cguess_output.substr(found + 7);
-            if (!base_compile_cmd.empty() && base_compile_cmd.back() == '\n') base_compile_cmd.pop_back();
-            m_compile_command_cache[buffer.filename] = base_compile_cmd;
-            result.output_lines.push_back("Found: " + base_compile_cmd);
-        } else {
-            result.output_lines.push_back("cguess.py failed or returned no command.");
-            result.output_lines.push_back("Full cguess output: " + full_cguess_output);
-            return result;
-        }
+    // --- Step 1: Get base build command ---
+    std::string base_compile_cmd = guessCompileCommand(buffer.filename);
+    
+    if (base_compile_cmd.empty()) {
+        result.output_lines.push_back("Failed to find build command for " + buffer.filename);
+        return result;
     }
+
+    result.output_lines.push_back("Build command: " + base_compile_cmd);
 
     // Step 2: Run Compiler
     result.full_command = get_full_compile_command(base_compile_cmd, buffer.compiler_settings);
@@ -69,6 +46,33 @@ CompilationResult BuildSystem::runCompilationProcess(EditorBuffer& buffer) {
     result.success = (compile_status == 0);
 
     return result;
+}
+
+std::string BuildSystem::guessCompileCommand(const std::string& filename) {
+    if (m_compile_command_cache.count(filename)) {
+        return m_compile_command_cache[filename];
+    }
+
+    std::string cguess_cmd = "python3 /usr/local/lib/python3/dist-packages/gedi/cguess.py \"" + filename + "\" 2>/dev/null";
+    char buffer_arr[512];
+    std::string full_cguess_output;
+
+    FILE* cguess_pipe = popen(cguess_cmd.c_str(), "r");
+    if (cguess_pipe) {
+        while (fgets(buffer_arr, sizeof(buffer_arr), cguess_pipe) != NULL) {
+            full_cguess_output += buffer_arr;
+        }
+        pclose(cguess_pipe);
+    }
+
+    std::size_t found = full_cguess_output.find("GUESS: ");
+    if (found != std::string::npos) {
+        std::string base_compile_cmd = full_cguess_output.substr(found + 7);
+        if (!base_compile_cmd.empty() && base_compile_cmd.back() == '\n') base_compile_cmd.pop_back();
+        m_compile_command_cache[filename] = base_compile_cmd;
+        return base_compile_cmd;
+    }
+    return "";
 }
 
 std::vector<CompileMessage> BuildSystem::parseCompilerOutput(const std::string& full_output_str, std::vector<std::string>& output_lines_out) {
@@ -153,49 +157,6 @@ std::string BuildSystem::get_full_compile_command(const std::string& base_comman
     if (!settings.optional_flags.empty()) {
         flags += settings.optional_flags + " ";
     }
-
-    size_t compiler_pos = base_command.find(' ');
-    if (compiler_pos == std::string::npos) return base_command + " " + flags;
-
-    return base_command.substr(0, compiler_pos) + " " + flags + " " + base_command.substr(compiler_pos + 1);
-}
-
-std::string BuildSystem::get_full_compile_command(const std::string& base_command, int mode, int opt_level, const std::vector<bool>& security_flags, const std::string& extra_flags) {
-    if (base_command.empty()) return "";
-
-    std::string flags;
-    if (mode == 0) { // Debug
-        flags += "-g ";
-    } else if (mode == 1) { // Release
-        flags += "-DNDEBUG ";
-    }
-
-    switch (opt_level) {
-    case 0: flags += "-O0 "; break;
-    case 1: flags += "-O1 "; break;
-    case 2: flags += "-O2 "; break;
-    case 3: flags += "-O3 "; break;
-    case 4: flags += "-Os "; break;
-    case -1: // No optimization
-    default:
-        break;
-    }
-
-    const std::vector<std::string> sec_flag_strings = {
-        "-fstack-protector-strong", // Stack Protector
-        "-fPIE -pie",               // PIE
-        "-D_FORTIFY_SOURCE=2",      // Fortify Source
-        "-fstack-clash-protection", // Stack Clash
-        "-Wl,-z,relro,-z,now"       // RELRO
-    };
-
-    for(size_t i = 0; i < security_flags.size() && i < sec_flag_strings.size(); ++i) {
-        if (security_flags[i]) {
-            flags += sec_flag_strings[i] + " ";
-        }
-    }
-
-    flags += extra_flags;
 
     size_t compiler_pos = base_command.find(' ');
     if (compiler_pos == std::string::npos) return base_command + " " + flags;

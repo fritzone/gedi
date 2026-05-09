@@ -2468,7 +2468,7 @@ end_goto_dialog:
 }
 
 void TextEditor::CompileOptionsDialog() {
-    int h = 32, w = 84;
+    int h = 34, w = 84;
     int starty = (m_renderer->getHeight() - h) / 2;
     int startx = (m_renderer->getWidth() - w) / 2;
 
@@ -2484,8 +2484,10 @@ void TextEditor::CompileOptionsDialog() {
     ComboBox stdCombo(standards, std_idx);
 
     TabControl tabs({"Basic", "Advanced", "Expert"});
-    int focus_area = 0; // 0: Combobox, 1: Tabs, 2: Content, 3: Optional, 4: Buttons
+    int focus_area = 0; // 0: Standard, 1: Tabs, 2: Content, 3: Optional, 4: Command, 5: Buttons
     int sub_focus = 0;
+    int top_opt = 0;
+    int top_cmd_row = 0;
 
     struct Option {
         std::string label;
@@ -2550,20 +2552,10 @@ void TextEditor::CompileOptionsDialog() {
         return opts;
     };
 
-    std::string base_cmd;
-    std::string cguess_cmd = "python3 /usr/local/lib/python3/dist-packages/gedi/cguess.py \"" + currentBuffer().filename + "\" 2>/dev/null";
-    FILE* pipe = popen(cguess_cmd.c_str(), "r");
-    if (pipe) {
-        char l[512];
-        if (fgets(l, sizeof(l), pipe)) base_cmd = l;
-        pclose(pipe);
-        if (base_cmd.find("GUESS: ") != std::string::npos) base_cmd = base_cmd.substr(base_cmd.find("GUESS: ") + 7);
-        base_cmd.erase(std::remove(base_cmd.begin(), base_cmd.end(), '\n'), base_cmd.end());
-    }
+    std::string base_cmd = m_buildSystem->guessCompileCommand(currentBuffer().filename);
 
     nodelay(stdscr, FALSE);
     bool dialog_active = true;
-    int top_opt = 0;
     int last_tab = -1;
 
     while (dialog_active) {
@@ -2585,7 +2577,7 @@ void TextEditor::CompileOptionsDialog() {
         tabs.draw(*m_renderer, startx + 2, starty + 4, w - 4, focus_area == 1);
 
         auto current_opts = get_options(tabs.getActiveTab());
-        int visible_opt_rows = h - 18;
+        int visible_opt_rows = h - 20;
         int opt_y = starty + 6;
 
         struct Row { bool is_group; std::string text; int opt_idx; };
@@ -2615,19 +2607,31 @@ void TextEditor::CompileOptionsDialog() {
             }
         }
 
-        m_renderer->drawBoxWithTitle(startx + 2, starty + h - 11, w - 4, 3, Renderer::CP_DIALOG, Renderer::SINGLE, " Optional flags ", Renderer::CP_DIALOG, (focus_area == 3 ? A_BOLD : 0));
-        m_renderer->drawText(startx + 4, starty + h - 10, std::string(w - 8, ' '), Renderer::CP_LIST_BOX);
-        m_renderer->drawText(startx + 4, starty + h - 10, temp_settings.optional_flags, Renderer::CP_LIST_BOX);
+        m_renderer->drawBoxWithTitle(startx + 2, starty + h - 13, w - 4, 3, Renderer::CP_DIALOG, Renderer::SINGLE, " Optional flags ", Renderer::CP_DIALOG, (focus_area == 3 ? A_BOLD : 0));
+        m_renderer->drawText(startx + 4, starty + h - 12, std::string(w - 8, ' '), Renderer::CP_LIST_BOX);
+        m_renderer->drawText(startx + 4, starty + h - 12, temp_settings.optional_flags, Renderer::CP_LIST_BOX);
 
         std::string final_cmd = m_buildSystem->get_full_compile_command(base_cmd, temp_settings);
         std::vector<std::string> wrapped = wrap_text(final_cmd, w - 8);
-        m_renderer->drawBoxWithTitle(startx + 2, starty + h - 8, w - 4, 4, Renderer::CP_DIALOG, Renderer::SINGLE, " Final Command ", Renderer::CP_DIALOG, 0);
-        for (size_t i = 0; i < 2; ++i) if (i < wrapped.size()) m_renderer->drawText(startx + 4, starty + h - 7 + i, wrapped[i], Renderer::CP_DIALOG);
+        m_renderer->drawBoxWithTitle(startx + 2, starty + h - 10, w - 4, 4, Renderer::CP_DIALOG, Renderer::SINGLE, " Final Command ", Renderer::CP_DIALOG, (focus_area == 4 ? A_BOLD : 0));
+        
+        int cmd_view_h = 2;
+        if (top_cmd_row < 0) top_cmd_row = 0;
+        if (top_cmd_row > (int)wrapped.size() - cmd_view_h) top_cmd_row = (int)wrapped.size() - cmd_view_h;
+        if (top_cmd_row < 0) top_cmd_row = 0;
 
-        m_renderer->drawButton(startx + w/2 - 12, starty + h - 3, " &Ok ", focus_area == 4 && sub_focus == 0);
-        m_renderer->drawButton(startx + w/2 + 2, starty + h - 3, " &Cancel ", focus_area == 4 && sub_focus == 1);
+        for (int i = 0; i < cmd_view_h; ++i) {
+            if (top_cmd_row + i < (int)wrapped.size()) {
+                int color = (focus_area == 4) ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG;
+                m_renderer->drawText(startx + 4, starty + h - 9 + i, wrapped[top_cmd_row + i], color);
+            }
+        }
 
-        if (focus_area == 3) { m_renderer->showCursor(); move(starty + h - 10, startx + 4 + temp_settings.optional_flags.length()); }
+        m_renderer->drawButton(startx + w/2 - 20, starty + h - 4, " &Ok ", focus_area == 5 && sub_focus == 0);
+        m_renderer->drawButton(startx + w/2 - 6, starty + h - 4, " Cop&y ", focus_area == 5 && sub_focus == 1);
+        m_renderer->drawButton(startx + w/2 + 8, starty + h - 4, " &Cancel ", focus_area == 5 && sub_focus == 2);
+
+        if (focus_area == 3) { m_renderer->showCursor(); move(starty + h - 12, startx + 4 + temp_settings.optional_flags.length()); }
         else m_renderer->hideCursor();
         m_renderer->refresh();
 
@@ -2636,38 +2640,54 @@ void TextEditor::CompileOptionsDialog() {
             timeout(1); wint_t nch = m_renderer->getChar(); timeout(-1);
             if (nch == ERR) { dialog_active = false; break; }
             switch(tolower(nch)) {
-                case 'o': focus_area = 4; sub_focus = 0; break;
+                case 'o': focus_area = 5; sub_focus = 0; break;
+                case 'y': { // Copy to clipboard
+                    FILE* xclip_pipe = popen("xclip -selection clipboard -i", "w");
+                    if (xclip_pipe) { fputs(final_cmd.c_str(), xclip_pipe); pclose(xclip_pipe); }
+                    break;
+                }
                 case 'c': dialog_active = false; break;
             }
         } else {
             switch(ch) {
-                case 9: focus_area = (focus_area + 1) % 5; sub_focus = 0; break;
-                case KEY_BTAB: focus_area = (focus_area + 4) % 5; sub_focus = 0; break;
+                case 9: focus_area = (focus_area + 1) % 6; sub_focus = 0; break;
+                case KEY_BTAB: focus_area = (focus_area + 5) % 6; sub_focus = 0; break;
                 case KEY_UP:
                     if (focus_area == 2 && sub_focus > 0) sub_focus--;
-                    else if (focus_area > 0) { focus_area--; if (focus_area == 2) sub_focus = current_opts.size() - 1; else sub_focus = 0; }
+                    else if (focus_area == 4 && top_cmd_row > 0) top_cmd_row--;
+                    else if (focus_area > 0) { 
+                        focus_area--; 
+                        if (focus_area == 2) sub_focus = get_options(tabs.getActiveTab()).size() - 1; 
+                        else sub_focus = 0; 
+                    }
                     break;
                 case KEY_DOWN:
-                    if (focus_area == 2 && sub_focus < (int)current_opts.size() - 1) sub_focus++;
-                    else if (focus_area < 4) { focus_area++; sub_focus = 0; }
+                    if (focus_area == 2 && sub_focus < (int)get_options(tabs.getActiveTab()).size() - 1) sub_focus++;
+                    else if (focus_area == 4 && top_cmd_row < (int)wrapped.size() - cmd_view_h) top_cmd_row++;
+                    else if (focus_area < 5) { focus_area++; sub_focus = 0; }
                     break;
                 case KEY_LEFT:
                     if (focus_area == 0) { stdCombo.handleInput(ch); temp_settings.cpp_standard = stdCombo.getSelectedText(); }
                     else if (focus_area == 1) tabs.handleInput(ch);
-                    else if (focus_area == 4 && sub_focus > 0) sub_focus--;
+                    else if (focus_area == 5 && sub_focus > 0) sub_focus--;
                     break;
                 case KEY_RIGHT:
                     if (focus_area == 0) { stdCombo.handleInput(ch); temp_settings.cpp_standard = stdCombo.getSelectedText(); }
                     else if (focus_area == 1) tabs.handleInput(ch);
-                    else if (focus_area == 4 && sub_focus < 1) sub_focus++;
+                    else if (focus_area == 5 && sub_focus < 2) sub_focus++;
                     break;
                 case ' ': case KEY_ENTER: case 10: case 13:
                     if (focus_area == 2) {
-                        if (current_opts[sub_focus].is_radio) *current_opts[sub_focus].i_val = current_opts[sub_focus].radio_val;
-                        else *current_opts[sub_focus].b_val = !*current_opts[sub_focus].b_val;
-                    } else if (focus_area == 4) {
-                        settings = temp_settings;
-                        dialog_active = false;
+                        auto current = get_options(tabs.getActiveTab());
+                        if (current[sub_focus].is_radio) *current[sub_focus].i_val = current[sub_focus].radio_val;
+                        else *current[sub_focus].b_val = !*current[sub_focus].b_val;
+                    } else if (focus_area == 5) {
+                        if (sub_focus == 0) { settings = temp_settings; dialog_active = false; }
+                        else if (sub_focus == 1) { // Copy
+                            FILE* p = popen("xclip -selection clipboard -i", "w");
+                            if (p) { fputs(final_cmd.c_str(), p); pclose(p); }
+                        }
+                        else if (sub_focus == 2) dialog_active = false;
                     }
                     break;
                 case KEY_BACKSPACE: case 127: case 8:
@@ -2679,7 +2699,6 @@ void TextEditor::CompileOptionsDialog() {
             }
         }
     }
-
     copywin(behind, stdscr, 0, 0, starty, startx, h, w, FALSE); delwin(behind);
     nodelay(stdscr, TRUE); m_renderer->showCursor(); handleResize();
 }
