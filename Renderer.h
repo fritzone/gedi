@@ -54,7 +54,7 @@ public:
     void updateDimensions();
     void drawText(int x, int y, const std::string& text, int colorId, int flags = 0);
     void drawStyledText(int x, int y, const std::string& text, int colorId);
-    void drawButton(int x, int y, const std::string& text, bool selected);
+    void drawButton(int x, int y, const std::string& text, bool selected, bool pressed = false);
     void drawBox(int x, int y, int w, int h, int colorId, BoxStyle style = DOUBLE);
     void drawBoxWithTitle(int x, int y, int w, int h, int colorId, BoxStyle style = DOUBLE, const std::string& title = "", int title_color = Renderer::CP_DIALOG_TITLE, int title_flags = 0);
     void drawShadow(int x, int y, int w, int h);

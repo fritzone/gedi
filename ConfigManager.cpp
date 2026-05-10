@@ -24,6 +24,7 @@ void ConfigManager::loadConfig(Config& config) {
             if (data.contains("optimization_level")) config.optimization_level = data["optimization_level"];
             if (data.contains("security_flags")) config.security_flags = data["security_flags"].get<std::vector<bool>>();
             if (data.contains("extra_compile_flags")) config.extra_compile_flags = data["extra_compile_flags"];
+            if (data.contains("keybindings")) config.keybindings = data["keybindings"].get<std::map<std::string, std::string>>();
         }
     } catch (const json::parse_error& e) {
         // We can't easily call msgwin here without a pointer to TextEditor or a callback.
@@ -42,6 +43,7 @@ void ConfigManager::saveConfig(const Config& config) {
     j["optimization_level"] = config.optimization_level;
     j["security_flags"] = config.security_flags;
     j["extra_compile_flags"] = config.extra_compile_flags;
+    j["keybindings"] = config.keybindings;
     
     std::ofstream o(m_configPath);
     if (o.is_open()) {
@@ -71,6 +73,13 @@ void ConfigManager::createDefaultConfigFile(const std::string& path) {
     j["optimization_level"] = -1;
     j["security_flags"] = {true, true, true, true, true};
     j["extra_compile_flags"] = "-Wall";
+    j["keybindings"] = {
+        {"new", "Ctrl+N"}, {"open", "Ctrl+O"}, {"save", "Ctrl+S"}, {"exit", "Alt+X"},
+        {"undo", "Alt+BS"}, {"redo", "Alt+Y"}, {"cut", "Ctrl+X"}, {"copy", "Ctrl+C"},
+        {"paste", "Ctrl+V"}, {"find", "Ctrl+F"}, {"replace", "Ctrl+R"}, {"compile", "Shift+F9"},
+        {"run", "F9"}, {"toggle_output", "F5"}, {"next_buffer", "F6"}, {"prev_buffer", "Shift+F6"},
+        {"close_buffer", "Ctrl+W"}, {"toggle_comment", "Ctrl+/"}
+    };
     
     std::ofstream o(path);
     if (o.is_open()) {

@@ -1,7 +1,7 @@
 [main]
-**TEE C++ Editor - Main Help**
+**gedi - The Console C++ IDE - Main Help**
 
-Welcome to the TEE (Text Editor by Example) help system. This guide provides detailed information on all of the editor's features.
+Welcome to the gedi help system. This guide provides detailed information on all of the editor's features.
 
 **How to use this guide:**
 * Use the **Up** and **Down arrow keys** to select a link (highlighted text).
@@ -16,8 +16,10 @@ Welcome to the TEE (Text Editor by Example) help system. This guide provides det
 [[editing|Editing and Selection]]
 [[navigation|Navigation and Search]]
 [[building|Compiling and Running]]
+[[compiler_options|Compiler Options Dialog]]
+[[compiler_switches|Detailed Compiler Switches Index]]
 [[windows|Window Management]]
-[[options|Configuration Options]]
+[[options|Editor Settings]]
 [[hotkeys|Quick Hotkey Reference]]
 
 [file_ops]
@@ -25,134 +27,448 @@ Welcome to the TEE (Text Editor by Example) help system. This guide provides det
 
 All file operations are available under the **File** menu (**Alt+F**).
 
-* **New** (**Ctrl+N**): Creates a new, empty buffer with a default name (e.g., `noname00.cpp`).
+* **New** (**Ctrl+N**): Creates a new, empty buffer.
 
-* **Open** (**Ctrl+O**): Opens the file browser dialog to select a file from your system. The browser shows file details like permissions, size, and modification date.
+* **Open** (**Ctrl+O**): Opens the refined file browser. 
+    - **Iconic List**: Directories are marked with `[DIR]` and files with `[FIL]`.
+    - **Details Panel**: Shows type, owner, permissions, size, and modification date.
+    - **Navigation**: Use **Backspace** to quickly go up to the parent directory.
+    - **Smart Input**: Type a filename directly or select it from the list.
 
-* **Save** (**Ctrl+S**): Saves the current file. If the file is new, it will open the "Save As" browser.
+* **Save** (**Ctrl+S**): Saves the current file.
 
-* **Save As...**: Opens the file browser, allowing you to save the current buffer to a new file or location.
+* **Save As...**: Opens the file browser to save the current buffer to a new name.
 
-* **Exit** (**Alt+X**): Closes the editor. You will be prompted to save any unsaved changes.
+* **Exit** (**Alt+X**): Closes the editor. 
+    - **Safety First**: Gedi will automatically scan all open buffers and prompt you to save any unsaved changes before exiting.
 
 Return to [[main|Main Menu]].
 
 [editing]
 **## Editing and Selection ##**
 
-Standard text editing is enhanced with clipboard operations, undo/redo, and a powerful comment toggle. Most features are in the **Edit** menu (**Alt+E**).
+Standard text editing is enhanced with clipboard operations, multi-level undo/redo, and a powerful comment toggle. Most features are in the **Edit** menu (**Alt+E**).
 
-* **Undo** (**Alt+Backspace**): Reverts the last change made to the text.
-* **Redo** (**Alt+Y**): Re-applies an action that was just undone.
+* **Undo** (**Alt+Backspace**): Reverts the last change.
+* **Redo** (**Alt+Y**): Re-applies an action that was undone.
 * **Cut/Copy/Paste** (**Ctrl+X**, **Ctrl+C**, **Ctrl+V**): Uses the system clipboard for integration with other applications.
 
 **Selection:**
-Text can be selected using **Shift + Arrow Keys** (or Home/End, PageUp/Down). Most editing commands, like Cut, Copy, and Comment, operate on the selected text. Press **Escape** to clear a selection.
+Text can be selected using **Shift + Arrow Keys**. Press **Escape** to clear selection.
 
 **Toggle Comment** (**Ctrl+/**):
-This is a smart comment/uncomment feature.
-* **No Selection**: It adds or removes a C++ style (`//`) comment at the beginning of the current line.
-* **With Selection**: It adds or removes a `//` comment from **every** line within the selection. This is useful for commenting out large blocks of code.
+* Toggles `//` comments on the current line or the entire selected block.
 
 Return to [[main|Main Menu]].
 
 [navigation]
 **## Navigation and Search ##**
 
-Quickly move through your code and find what you're looking for using these tools, available in the **Search** menu (**Alt+S**).
+* **Ctrl+Left/Right**: Move by word.
+* **Home/End**: Jump to line start or end.
+* **Page Up/Down**: Scroll by full pages.
 
-**Cursor Movement:**
-* **Ctrl+Left/Right**: Move by one word at a time.
-* **Ctrl+Up/Down**: Move to the previous/next empty line, effectively jumping between paragraphs or code blocks.
-* **Home/End**: Move to the absolute start or end of the current line's text.
-
-**Search and Replace:**
-* **Find** (**Ctrl+F**): Opens a search prompt in the status bar. As you type, the editor will highlight the next match. Press **Enter** to jump to it or **Escape** to cancel.
-* **Replace** (**Ctrl+R**): Opens a dialog to find text and replace it with something else, one instance at a time or all at once.
-* **Go To Line...**: Opens a dialog prompting for a line number to jump to directly.
+**Search & Replace:**
+* **Ctrl+F**: Find next match.
+* **Ctrl+R**: Opens the **Replace** dialog.
+* **Go To Line**: Jump directly to a specific line number (**Alt+S -> G**).
 
 Return to [[main|Main Menu]].
 
 [building]
 **## Compiling and Running ##**
 
-The editor provides a powerful, integrated build system, available in the **Build** menu (**Alt+B**).
+Gedi uses automatic build detection via an integrated build system and `cguess.py`.
 
-The system uses the `cguess.py` script to automatically detect dependencies and generate a build command. For efficiency, this command is **cached** for each file and is only regenerated when you save the file.
+* **Compile Only** (**Shift+F9**): Builds the current file and shows the output.
+* **Compile and Run** (**F9**): Builds and immediately executes the program if successful.
 
-* **Compile Only** (**Shift+F9**): Compiles the current file. A dialog will pop up showing the live output from the compiler. If there are errors, a navigable error list will appear at the bottom of the screen.
-
-* **Compile and Run** (**F9**): First compiles the file. If successful, it then runs the resulting executable and displays its output in a full-screen view.
-
-* **Compile Options...**: Opens a detailed dialog where you can configure the build process:
-    * **Mode**: Choose between **Debug** (`-g`) and **Release** (`-O3 -DNDEBUG`).
-    * **Optimization**: Manually set the optimization level from -O0 to -Os.
-    * **Security**: Toggle common security flags like Stack Protectors and PIE.
-    * **Optional Flags**: Add any other flags (`-Wall`, `-lm`, etc.) to the command.
-    These settings are saved in `config.json`.
+**Build Output:**
+If compilation fails, the output window will highlight errors. You can navigate through the output and press **Enter** on an error message to jump directly to that line in your code.
 
 Return to [[main|Main Menu]].
+
+[compiler_options]
+**## Compiler Options Dialog ##**
+
+The redesigned Compiler Options dialog (**Alt+B -> O**) provides a powerful interface for configuring your build process.
+
+* **C++ Standard**: Select your desired language version (c++11 through c++26) from the dropdown at the top.
+* **Tabbed Categories**: Switches are organized into three tabs:
+    - **Basic**: Essential flags for optimization and standard warnings.
+    - **Advanced**: Professional diagnostics, sanitizers (ASan/UBSan), and LTO.
+    - **Expert**: Situational flags, functionality controls (exceptions/RTTI), and linker options.
+* **Final Command**: A live preview of the full command that will be sent to the compiler. This field is scrollable using arrow keys.
+* **Copy to Clipboard**: Use the dedicated **Copy** button to quickly export the generated command for use in terminals or scripts.
+
+**Note**: Settings are saved **per-buffer**, allowing different configuration for each open file.
+
+Return to [[main|Main Menu]] or view [[compiler_switches|Detailed Switches]].
+
+[compiler_switches]
+**## Detailed Compiler Switches Index ##**
+
+**### Basic Switches ###**
+[[sw_g|-g : Generate debug symbols]]
+[[sw_O0|-O0 : Disable optimisation]]
+[[sw_O2|-O2 : Balanced optimisation]]
+[[sw_O3|-O3 : High optimisation]]
+[[sw_Wall|-Wall : Enable common warnings]]
+[[sw_Wextra|-Wextra : Enable extra warnings]]
+[[sw_Wpedantic|-Wpedantic : Strict ISO compliance]]
+[[sw_Werror|-Werror : Treat warnings as errors]]
+
+**### Advanced Switches ###**
+[[sw_Wconversion|-Wconversion : Implicit conversion warnings]]
+[[sw_Wsign_conversion|-Wsign-conversion : Signed/unsigned conv warnings]]
+[[sw_Wshadow|-Wshadow : Variable shadowing warnings]]
+[[sw_Wnon_virtual_dtor|-Wnon-virtual-dtor : Polymorphic class warnings]]
+[[sw_Wold_style_cast|-Wold-style-cast : C-style cast warnings]]
+[[sw_Woverloaded_virtual|-Woverloaded-virtual : Virtual function shadowing]]
+[[sw_Wnull_dereference|-Wnull-dereference : Null pointer checks]]
+[[sw_Wdouble_promotion|-Wdouble-promotion : Float promotion warnings]]
+[[sw_Wformat_2|-Wformat=2 : Strict format string checking]]
+[[sw_fno_omit_fp|-fno-omit-frame-pointer : Preservation of frame pointers]]
+[[sw_fsanitize_au|-fsanitize=address,undefined : ASan and UBSan]]
+[[sw_fsanitize_leak|-fsanitize=leak : LeakSanitizer]]
+[[sw_flto|-flto : Link-time optimisation]]
+[[sw_march_native|-march=native : Optimise for host CPU]]
+[[sw_mtune_native|-mtune=native : Tune for host CPU]]
+
+**### Expert Switches ###**
+[[sw_Wcast_align|-Wcast-align : Cast alignment warnings]]
+[[sw_Wcast_qual|-Wcast-qual : Cast qualifier warnings]]
+[[sw_Wswitch_enum|-Wswitch-enum : Missing enum case warnings]]
+[[sw_Wundef|-Wundef : Undefined macro warnings]]
+[[sw_Wredundant_decls|-Wredundant-decls : Redundant declarations]]
+[[sw_Wlogical_op|-Wlogical-op : Logical operation warnings]]
+[[sw_Wuseless_cast|-Wuseless-cast : Useless cast warnings]]
+[[sw_Weffcxx|-Weffc++ : Effective C++ warnings]]
+[[sw_fno_exceptions|-fno-exceptions : Disable exceptions]]
+[[sw_fno_rtti|-fno-rtti : Disable RTTI]]
+[[sw_fvisibility_hidden|-fvisibility=hidden : Hide symbols by default]]
+[[sw_fstrict_aliasing|-fstrict-aliasing : Enable strict aliasing]]
+[[sw_fsanitize_pc|-fsanitize=pointer-compare : Pointer comparison checks]]
+[[sw_fsanitize_ps|-fsanitize=pointer-subtract : Pointer arithmetic checks]]
+[[sw_Wl_as_needed|-Wl,--as-needed : Remove unused dependencies]]
+[[sw_Wl_O1|-Wl,-O1 : Optimise linking]]
+
+Return to [[main|Main Menu]].
+
+[sw_g]
+**-g : Generate debug symbols**
+
+Embeds debugging information in the compiled binary. This is required for using debuggers like `gdb` or `lldb`. It maps the machine code back to your source code, enabling breakpoints and variable inspection.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_O0]
+**-O0 : Disable optimisation**
+
+Completely disables compiler optimisations. The generated machine code will strictly follow your source code, making it the best choice for debugging as variable values and execution flow remain predictable.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_O2]
+**-O2 : Balanced optimisation**
+
+Enables a wide range of optimisations that increase performance without significant increases in binary size or compilation time. This is the standard recommended level for most production builds.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_O3]
+**-O3 : High optimisation**
+
+Enables aggressive optimisations, including loop vectorisation and deeper inlining. While it can result in faster code, it may increase binary size and occasionally introduce subtle bugs if your code relies on undefined behaviour.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Wall]
+**-Wall : Enable common warnings**
+
+Enables a broad set of warnings that catch common programming errors, such as unused variables, uninitialised variables, and missing return statements. This is considered the minimum safe level for any C++ project.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Wextra]
+**-Wextra : Enable extra warnings**
+
+Enables additional warnings not covered by `-Wall`. This catches more subtle issues like signed/unsigned comparisons, unused parameters, and potential logic errors in nested conditions.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Wpedantic]
+**-Wpedantic : Strict ISO compliance**
+
+Enforces strict adherence to the ISO C++ standard. It issues warnings for any use of compiler-specific extensions or non-standard syntax, ensuring your code is as portable as possible.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Werror]
+**-Werror : Treat warnings as errors**
+
+Tells the compiler to treat every warning as a hard compilation error. This ensures that no potential issues are ignored and that the codebase remains clean and warning-free.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Wconversion]
+**-Wconversion : Implicit conversion warnings**
+
+Warns about implicit type conversions that may alter a value or lose precision, such as assigning a `double` to an `int` or a large integer type to a smaller one.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Wsign_conversion]
+**-Wsign-conversion : Signed/unsigned conv warnings**
+
+Specifically warns about implicit conversions between signed and unsigned integer types. These conversions can often lead to unexpected behaviour and subtle logic bugs.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Wshadow]
+**-Wshadow : Variable shadowing warnings**
+
+Warns when a local variable hides (shadows) another variable, parameter, or member with the same name in an outer scope. This helps prevent confusing logic errors.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Wnon_virtual_dtor]
+**-Wnon-virtual-dtor : Polymorphic class warnings**
+
+Warns when a class has virtual functions but no virtual destructor. This is dangerous because deleting a derived object via a base class pointer will result in undefined behaviour.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Wold_style_cast]
+**-Wold-style-cast : C-style cast warnings**
+
+Warns when a C-style cast is used. In C++, it is safer and clearer to use `static_cast`, `reinterpret_cast`, or `const_cast` to make the programmer's intent explicit.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Woverloaded_virtual]
+**-Woverloaded-virtual : Virtual function shadowing**
+
+Warns when a function declaration in a derived class hides a virtual function in a base class because the signatures do not match exactly.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Wnull_dereference]
+**-Wnull-dereference : Null pointer checks**
+
+Enables static analysis to detect potential null pointer dereferences. While it cannot catch every case, it helps identify common paths where a null pointer might be accessed.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Wdouble_promotion]
+**-Wdouble_promotion : Float promotion warnings**
+
+Warns when a `float` value is implicitly promoted to `double`. This is often unintentional in performance-critical code, especially when targeting hardware with specific single-precision optimisations.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Wformat_2]
+**-Wformat=2 : Strict format string checking**
+
+Provides more rigorous checking of `printf`/`scanf` style format strings, including checks for potential security vulnerabilities and platform-specific quirks.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_fno_omit_fp]
+**-fno-omit-frame-pointer : Preservation of frame pointers**
+
+Forces the compiler to keep the frame pointer in a register. This makes stack traces more reliable and improves the accuracy of profiling tools, though it may slightly reduce performance.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_fsanitize_au]
+**-fsanitize=address,undefined : ASan and UBSan**
+
+Enables the AddressSanitizer and UndefinedBehaviorSanitizer. These instruments your code to detect memory errors (like buffer overflows) and undefined behaviour (like null pointer dereferences) at runtime.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_fsanitize_leak]
+**-fsanitize=leak : LeakSanitizer**
+
+Enables the LeakSanitizer, which detects memory leaks at the end of program execution. This is extremely useful for ensuring all allocated resources are properly cleaned up.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_flto]
+**-flto : Link-time optimisation**
+
+Enables optimisation across different source files at link time. This allows the compiler to perform inlining and dead-code elimination more effectively, often resulting in significant performance gains.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_march_native]
+**-march=native : Optimise for host CPU**
+
+Tells the compiler to generate machine code specifically for the architecture of the machine on which it is currently running. This enables all instruction set extensions (like AVX or NEON) supported by your CPU.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_mtune_native]
+**-mtune=native : Tune for host CPU**
+
+Optimises the generated code for the host CPU's specific pipeline and cache characteristics without requiring instruction set extensions. This is safer than `-march=native` if the binary needs to run on older CPUs.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Wcast_align]
+**-Wcast-align : Cast alignment warnings**
+
+Warns whenever a pointer is cast such that the required alignment of the target is increased. This is especially important for architectures that do not support unaligned memory access.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Wcast_qual]
+**-Wcast-qual : Cast qualifier warnings**
+
+Warns whenever a pointer is cast so as to remove a type qualifier from the target type (such as casting a `const char *` to a `char *`).
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Wswitch_enum]
+**-Wswitch-enum : Missing enum case warnings**
+
+Warns whenever a `switch` statement on an enum type does not handle all possible values of that enum, even if a `default` case is present.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Wundef]
+**-Wundef : Undefined macro warnings**
+
+Warns if an undefined identifier is evaluated in an `#if` or `#elif` preprocessor directive. This catches typos in macro names.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Wredundant_decls]
+**-Wredundant-decls : Redundant declarations**
+
+Warns if anything is declared more than once in the same scope, even if the declarations are consistent. This helps keep headers clean.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Wlogical_op]
+**-Wlogical-op : Logical operation warnings**
+
+Warns about suspicious uses of logical operators, such as constant results or redundant expressions (e.g., `x < 5 && x < 10`).
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Wuseless_cast]
+**-Wuseless-cast : Useless cast warnings**
+
+Warns when the source and target types of a cast are identical, indicating that the cast is unnecessary and could be removed.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Weffcxx]
+**-Weffc++ : Effective C++ warnings**
+
+Enables a set of warnings based on Scott Meyers' *Effective C++* books. It catches common design flaws in object-oriented C++ code, such as missing copy constructors or assignment operators.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_fno_exceptions]
+**-fno-exceptions : Disable exceptions**
+
+Disables the generation of exception handling code. This results in smaller and potentially faster binaries but means you cannot use `try`, `catch`, or `throw` in your code.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_fno_rtti]
+**-fno-rtti : Disable RTTI**
+
+Disables Run-Time Type Information. This removes support for `dynamic_cast` and `typeid`, which can significantly reduce binary size in systems with many polymorphic classes.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_fvisibility_hidden]
+**-fvisibility=hidden : Hide symbols by default**
+
+Changes the default visibility of symbols to "hidden". This is used when building shared libraries to ensure only explicitly exported symbols are accessible from outside the library.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_fstrict_aliasing]
+**-fstrict-aliasing : Enable strict aliasing**
+
+Allows the compiler to assume that pointers to different types do not point to the same memory location. This allows for aggressive optimisations but can break code that violates the strict aliasing rule.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_fsanitize_pc]
+**-fsanitize=pointer-compare : Pointer comparison checks**
+
+Instrumental check that warns about comparisons between pointers that do not point to the same object (e.g., comparing pointers to two different arrays).
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_fsanitize_ps]
+**-fsanitize=pointer-subtract : Pointer arithmetic checks**
+
+Instrumental check that warns about subtraction of pointers that do not point to the same object.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Wl_as_needed]
+**-Wl,--as-needed : Remove unused dependencies**
+
+Tells the linker to only add a `DT_NEEDED` entry for a dynamic library if it is actually used by the binary. This reduces the number of runtime dependencies.
+
+Return to [[compiler_switches|Switches Index]].
+
+[sw_Wl_O1]
+**-Wl,-O1 : Optimise linking**
+
+Enables basic linker-level optimisations, such as removing redundant information and slightly improving the layout of the final binary.
+
+Return to [[compiler_switches|Switches Index]].
 
 [windows]
 **## Window Management ##**
 
-Manage multiple open files and view program output from the **Window** menu (**Alt+W**).
+Gedi supports multiple open files (buffers) simultaneously.
 
-* **Output Screen** (**F5**): Toggles the full-screen view that shows the output of your program after running it with **F9**. Press any key to return to the editor.
-
-* **Next Window** (**F6**): Switch focus to the next open file buffer.
-* **Previous Window** (**Shift+F6**): Switch focus to the previous open file buffer.
-
-* **Close Window** (**Alt+W**): Closes the currently active file. You will be prompted to save if there are unsaved changes.
-
-* **Window List** (**Alt+1**, **Alt+2**, etc.): The Window menu contains a dynamic list of all open files. You can quickly switch to a specific file using its corresponding Alt+Number hotkey.
+* **Next/Previous Window** (**F6** / **Shift+F6**): Cycle through open buffers.
+* **Direct Access**: Use **Alt+1** through **Alt+9** to jump directly to a specific buffer.
+* **Close Window** (**Alt+W** or **Ctrl+W**): Closes the current buffer. You will be prompted to save if changes exist.
+* **Output Screen** (**F5**): Toggles the visibility of the compilation output.
 
 Return to [[main|Main Menu]].
 
 [options]
-**## Configuration Options ##**
+**## Editor Settings ##**
 
-Customize the editor's behavior via the **Editor Settings** dialog, found in the **Options** menu (**Alt+O**).
+The **Editor Settings** dialog (**Alt+O -> S**) allows you to customize your environment:
 
-The settings dialog allows you to configure:
-* **Smart Indentation**: Automatically indents the next line after you type an opening brace `{`.
-* **Tab Size**: Set the number of spaces inserted when you press the Tab key.
-* **Show Line Numbers**: Toggle the visibility of the line number gutter on the left side of the editor.
-* **Color Scheme**: Choose from available themes defined in `colors.json`.
+* **Indentation**: Toggle Smart Indent and set your preferred Tab Size.
+* **View**: Toggle the display of line numbers.
+* **Color Scheme**: Select from various built-in themes to change the IDE's look and feel.
 
-Your preferences are automatically saved to `config.json` when you click **Save**.
+Internal groups in settings use single-line borders for a clean visual hierarchy.
 
 Return to [[main|Main Menu]].
 
 [hotkeys]
 **## Quick Hotkey Reference ##**
 
-**[File]**
-  **Ctrl+N** - New File
-  **Ctrl+O** - Open File
-  **Ctrl+S** - Save File
-  **Alt+X** - Exit
+**File & Editor**
+Ctrl+N - New File        Ctrl+O - Open File
+Ctrl+S - Save File       Alt+X  - Exit IDE
+Alt+W  - Close Window    F6     - Next Window
 
-**[Edit]**
-  **Ctrl+C** - Copy
-  **Ctrl+X** - Cut
-  **Ctrl+V** - Paste
-  **Alt+Backspace**- Undo
-  **Alt+Y** - Redo
-  **Ctrl+/** - Toggle Comment
+**Editing**
+Ctrl+C - Copy            Ctrl+X - Cut
+Ctrl+V - Paste           Alt+BS - Undo
+Alt+Y  - Redo            Ctrl+/ - Toggle Comment
 
-**[Search]**
-  **Ctrl+F** - Find
-  **Ctrl+R** - Replace
-
-**[Build]**
-  **F9** - Compile and Run
-  **Shift+F9** - Compile Only
-
-**[Window]**
-  **F5** - Show/Hide Program Output
-  **F6** - Next Window
-  **Shift+F6** - Previous Window
-  **Alt+W** - Close Window
+**Search & Build**
+Ctrl+F   - Find          Ctrl+R   - Replace
+Alt+S->G - Go To Line    F9       - Compile & Run
+Shift+F9 - Compile Only  F5       - Show Output
 
 Return to [[main|Main Menu]].

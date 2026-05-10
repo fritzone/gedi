@@ -15,6 +15,15 @@
 #include "SearchEngine.h"
 #include "HelpProvider.h"
 #include "BufferManager.h"
+#include "MessageDialog.h"
+#include "QuestionDialog.h"
+#include "SettingsDialog.h"
+#include "ReplaceDialog.h"
+#include "GoToLineDialog.h"
+#include "CompileOptionsDialog.h"
+#include "BuildOutputDialog.h"
+#include "HelpDialog.h"
+#include "KeyBindings.h"
 
 enum MenuAction { CLOSE_MENU, ITEM_SELECTED, NAVIGATE_LEFT, NAVIGATE_RIGHT, RESIZE_OCCURRED };
 
@@ -37,6 +46,7 @@ private:
     std::unique_ptr<ConfigManager> m_configManager;
     std::unique_ptr<BuildSystem> m_buildSystem;
     std::unique_ptr<HelpProvider> m_helpProvider;
+    std::unique_ptr<KeyBindings> m_keyBindings;
 
     // Help
     std::vector<std::string> m_help_history;
@@ -62,64 +72,23 @@ private:
     int m_gutter_width = 0;
 
     // Menus
-    const std::vector<std::string> m_menus = {" &File " , " &Edit " , " &Search ", " &Build " , " &Window ", " &Options ", " &Help "  };
+    std::vector<std::string> m_menus;
+    std::vector<int> m_menu_positions;
 
-    // Where menus ar drawn
-    const std::vector<int> m_menu_positions = {
-                1,  // File 2 + 4 = 6
-                7,  // Edit
-                13, // Search
-                21, // Build
-                28, // Window
-                36, // Options
-                45  // Help
-    };
-
-    const std::vector<std::string> m_submenu_file = {" &New           Ctrl+N ",
-                                                     " &Open...       Ctrl+O ",
-                                                     " -------------- ",
-                                                     " &Save          Ctrl+S ",
-                                                     " Save &As...           ",
-                                                     " -------------- ",
-                                                     " E&xit           Alt+X "};
-
-    const std::vector<std::string> m_submenu_edit = {" &Undo       Alt+BckSp ",
-                                                     " &Redo           Alt+Y ",
-                                                     " -------------- ",
-                                                     " Cu&t           Ctrl+X ",
-                                                     " &Copy          Ctrl+C ",
-                                                     " &Paste         Ctrl+V ",
-                                                     " &Delete               ",
-                                                     " -------------- ",
-                                                     " Comment Line          ",
-                                                     " Uncomment Line        "};
-
-    const std::vector<std::string> m_submenu_search = {" &Find...       Ctrl+F ",
-                                                       " Find &Next            ",
-                                                       " Find Pre&vious        ",
-                                                       " &Replace...    Ctrl+R ",
-                                                       " -------------- ",
-                                                       " &Go To Line...        "};
-
-    const std::vector<std::string> m_submenu_build = {" &Run               F9 ",
-                                                      " &Compile     Shift+F9 ",
-                                                      " Compile &Options...   "};
-
-    const std::vector<std::string> m_submenu_window = {" &Output Screen           F5 ",
-                                                       " -------------- ",
-                                                       " &Next Window             F6 ",
-                                                       " &Previous Window   Shift+F6 ",
-                                                       " &Close Window        Ctrl+W "};
-
-    const std::vector<std::string> m_submenu_options = {" Editor &Settings... "};
-
-    const std::vector<std::string> m_submenu_help = {" &View Help... ",
-                                                     " &About...     "};
+    std::vector<std::string> m_submenu_file;
+    std::vector<std::string> m_submenu_edit;
+    std::vector<std::string> m_submenu_search;
+    std::vector<std::string> m_submenu_build;
+    std::vector<std::string> m_submenu_window;
+    std::vector<std::string> m_submenu_options;
+    std::vector<std::string> m_submenu_help;
 
 public:
     void run(int argc, char* argv[]);
 
 private:
+    void updateMenuLabels();
+    std::string formatMenuItem(const std::string& label, EditorAction action, int width = 30);
     EditorBuffer& currentBuffer() { return m_bufferManager->currentBuffer(); }
     int currentBufferIdx() const { return m_bufferManager->currentBufferIndex(); }
     void drawEditorState(int active_menu_id = -1);
@@ -129,11 +98,12 @@ private:
     void drawStatusBar();
     void drawScrollbars();
     void drawCompileOutputWindow();
-    int msgwin_yesno(const std::string& question, const std::string& filename_in);
+    int msgwin_yesno(const std::string& question, const std::string& info);
     void msgwin(const std::string& s);
     void read_file(EditorBuffer& buffer);
     void write_file(EditorBuffer& buffer);
     void main_loop();
+    void TryExit();
     void insert_line_after(EditorBuffer& buffer, Line* current_p, const std::string& s);
     void process_key(wint_t ch);
     void HandleAltKey(wint_t key);

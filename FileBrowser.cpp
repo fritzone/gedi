@@ -103,9 +103,9 @@ static void drawInputArea(Renderer& renderer, int x, int y, int w, const std::st
     }
 }
 
-static void drawActionButtons(Renderer& renderer, int x, int y, int w, const std::string& ok_text, bool ok_selected, const std::string& cancel_text, bool cancel_selected) {
-    renderer.drawButton(x + w/2 - 12, y, ok_text, ok_selected);
-    renderer.drawButton(x + w/2 + 2, y, cancel_text, cancel_selected);
+static void drawActionButtons(Renderer& renderer, int x, int y, int w, const std::string& ok_text, bool ok_selected, const std::string& cancel_text, bool cancel_selected, bool pressed = false) {
+    renderer.drawButton(x + w/2 - 12, y, ok_text, ok_selected, pressed && ok_selected);
+    renderer.drawButton(x + w/2 + 2, y, cancel_text, cancel_selected, pressed && cancel_selected);
 }
 
 // --- Main FileBrowser Methods ---
@@ -139,6 +139,7 @@ std::string FileBrowser::open(Renderer& renderer) {
     std::string result_filename = "";
 
     bool browser_active = true;
+    bool pressed = false;
     while (browser_active) {
         entries.clear();
         DIR *dir = opendir(current_path.c_str());
@@ -178,20 +179,24 @@ std::string FileBrowser::open(Renderer& renderer) {
             drawFileDetails(renderer, details_x, starty + 3, &entries[selection]);
         }
 
-        drawActionButtons(renderer, startx, starty + h - 4, w, open_btn_text, focus == 2, cancel_btn_text, focus == 3);
+        drawActionButtons(renderer, startx, starty + h - 4, w, open_btn_text, focus == 2, cancel_btn_text, focus == 3, pressed);
         drawInputArea(renderer, startx + 1, starty + h - 6, w - 2, "File:", filename_buffer, focus == 1);
 
         if (focus != 1) renderer.hideCursor();
         renderer.refresh();
+
+        if (pressed) {
+            napms(100);
+            break;
+        }
 
         wint_t ch = renderer.getChar();
         if (ch == 27) {
             timeout(50); wint_t next_ch = renderer.getChar(); timeout(-1);
             if (next_ch == ERR) { browser_active = false; continue; }
             switch(tolower(next_ch)) {
-                case 'o': focus = 2; ch = KEY_ENTER; break;
-                case 's': focus = 2; ch = KEY_ENTER; break;
-                case 'c': focus = 3; ch = KEY_ENTER; break;
+                case 'o': focus = 2; pressed = true; break;
+                case 'c': focus = 3; pressed = true; break;
             }
         }
 
@@ -226,10 +231,10 @@ std::string FileBrowser::open(Renderer& renderer) {
                 }
                 break;
             case KEY_ENTER: case 10: case 13:
-                if (focus == 3) browser_active = false;
+                if (focus == 3) pressed = true;
                 else if (focus == 2 || (focus == 1 && !filename_buffer.empty())) {
                     result_filename = current_path + "/" + filename_buffer;
-                    browser_active = false;
+                    pressed = true;
                 } else if (focus == 0 && selection < (int)entries.size()) {
                     FileEntry& sel = entries[selection];
                     if (sel.is_directory) {
@@ -285,6 +290,7 @@ std::string FileBrowser::save(Renderer& renderer, const std::string& current_fil
     std::string result_filename = "";
 
     bool browser_active = true;
+    bool pressed = false;
     while (browser_active) {
         entries.clear();
         DIR *dir = opendir(current_path.c_str());
@@ -324,19 +330,24 @@ std::string FileBrowser::save(Renderer& renderer, const std::string& current_fil
             drawFileDetails(renderer, details_x, starty + 3, &entries[selection]);
         }
 
-        drawActionButtons(renderer, startx, starty + h - 4, w, save_btn_text, focus == 2, cancel_btn_text, focus == 3);
+        drawActionButtons(renderer, startx, starty + h - 4, w, save_btn_text, focus == 2, cancel_btn_text, focus == 3, pressed);
         drawInputArea(renderer, startx + 1, starty + h - 6, w - 2, "Save:", filename_buffer, focus == 1);
 
         if (focus != 1) renderer.hideCursor();
         renderer.refresh();
+
+        if (pressed) {
+            napms(100);
+            break;
+        }
 
         wint_t ch = renderer.getChar();
         if (ch == 27) {
             timeout(50); wint_t next_ch = renderer.getChar(); timeout(-1);
             if (next_ch == ERR) { browser_active = false; continue; }
             switch(tolower(next_ch)) {
-                case 's': focus = 2; ch = KEY_ENTER; break;
-                case 'c': focus = 3; ch = KEY_ENTER; break;
+                case 's': focus = 2; pressed = true; break;
+                case 'c': focus = 3; pressed = true; break;
             }
         }
 
@@ -371,10 +382,10 @@ std::string FileBrowser::save(Renderer& renderer, const std::string& current_fil
                 }
                 break;
             case KEY_ENTER: case 10: case 13:
-                if (focus == 3) browser_active = false;
+                if (focus == 3) pressed = true;
                 else if (focus == 2 || (focus == 1 && !filename_buffer.empty())) {
                     result_filename = current_path + "/" + filename_buffer;
-                    browser_active = false;
+                    pressed = true;
                 } else if (focus == 0 && selection < (int)entries.size()) {
                     FileEntry& sel = entries[selection];
                     if (sel.is_directory) {

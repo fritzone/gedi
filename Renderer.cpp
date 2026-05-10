@@ -208,15 +208,20 @@ void Renderer::loadColors(const json &theme_data) {
 }
 
 
-void Renderer::drawButton(int x, int y, const std::string& text, bool selected) {
-    cchar_t upper_shadow, lower_shadow;
-    setcchar(&upper_shadow, L"▀", WA_NORMAL, CP_BUTTON_SHADOW, NULL);
-    setcchar(&lower_shadow, L"▄", WA_NORMAL, CP_BUTTON_SHADOW, NULL);
+void Renderer::drawButton(int x, int y, const std::string& text, bool selected, bool pressed) {
+    if (pressed) {
+        // Shift down and no shadow for pressed effect
+        y += 1;
+    } else {
+        cchar_t upper_shadow, lower_shadow;
+        setcchar(&upper_shadow, L"▀", WA_NORMAL, CP_BUTTON_SHADOW, NULL);
+        setcchar(&lower_shadow, L"▄", WA_NORMAL, CP_BUTTON_SHADOW, NULL);
 
-    for (size_t i = 0; i < text.length(); ++i) {
-        mvwadd_wch(stdscr, y + 1, x + 1 + i, &upper_shadow);
+        for (size_t i = 0; i < text.length(); ++i) {
+            mvwadd_wch(stdscr, y + 1, x + 1 + i, &upper_shadow);
+        }
+        mvwadd_wch(stdscr, y, x + text.length(), &lower_shadow);
     }
-    mvwadd_wch(stdscr, y, x + text.length(), &lower_shadow);
 
     int bg_color = selected ? CP_BUTTON_SELECTED_BG : CP_BUTTON_BG;
     int text_color = selected ? CP_BUTTON_SELECTED_TEXT : CP_BUTTON_TEXT;

@@ -5,7 +5,7 @@
 #include <vector>
 #include <map>
 
-enum TextStyle { STYLE_NORMAL, STYLE_BOLD, STYLE_LINK };
+enum TextStyle { STYLE_NORMAL, STYLE_BOLD, STYLE_LINK, STYLE_HEADER };
 
 struct TextSegment {
     std::string text;

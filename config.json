@@ -1,6 +1,37 @@
 {
     "color_scheme": "Borland Classic",
+    "compile_mode": -1,
+    "extra_compile_flags": "",
     "indentation_width": 4,
-    "show_line_numbers": true,
-    "smart_indentation": true
+    "optimization_level": -1,
+    "security_flags": [
+        true,
+        true,
+        true,
+        true,
+        true
+    ],
+    "show_line_numbers": false,
+    "smart_indentation": true,
+    "keybindings": {
+        "new": "Ctrl+N",
+        "open": "F3",
+        "save": "F2",
+        "exit": "Alt+X",
+        "undo": "Alt+BS",
+        "redo": "Alt+Y",
+        "cut": "Shift+DEL",
+        "copy": "Ctrl+INS",
+        "paste": "Shift+INS",
+        "delete": "DEL",
+        "find": "Ctrl+F",
+        "replace": "Ctrl+R",
+        "compile": "Alt+F9",
+        "run": "Ctrl+F9",
+        "toggle_output": "Alt+F5",
+        "next_buffer": "F6",
+        "prev_buffer": "Shift+F6",
+        "close_buffer": "Alt+F3",
+        "toggle_comment": "Ctrl+/"
+    }
 }

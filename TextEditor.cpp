@@ -78,11 +78,16 @@ void TextEditor::run(int argc, char* argv[]) {
     m_configManager = std::make_unique<ConfigManager>(configPath, colorsPath);
     m_configManager->loadConfig(m_config);
     m_themes_data = m_configManager->loadThemes();
+
+    m_keyBindings = std::make_unique<KeyBindings>();
+    m_keyBindings->loadFromConfig(m_config.keybindings);
+
     m_buildSystem = std::make_unique<BuildSystem>(m_config);
     m_helpProvider = std::make_unique<HelpProvider>();
     m_bufferManager = std::make_unique<BufferManager>();
 
     loadHelpFile();
+    updateMenuLabels();
 
     if (m_themes_data.contains(m_config.color_scheme_name)) {
         m_renderer->loadColors(m_themes_data[m_config.color_scheme_name]);
@@ -153,6 +158,29 @@ void TextEditor::write_file(EditorBuffer& buffer) {
 
     // Invalidate the compile command cache for this file, as its content has changed.
     m_buildSystem->invalidateCache(buffer.filename);
+}
+
+void TextEditor::TryExit() {
+    for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
+        EditorBuffer& buffer = m_bufferManager->getBuffer(i);
+        if (buffer.changed) {
+            SwitchToBuffer(i);
+            drawEditorState();
+            int res = msgwin_yesno("Save changes to:", buffer.filename);
+            if (res == 1) { // Yes
+                if (buffer.is_new_file) SaveFileBrowser();
+                else write_file(buffer);
+                
+                // If they cancelled the save or it failed, don't exit
+                if (buffer.changed) return;
+            } else if (res == 0) { // No
+                // Continue to next buffer without saving
+            } else if (res == -1) { // Cancel/ESC
+                return; 
+            }
+        }
+    }
+    main_loop_running = false;
 }
 
 void TextEditor::insert_line_after(EditorBuffer& buffer, Line* current_p, const std::string& s) {
@@ -284,11 +312,19 @@ void TextEditor::drawMenuBar(int active_menu_id) {
     int w = m_renderer->getWidth();
     m_renderer->drawText(0, 0, std::string(w, ' '), Renderer::CP_MENU_BAR);
     for (size_t i = 0; i < m_menus.size(); ++i) {
-        if (m_menu_positions[i] + m_menus[i].length() > (size_t)w) continue;
         int menu_id = i + 1;
+        int x_pos = m_menu_positions[i];
+        
+        // If it is the last menu (Help), move it to the right
+        if (i == m_menus.size() - 1) {
+            x_pos = w - m_menus[i].length() - 2;
+        }
+
+        if (x_pos + m_menus[i].length() > (size_t)w) continue;
+        
         bool is_active = (menu_id == active_menu_id);
         int bar_color = is_active ? Renderer::CP_MENU_SELECTED : Renderer::CP_MENU_BAR;
-        m_renderer->drawStyledText(m_menu_positions[i], 0, m_menus[i], bar_color);
+        m_renderer->drawStyledText(x_pos, 0, m_menus[i], bar_color);
     }
 }
 
@@ -392,79 +428,8 @@ void TextEditor::drawEditorState(int active_menu_id) {
     }
 }
 
-int TextEditor::msgwin_yesno(const std::string& question, const std::string& filename_in) {
-    m_renderer->hideCursor();
-
-    int h = 8, w = 50;
-    int starty = (m_renderer->getHeight() - h) / 2;
-    int startx = (m_renderer->getWidth() - w) / 2;
-
-    std::string filename = filename_in;
-
-    int max_text_width = w - 4;
-    if (filename.length() > (size_t)max_text_width) {
-        filename = "..." + filename.substr(filename.length() - (max_text_width - 3));
-    }
-
-    WINDOW* behind = newwin(h + 1, w + 1, starty, startx);
-    copywin(stdscr, behind, starty, startx, 0, 0, h, w, FALSE);
-
-    m_renderer->drawShadow(startx, starty, w, h);
-    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Question ", Renderer::CP_DIALOG_TITLE, A_BOLD);
-
-    wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-    for (int i = 1; i < h - 1; ++i) {
-        mvwaddstr(stdscr, starty + i, startx + 1, std::string(w - 2, ' ').c_str());
-    }
-    wattroff(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-
-    m_renderer->drawText(startx + 2, starty + 2, question, Renderer::CP_DIALOG);
-    m_renderer->drawText(startx + 4, starty + 3, filename, Renderer::CP_DIALOG, A_BOLD);
-
-    int selection = 0; // 0 for Yes, 1 for No
-    nodelay(stdscr, FALSE);
-    int final_result = -1;
-
-    std::string yes_text = " &Yes ";
-    std::string no_text = " &No ";
-    int total_width = yes_text.length() + no_text.length() + 5;
-    int btn_y = starty + h - 3;
-    int yes_x = startx + (w - total_width) / 2;
-    int no_x = yes_x + yes_text.length() + 5;
-
-    while(true) {
-        m_renderer->drawButton(yes_x, btn_y, yes_text, selection == 0);
-        m_renderer->drawButton(no_x, btn_y, no_text, selection == 1);
-        m_renderer->refresh();
-        wint_t ch = m_renderer->getChar();
-
-        if (ch == 27) { // Alt key sequence
-            timeout(50);
-            wint_t next_ch = m_renderer->getChar();
-            timeout(-1);
-            if (next_ch != ERR) {
-                if (tolower(next_ch) == 'y') { final_result = 1; goto end_dialog_yesno; }
-                if (tolower(next_ch) == 'n') { final_result = 0; goto end_dialog_yesno; }
-            } else { // Just ESC
-                final_result = -1; goto end_dialog_yesno;
-            }
-        } else {
-            switch (ch) {
-            case KEY_LEFT: case KEY_RIGHT: case 9:
-                selection = 1 - selection;
-                break;
-            case KEY_ENTER: case 10: case 13:
-                final_result = (selection == 0) ? 1 : 0;
-                goto end_dialog_yesno;
-            }
-        }
-    }
-
-end_dialog_yesno:
-    copywin(behind, stdscr, 0, 0, starty, startx, h, w, FALSE); delwin(behind);
-    nodelay(stdscr, TRUE);
-    m_renderer->showCursor();
-    return final_result;
+int TextEditor::msgwin_yesno(const std::string& question, const std::string& info) {
+    return QuestionDialog::ask(*m_renderer, question, info);
 }
 
 void TextEditor::handleResize() {
@@ -475,6 +440,73 @@ void TextEditor::handleResize() {
     if (m_text_area_end_x <= m_text_area_start_x) { m_text_area_end_x = m_text_area_start_x + 1; }
     if (m_text_area_end_y <= m_text_area_start_y) { m_text_area_end_y = m_text_area_start_y + 1; }
     update_cursor_and_scroll();
+}
+
+std::string TextEditor::formatMenuItem(const std::string& label, EditorAction action, int width) {
+    std::string key_label = m_keyBindings->getLabel(action);
+    if (key_label.empty()) return " " + label + std::string(width - label.length() - 2, ' ') + " ";
+    
+    int padding = width - label.length() - key_label.length() - 2;
+    if (padding < 1) padding = 1;
+    return " " + label + std::string(padding, ' ') + key_label + " ";
+}
+
+void TextEditor::updateMenuLabels() {
+    m_menus = {" &File " , " &Edit " , " &Search ", " &Build " , " &Window ", " &Options ", " &Help "  };
+    m_menu_positions = { 1, 7, 13, 21, 28, 36, 45 };
+
+    m_submenu_file = {
+        formatMenuItem("&New", ACT_NEW),
+        formatMenuItem("&Open...", ACT_OPEN),
+        " -------------- ",
+        formatMenuItem("&Save", ACT_SAVE),
+        formatMenuItem("Save &As...", ACT_SAVE_AS),
+        " -------------- ",
+        formatMenuItem("E&xit", ACT_EXIT)
+    };
+
+    m_submenu_edit = {
+        formatMenuItem("&Undo", ACT_UNDO),
+        formatMenuItem("&Redo", ACT_REDO),
+        " -------------- ",
+        formatMenuItem("Cu&t", ACT_CUT),
+        formatMenuItem("&Copy", ACT_COPY),
+        formatMenuItem("&Paste", ACT_PASTE),
+        formatMenuItem("&Delete", ACT_DELETE),
+        " -------------- ",
+        formatMenuItem("Comment Line", ACT_TOGGLE_COMMENT),
+        formatMenuItem("Uncomment Line", ACT_TOGGLE_COMMENT)
+    };
+
+    m_submenu_search = {
+        formatMenuItem("&Find...", ACT_FIND),
+        " Find &Next",
+        " Find Pre&vious",
+        formatMenuItem("&Replace...", ACT_REPLACE),
+        " -------------- ",
+        formatMenuItem("&Go To Line...", ACT_GOTO_LINE)
+    };
+
+    m_submenu_build = {
+        formatMenuItem("&Run", ACT_RUN),
+        formatMenuItem("&Compile", ACT_COMPILE),
+        formatMenuItem("Compile &Options...", ACT_COMPILE_OPTIONS)
+    };
+
+    m_submenu_window = {
+        formatMenuItem("&Output Screen", ACT_TOGGLE_OUTPUT),
+        " -------------- ",
+        formatMenuItem("&Next Window", ACT_NEXT_BUFFER),
+        formatMenuItem("&Previous Window", ACT_PREV_BUFFER),
+        formatMenuItem("&Close Window", ACT_CLOSE_BUFFER)
+    };
+
+    m_submenu_options = { formatMenuItem("Editor &Settings...", ACT_SETTINGS) };
+
+    m_submenu_help = {
+        formatMenuItem("&View Help...", ACT_HELP),
+        formatMenuItem("&About...", ACT_ABOUT)
+    };
 }
 
 void TextEditor::main_loop() {
@@ -636,6 +668,15 @@ void TextEditor::update_cursor_and_scroll() {
 }
 
 void TextEditor::HandleAltKey(wint_t key) {
+    wint_t lookup_key = key;
+    if (key >= 'a' && key <= 'z') lookup_key = toupper(key);
+    
+    EditorAction action = m_keyBindings->getAction(KEY_ALT(lookup_key));
+    if (action != ACT_UNKNOWN) {
+        process_key(KEY_ALT(lookup_key)); // Dispatch via standard action mechanism
+        return;
+    }
+
     switch (tolower(key)) {
     case 'f': ActivateMenuBar(1); break; // File
     case 'e': ActivateMenuBar(2); break; // Edit
@@ -644,7 +685,6 @@ void TextEditor::HandleAltKey(wint_t key) {
     case 'w': ActivateMenuBar(5); break; // Window (was 6)
     case 'o': ActivateMenuBar(6); break; // Options (was 7)
     case 'h': ActivateMenuBar(7); break; // Help (was 8)
-    case 'x': main_loop_running = false; break;
     case 'y': HandleRedo(); break;
     case KEY_BACKSPACE: HandleUndo(); break;
     case 'c': CloseWindow(); break;
@@ -1083,6 +1123,39 @@ void TextEditor::handleSmartBlockClose(wint_t closing_char) {
 
 
 void TextEditor::process_key(wint_t ch) {
+    if (currentBufferIdx() != -1) {
+        EditorAction action = m_keyBindings->getAction(ch);
+        if (action != ACT_UNKNOWN) {
+            switch (action) {
+                case ACT_NEW: DoNew(); return;
+                case ACT_OPEN: selectfile(); return;
+                case ACT_SAVE: if (currentBuffer().is_new_file) SaveFileBrowser(); else write_file(currentBuffer()); return;
+                case ACT_SAVE_AS: SaveFileBrowser(); return;
+                case ACT_EXIT: TryExit(); return;
+                case ACT_UNDO: HandleUndo(); return;
+                case ACT_REDO: HandleRedo(); return;
+                case ACT_CUT: HandleCut(); return;
+                case ACT_COPY: HandleCopy(); return;
+                case ACT_PASTE: HandlePaste(); return;
+                case ACT_FIND: ActivateSearch(); return;
+                case ACT_REPLACE: ActivateReplace(); return;
+                case ACT_GOTO_LINE: GoToLineDialog(); return;
+                case ACT_COMPILE: compileOnly(); return;
+                case ACT_RUN: compileAndRun(); return;
+                case ACT_TOGGLE_OUTPUT: showOutputScreen(); return;
+                case ACT_NEXT_BUFFER: NextWindow(); return;
+                case ACT_PREV_BUFFER: PreviousWindow(); return;
+                case ACT_CLOSE_BUFFER: CloseWindow(); return;
+                case ACT_SETTINGS: EditorSettingsDialog(); return;
+                case ACT_HELP: showHelpDialog(); return;
+                case ACT_ABOUT: AboutBox(); return;
+                case ACT_TOGGLE_COMMENT: handleToggleComment(); return;
+                case ACT_DELETE: DeleteSelection(); return;
+                default: break;
+            }
+        }
+    }
+
     if (m_search_mode) {
         switch(ch) {
         case 27: // ESC key
@@ -1358,12 +1431,14 @@ void TextEditor::ActivateMenuBar(int initial_menu_id) {
     int current_id = initial_menu_id;
     if (current_id > max_visible_menu_id) { current_id = 1; }
 
+    int help_x = w - m_menus.back().length() - 3;
+
     MenuAction action;
     std::map<int, std::pair<const std::vector<std::string>*, int>> menus_by_id = {
         {1, {&m_submenu_file, m_menu_positions[0] - 1}}, {2, {&m_submenu_edit, m_menu_positions[1] - 1}},
         {3, {&m_submenu_search, m_menu_positions[2] - 1}}, {4, {&m_submenu_build, m_menu_positions[3] - 1}},
         {5, {&m_submenu_window, m_menu_positions[4] - 1}}, {6, {&m_submenu_options, m_menu_positions[5] - 1}},
-        {7, {&m_submenu_help, m_menu_positions[6] - 1}}
+        {7, {&m_submenu_help, help_x}}
     };
 
     do {
@@ -1408,7 +1483,14 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
     }
     w += 4;
     int h = finalMenuItems.size() + 2;
-    if (y + h > m_renderer->getHeight() || x + w > m_renderer->getWidth()) { return CLOSE_MENU; }
+    
+    // Ensure menu fits on screen
+    if (x + w > m_renderer->getWidth()) {
+        x = m_renderer->getWidth() - w;
+    }
+    if (x < 0) x = 0;
+
+    if (y + h > m_renderer->getHeight()) { return CLOSE_MENU; }
 
     WINDOW* behind = newwin(h + 1, w + 1, y, x);
     copywin(stdscr, behind, y, x, 0, 0, h, w, FALSE);
@@ -1451,7 +1533,7 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
                 else if (selection == 2) selectfile();
                 else if (selection == 4) { if (currentBuffer().is_new_file) SaveFileBrowser(); else write_file(currentBuffer()); }
                 else if (selection == 5) SaveFileBrowser();
-                else if (selection == 7) main_loop_running = false;
+                else if (selection == 7) TryExit();
                 else NotImplemented();
                 break;
             case 2: // Edit
@@ -1541,6 +1623,7 @@ void TextEditor::CloseWindow() {
         if (result == 1) {
             if (currentBuffer().is_new_file) SaveFileBrowser();
             else write_file(currentBuffer());
+            if (currentBuffer().changed) return;
         } else if (result == -1) {
             return;
         }
@@ -1620,161 +1703,12 @@ void TextEditor::PerformSearch(bool next) {
 // Config management is now handled by ConfigManager
 
 void TextEditor::EditorSettingsDialog() {
-    m_renderer->hideCursor();
-
-    // Temporary state for the dialog
-    bool temp_smart_indent = m_config.smart_indentation;
-    int temp_indent_width = m_config.indentation_width;
-    bool temp_show_line_numbers = m_config.show_line_numbers;
-    std::string temp_color_scheme = m_config.color_scheme_name;
-
-    // Prepare theme list
     std::vector<std::string> themes;
     for (auto const& [key, val] : m_themes_data.items()) {
         themes.push_back(key);
     }
     std::sort(themes.begin(), themes.end());
-
-    int initial_theme_idx = 0;
-    for(size_t i = 0; i < themes.size(); ++i) {
-        if (themes[i] == temp_color_scheme) {
-            initial_theme_idx = i;
-            break;
-        }
-    }
-    int temp_theme_idx = initial_theme_idx;
-
-
-    int h = 18 + themes.size();
-    if (h > m_renderer->getHeight() - 4) h = m_renderer->getHeight() - 4;
-    int w = 55;
-    int starty = (m_renderer->getHeight() - h) / 2;
-    int startx = (m_renderer->getWidth() - w) / 2;
-
-    WINDOW* behind = newwin(h + 1, w + 1, starty, startx);
-    copywin(stdscr, behind, starty, startx, 0, 0, h, w, FALSE);
-
-    // Focus management
-    int focus_group = 0; // 0: Indent, 1: View, 2: Colors, 3: Buttons
-    std::vector<int> focus_item(4, 0);
-
-    nodelay(stdscr, FALSE);
-
-    std::string save_btn_text = " &Save ";
-    std::string cancel_btn_text = " &Cancel "; // Hotkey is now Alt+C
-
-    m_renderer->drawShadow(startx, starty, w, h);
-    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Editor Settings ", Renderer::CP_DIALOG_TITLE, A_BOLD);
-
-    bool dialog_active = true;
-    while(dialog_active) {
-        // --- Draw Dialog ---
-        wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-        for (int i = 1; i < h - 1; ++i) mvwaddstr(stdscr, starty + i, startx + 1, std::string(w - 2, ' ').c_str());
-        wattroff(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-
-        // Group 1: Indentation
-        m_renderer->drawBoxWithTitle(startx + 2, starty + 2, w - 4, 4, Renderer::CP_DIALOG, Renderer::SINGLE, " &Indentation ", Renderer::CP_DIALOG, (focus_group == 0 ? A_BOLD : 0));
-        m_renderer->drawText(startx + 4, starty + 3, (temp_smart_indent ? "[X]" : "[ ]"), (focus_group == 0 && focus_item[0] == 0) ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
-        m_renderer->drawText(startx + 8, starty + 3, "Smart Indent", Renderer::CP_DIALOG);
-        m_renderer->drawText(startx + 4, starty + 4, "< " + std::to_string(temp_indent_width) + " >", (focus_group == 0 && focus_item[0] == 1) ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
-        m_renderer->drawText(startx + 12, starty + 4, "Tab Size", Renderer::CP_DIALOG);
-
-        // Group 2: View
-        m_renderer->drawBoxWithTitle(startx + 2, starty + 7, w - 4, 3, Renderer::CP_DIALOG, Renderer::SINGLE, " &View ", Renderer::CP_DIALOG, (focus_group == 1 ? A_BOLD : 0));
-        m_renderer->drawText(startx + 4, starty + 8, (temp_show_line_numbers ? "[X]" : "[ ]"), (focus_group == 1 && focus_item[1] == 0) ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
-        m_renderer->drawText(startx + 8, starty + 8, "Show Line Numbers", Renderer::CP_DIALOG);
-
-        // Group 3: Color Scheme
-        int color_box_h = h - 15;
-        m_renderer->drawBoxWithTitle(startx + 2, starty + 11, w - 4, color_box_h, Renderer::CP_DIALOG, Renderer::SINGLE, " Col&or Scheme ", Renderer::CP_DIALOG, (focus_group == 2 ? A_BOLD : 0)); // Hotkey is now Alt+O
-        int list_height = color_box_h - 2;
-        int top_of_list = 0;
-        if (temp_theme_idx >= list_height) {
-            top_of_list = temp_theme_idx - list_height + 1;
-        }
-        for(int i = 0; i < list_height; ++i) {
-            int current_theme_idx = top_of_list + i;
-            if (current_theme_idx < (int)themes.size()) {
-                m_renderer->drawText(startx + 4, starty + 12 + i, (current_theme_idx == temp_theme_idx ? "(•)" : "( )"), (focus_group == 2 && current_theme_idx == focus_item[2]) ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
-                m_renderer->drawText(startx + 8, starty + 12 + i, themes[current_theme_idx], Renderer::CP_DIALOG);
-            }
-        }
-
-        m_renderer->drawButton(startx + w / 2 - 15, starty + h - 3, save_btn_text, focus_group == 3 && focus_item[3] == 0);
-        m_renderer->drawButton(startx + w / 2 + 5, starty + h - 3, cancel_btn_text, focus_group == 3 && focus_item[3] == 1);
-
-        m_renderer->hideCursor();
-        m_renderer->refresh();
-
-        wint_t ch = m_renderer->getChar();
-        if (ch == 27) { // Alt or ESC
-            timeout(50);
-            wint_t next_ch = m_renderer->getChar();
-            timeout(-1);
-            if (next_ch == ERR) { dialog_active = false; break; } // ESC
-            switch (tolower(next_ch)) {
-            case 'i': focus_group = 0; focus_item[0] = 0; break;
-            case 'v': focus_group = 1; focus_item[1] = 0; break;
-            case 'o': focus_group = 2; focus_item[2] = temp_theme_idx; break; // Hotkey for Color Scheme
-            case 's': focus_group = 3; focus_item[3] = 0; goto handle_enter_settings;
-            case 'c': focus_group = 3; focus_item[3] = 1; goto handle_enter_settings; // Hotkey for Cancel
-            }
-        } else {
-            switch(ch) {
-            case 9: // Tab
-                focus_group = (focus_group + 1) % 4;
-                if (focus_group == 2) focus_item[2] = temp_theme_idx;
-                else focus_item[focus_group] = 0;
-                break;
-            case KEY_UP:
-                if (focus_group == 0 && focus_item[0] > 0) focus_item[0]--;
-                if (focus_group == 2 && focus_item[2] > 0) focus_item[2]--;
-                break;
-            case KEY_DOWN:
-                if (focus_group == 0 && focus_item[0] < 1) focus_item[0]++;
-                if (focus_group == 2 && focus_item[2] < (int)themes.size() - 1) focus_item[2]++;
-                break;
-            case KEY_LEFT:
-                if (focus_group == 0 && focus_item[0] == 1 && temp_indent_width > 1) temp_indent_width--;
-                if (focus_group == 3 && focus_item[3] > 0) focus_item[3]--;
-                break;
-            case KEY_RIGHT:
-                if (focus_group == 0 && focus_item[0] == 1 && temp_indent_width < 16) temp_indent_width++;
-                if (focus_group == 3 && focus_item[3] < 1) focus_item[3]++;
-                break;
-            case ' ':
-            case KEY_ENTER: case 10: case 13:
-            handle_enter_settings:
-                if (focus_group == 0) {
-                    if (focus_item[0] == 0) temp_smart_indent = !temp_smart_indent;
-                } else if (focus_group == 1) {
-                    temp_show_line_numbers = !temp_show_line_numbers;
-                } else if (focus_group == 2) {
-                    temp_theme_idx = focus_item[2];
-                } else if (focus_group == 3) {
-                    if (focus_item[3] == 0) { // Save
-                        m_config.smart_indentation = temp_smart_indent;
-                        m_config.indentation_width = temp_indent_width;
-                        m_config.show_line_numbers = temp_show_line_numbers;
-                        if (!themes.empty()) m_config.color_scheme_name = themes[temp_theme_idx];
-                        m_configManager->saveConfig(m_config);
-                        m_buildSystem->setConfig(m_config);
-                        if (m_themes_data.contains(m_config.color_scheme_name)) {
-                            m_renderer->loadColors(m_themes_data[m_config.color_scheme_name]);
-                        }
-                    }
-                    dialog_active = false;
-                }
-                break;
-            }
-        }
-    }
-
-    copywin(behind, stdscr, 0, 0, starty, startx, h, w, FALSE); delwin(behind);
-    nodelay(stdscr, TRUE);
-    m_renderer->showCursor();
-    handleResize();
+    SettingsDialog::show(*m_renderer, m_config, *m_configManager, themes);
 }
 
 // Build command generation is now handled by BuildSystem
@@ -1808,83 +1742,7 @@ void TextEditor::showOutputScreen() {
 // --- Modified to display a scrollable dialog with better styling and smaller size ---
 // --- Modified to be taller and manage cursor visibility ---
 void TextEditor::showScrollableOutputDialog(const std::vector<std::string>& lines) {
-    m_renderer->hideCursor();
-
-    int h = 15;
-    int w = (m_renderer->getWidth() - 20) / 2;
-    if (w < 50) w = 50;
-    int content_width = w - 2;
-    int starty = (m_renderer->getHeight() - h) / 2;
-    int startx = (m_renderer->getWidth() - w) / 2;
-
-    WINDOW* behind = newwin(h + 1, w + 1, starty, startx);
-    copywin(stdscr, behind, starty, startx, 0, 0, h, w, FALSE);
-
-    std::vector<std::string> wrapped_lines;
-    for (const auto& line : lines) {
-        std::vector<std::string> chunks = wrap_text(line, content_width);
-        wrapped_lines.insert(wrapped_lines.end(), chunks.begin(), chunks.end());
-    }
-
-    int scroll_offset = 0;
-    int max_view_lines = h - 2;
-
-    if (wrapped_lines.size() > (size_t)max_view_lines) {
-        scroll_offset = wrapped_lines.size() - max_view_lines;
-    }
-
-    nodelay(stdscr, FALSE);
-
-    m_renderer->drawShadow(startx, starty, w, h);
-    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Build Output ", Renderer::CP_DIALOG_TITLE, A_BOLD);
-
-    while (true) {
-        wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-        for (int i = 1; i < h - 1; ++i) {
-            mvwhline(stdscr, starty + i, startx + 1, ' ', w - 2);
-        }
-
-        for (int i = 0; i < max_view_lines; ++i) {
-            size_t line_idx = scroll_offset + i;
-            if (line_idx < wrapped_lines.size()) {
-                mvwprintw(stdscr, starty + i + 1, startx + 1, "%s", wrapped_lines[line_idx].c_str());
-            }
-        }
-        wattroff(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-
-        attron(COLOR_PAIR(Renderer::CP_HIGHLIGHT));
-        if (scroll_offset > 0) {
-            mvaddch(starty + 1, startx + w - 1, ACS_UARROW);
-        }
-        if ((scroll_offset + max_view_lines) < (int)wrapped_lines.size()) {
-            mvaddch(starty + h - 3, startx + w - 1, ACS_DARROW);
-        }
-        attroff(COLOR_PAIR(Renderer::CP_HIGHLIGHT));
-
-        m_renderer->refresh();
-
-        int ch = m_renderer->getChar();
-        switch (ch) {
-        case KEY_UP:
-            if (scroll_offset > 0) scroll_offset--;
-            break;
-        case KEY_DOWN:
-            if ((scroll_offset + (size_t)max_view_lines) < wrapped_lines.size()) scroll_offset++;
-            break;
-        case 27:        // Escape
-        case KEY_ENTER:
-        case 10:
-        case 13:
-            goto end_loop;
-            break;
-        }
-    }
-
-end_loop:
-    copywin(behind, stdscr, 0, 0, starty, startx, h, w, FALSE);
-    delwin(behind);
-    m_renderer->showCursor();
-    handleResize();
+    BuildOutputDialog::show(*m_renderer, lines);
 }
 
 CompilationResult TextEditor::runCompilationProcess() {
@@ -2074,113 +1932,13 @@ void TextEditor::drawCompileOutputWindow() {
 
 
 void TextEditor::ActivateReplace() {
-    m_renderer->hideCursor();
-
-    int h = 10, w = 55;
-    int starty = (m_renderer->getHeight() - h) / 2;
-    int startx = (m_renderer->getWidth() - w) / 2;
-
-    WINDOW* behind = newwin(h + 1, w + 1, starty, startx);
-    copywin(stdscr, behind, starty, startx, 0, 0, h, w, FALSE);
-
-    std::string find_buf = m_search_term;
-    std::string replace_buf = m_replace_term;
-
-    int focus = 0; // 0: find, 1: replace, 2: Replace Btn, 3: Replace All Btn, 4: Cancel Btn
-    nodelay(stdscr, FALSE);
-
-    std::string replace_btn_text = " &Replace ";
-    std::string replace_all_btn_text = " Replace &All ";
-    std::string cancel_btn_text = " &Cancel ";
-
-    m_renderer->drawShadow(startx, starty, w, h);
-    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Replace ", Renderer::CP_DIALOG_TITLE, A_BOLD);
-
-    while (true) {
-        wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-        for (int i = 1; i < h - 1; ++i) {
-            mvwaddstr(stdscr, starty + i, startx + 1, std::string(w - 2, ' ').c_str());
-        }
-        wattroff(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-
-        m_renderer->drawText(startx + 3, starty + 2, "Find what:", Renderer::CP_DIALOG);
-        m_renderer->drawText(startx + 3, starty + 4, "Replace with:", Renderer::CP_DIALOG);
-
-        m_renderer->drawText(startx + 17, starty + 2, std::string(w - 20, ' '), Renderer::CP_LIST_BOX);
-        m_renderer->drawText(startx + 17, starty + 4, std::string(w - 20, ' '), Renderer::CP_LIST_BOX);
-        m_renderer->drawText(startx + 18, starty + 2, find_buf, Renderer::CP_LIST_BOX);
-        m_renderer->drawText(startx + 18, starty + 4, replace_buf, Renderer::CP_LIST_BOX);
-
-        int btn_y = starty + h - 3;
-        m_renderer->drawButton(startx + 4, btn_y, replace_btn_text, focus == 2);
-        m_renderer->drawButton(startx + 18, btn_y, replace_all_btn_text, focus == 3);
-        m_renderer->drawButton(startx + w - 14, btn_y, cancel_btn_text, focus == 4);
-
-        if (focus == 0) {
-            m_renderer->showCursor();
-            move(starty + 2, startx + 18 + find_buf.length());
-        } else if (focus == 1) {
-            m_renderer->showCursor();
-            move(starty + 4, startx + 18 + replace_buf.length());
-        } else {
-            m_renderer->hideCursor();
-        }
-        m_renderer->refresh();
-
-        wint_t ch = m_renderer->getChar();
-
-        if (ch == 27) { // ESC or Alt
-            timeout(50);
-            wint_t next_ch = m_renderer->getChar();
-            timeout(-1);
-            if (next_ch == ERR) { // Just ESC
-                goto end_replace_dialog;
-            } else { // Alt sequence
-                if (tolower(next_ch) == 'r') { focus = 2; goto handle_enter_replace; }
-                if (tolower(next_ch) == 'a') { focus = 3; goto handle_enter_replace; }
-                if (tolower(next_ch) == 'c') { focus = 4; goto handle_enter_replace; }
-            }
-        } else {
-            switch (ch) {
-            case 9: focus = (focus + 1) % 5; break;
-            case KEY_UP: if (focus == 1) focus = 0; break;
-            case KEY_DOWN: if (focus == 0) focus = 1; break;
-            case KEY_LEFT: if (focus > 2) focus--; break;
-            case KEY_RIGHT: if (focus >= 2 && focus < 4) focus++; break;
-            case KEY_BACKSPACE: case 127: case 8:
-                if (focus == 0 && !find_buf.empty()) find_buf.pop_back();
-                if (focus == 1 && !replace_buf.empty()) replace_buf.pop_back();
-                break;
-            case KEY_ENTER: case 10: case 13:
-            handle_enter_replace:
-                if (focus == 2) {
-                    m_search_term = find_buf; m_replace_term = replace_buf;
-                    PerformReplace(); goto end_replace_dialog;
-                }
-                if (focus == 3) {
-                    m_search_term = find_buf; m_replace_term = replace_buf;
-                    PerformReplaceAll(); goto end_replace_dialog;
-                }
-                if (focus == 4) {
-                    goto end_replace_dialog;
-                }
-                break;
-            default:
-                if (ch > 31 && ch < KEY_MIN) {
-                    std::string utf8_char = wchar_to_utf8(ch);
-                    if (focus == 0) find_buf += utf8_char;
-                    if (focus == 1) replace_buf += utf8_char;
-                }
-                break;
-            }
-        }
+    ReplaceResult res = ReplaceDialog::show(*m_renderer, m_search_term, m_replace_term);
+    if (res.action != ReplaceAction::CANCEL) {
+        m_search_term = res.find_term;
+        m_replace_term = res.replace_term;
+        if (res.action == ReplaceAction::REPLACE) PerformReplace();
+        else if (res.action == ReplaceAction::REPLACE_ALL) PerformReplaceAll();
     }
-
-end_replace_dialog:
-    copywin(behind, stdscr, 0, 0, starty, startx, h, w, FALSE); delwin(behind);
-    nodelay(stdscr, TRUE);
-    m_renderer->showCursor();
-    handleResize();
 }
 
 void TextEditor::PerformReplace() {
@@ -2317,393 +2075,26 @@ void TextEditor::handleToggleComment() {
 }
 
 void TextEditor::msgwin(const std::string& s) {
-    int h = 8, w = 42;
-    int starty = (m_renderer->getHeight() - h) / 2;
-    int startx = (m_renderer->getWidth() - w) / 2;
-
-    WINDOW* behind = newwin(h + 1, w + 1, starty, startx);
-    copywin(stdscr, behind, starty, startx, 0, 0, h, w, FALSE);
-
-    wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-    for (int i = 1; i < h - 1; ++i) { mvwaddstr(stdscr, starty + i, startx + 1, std::string(w - 2, ' ').c_str()); }
-    wattroff(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-
-    m_renderer->drawShadow(startx, starty, w, h);
-    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Message ", Renderer::CP_DIALOG_TITLE, A_BOLD);
-    m_renderer->drawText(startx + 2, starty + 3, s, Renderer::CP_DIALOG);
-
-    std::string ok_text = " &Ok "; // Standardized button text
-    m_renderer->drawButton(startx + (w - ok_text.length()) / 2, starty + h - 3, ok_text, true);
-
-    m_renderer->refresh();
-
-    nodelay(stdscr, FALSE);
-    wint_t ch;
-    do {
-        ch = m_renderer->getChar();
-        if (ch == 27) { // Alt or ESC key
-            timeout(50);
-            wint_t next_ch = m_renderer->getChar();
-            timeout(-1);
-            if (next_ch != ERR && tolower(next_ch) == 'o') { // Updated hotkey
-                ch = KEY_ENTER;
-            } else if (next_ch == ERR) {
-                break;
-            }
-        }
-    } while (ch != KEY_ENTER && ch != 10 && ch != 13);
-    nodelay(stdscr, TRUE);
-
-    copywin(behind, stdscr, 0, 0, starty, startx, h, w, FALSE);
-    delwin(behind);
+    MessageDialog::show(*m_renderer, s);
 }
 
 void TextEditor::GoToLineDialog() {
     if (currentBufferIdx() == -1) return;
-
-    m_renderer->hideCursor();
-
-    int h = 8, w = 40;
-    int starty = (m_renderer->getHeight() - h) / 2;
-    int startx = (m_renderer->getWidth() - w) / 2;
-
-    WINDOW* behind = newwin(h + 1, w + 1, starty, startx);
-    copywin(stdscr, behind, starty, startx, 0, 0, h, w, FALSE);
-
-    std::string line_buf;
-    int focus = 0; // 0: input, 1: OK, 2: Cancel
-    nodelay(stdscr, FALSE);
-
-    std::string ok_btn_text = " &Ok "; // Standardized button text
-    std::string cancel_btn_text = " &Cancel ";
-
-    m_renderer->drawShadow(startx, starty, w, h);
-    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Go To Line ", Renderer::CP_DIALOG_TITLE, A_BOLD);
-
-    while (true) {
-        wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-        for (int i = 1; i < h - 1; ++i) {
-            mvwaddstr(stdscr, starty + i, startx + 1, std::string(w - 2, ' ').c_str());
-        }
-        wattroff(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-
-        m_renderer->drawText(startx + 3, starty + 2, "Line Number:", Renderer::CP_DIALOG);
-        m_renderer->drawText(startx + 18, starty + 2, std::string(w - 22, ' '), Renderer::CP_LIST_BOX);
-        m_renderer->drawText(startx + 19, starty + 2, line_buf, Renderer::CP_LIST_BOX);
-
-        int btn_y = starty + h - 3;
-        m_renderer->drawButton(startx + w / 2 - 12, btn_y, ok_btn_text, focus == 1);
-        m_renderer->drawButton(startx + w / 2 + 2, btn_y, cancel_btn_text, focus == 2);
-
-        if (focus == 0) {
-            m_renderer->showCursor();
-            move(starty + 2, startx + 19 + line_buf.length());
-        } else {
-            m_renderer->hideCursor();
-        }
-        m_renderer->refresh();
-
-        wint_t ch = m_renderer->getChar();
-
-        if (ch == 27) { // ESC or Alt
-            timeout(50);
-            wint_t next_ch = m_renderer->getChar();
-            timeout(-1);
-            if (next_ch == ERR) { // Just ESC
-                goto end_goto_dialog;
-            } else { // Alt sequence
-                if (tolower(next_ch) == 'o') { focus = 1; goto handle_enter_goto; } // Updated hotkey
-                if (tolower(next_ch) == 'c') { focus = 2; goto handle_enter_goto; }
-            }
-        } else {
-            switch (ch) {
-            case 9: focus = (focus + 1) % 3; break;
-            case KEY_LEFT: if (focus == 2) focus = 1; break;
-            case KEY_RIGHT: if (focus == 1) focus = 2; break;
-            case KEY_BACKSPACE: case 127: case 8:
-                if (focus == 0 && !line_buf.empty()) line_buf.pop_back();
-                break;
-            case KEY_ENTER: case 10: case 13:
-            handle_enter_goto:
-                if (focus == 1) { // OK
-                    try {
-                        int line_num = std::stoi(line_buf);
-                        if (line_num > 0 && line_num <= currentBuffer().total_lines) {
-                            currentBuffer().current_line_num = line_num;
-                            currentBuffer().cursor_col = 1;
-
-                            currentBuffer().current_line = currentBuffer().document_head;
-                            for(int i = 1; i < line_num; ++i) {
-                                if(currentBuffer().current_line->next) {
-                                    currentBuffer().current_line = currentBuffer().current_line->next;
-                                }
-                            }
-                            update_cursor_and_scroll();
-                        } else {
-                            msgwin("Line number out of range.");
-                        }
-                    } catch (...) {
-                        msgwin("Invalid line number.");
-                    }
-                    goto end_goto_dialog;
-                }
-                if (focus == 2) { // Cancel
-                    goto end_goto_dialog;
-                }
-                break;
-            default:
-                if (focus == 0 && isdigit(ch)) {
-                    line_buf += (char)ch;
-                }
-                break;
-            }
-        }
+    int line = GoToLineDialog::show(*m_renderer, currentBuffer().current_line_num, currentBuffer().total_lines);
+    if (line != -1) {
+        currentBuffer().current_line_num = line;
+        update_cursor_and_scroll();
     }
-
-end_goto_dialog:
-    copywin(behind, stdscr, 0, 0, starty, startx, h, w, FALSE); delwin(behind);
-    nodelay(stdscr, TRUE);
-    m_renderer->showCursor();
-    handleResize();
 }
 
 void TextEditor::CompileOptionsDialog() {
-    int h = 34, w = 84;
-    int starty = (m_renderer->getHeight() - h) / 2;
-    int startx = (m_renderer->getWidth() - w) / 2;
-
-    WINDOW* behind = newwin(h + 1, w + 1, starty, startx);
-    copywin(stdscr, behind, starty, startx, 0, 0, h, w, FALSE);
-
-    CompilerSettings& settings = currentBuffer().compiler_settings;
-    CompilerSettings temp_settings = settings;
-
-    std::vector<std::string> standards = {"c++11", "c++14", "c++17", "c++20", "c++23", "c++26"};
-    int std_idx = 0;
-    for(size_t i=0; i<standards.size(); ++i) if(standards[i] == temp_settings.cpp_standard) std_idx = i;
-    ComboBox stdCombo(standards, std_idx);
-
-    TabControl tabs({"Basic", "Advanced", "Expert"});
-    int focus_area = 0; // 0: Standard, 1: Tabs, 2: Content, 3: Optional, 4: Command, 5: Buttons
-    int sub_focus = 0;
-    int top_opt = 0;
-    int top_cmd_row = 0;
-
-    struct Option {
-        std::string label;
-        std::string group;
-        bool is_radio;
-        int radio_val;
-        bool* b_val;
-        int* i_val;
-    };
-
-    auto get_options = [&](int tab_idx) {
-        std::vector<Option> opts;
-        if (tab_idx == 0) {
-            opts = {
-                {"Generate debug symbols (-g)", "Optimization", false, 0, &temp_settings.debug_symbols, nullptr},
-                {"Disable optimisation (-O0)", "Optimization", true, 0, nullptr, &temp_settings.optimization_level},
-                {"Balanced optimisation (-O2)", "Optimization", true, 1, nullptr, &temp_settings.optimization_level},
-                {"High optimisation (-O3)", "Optimization", true, 2, nullptr, &temp_settings.optimization_level},
-                {"Enable common warnings (-Wall)", "Warnings", false, 0, &temp_settings.wall, nullptr},
-                {"Enable extra warnings (-Wextra)", "Warnings", false, 0, &temp_settings.wextra, nullptr},
-                {"Strict ISO compliance (-Wpedantic)", "Warnings", false, 0, &temp_settings.wpedantic, nullptr},
-                {"Treat warnings as errors (-Werror)", "Warnings", false, 0, &temp_settings.werror, nullptr}
-            };
-        } else if (tab_idx == 1) {
-            opts = {
-                {"Warn on implicit conversions (-Wconversion)", "Warnings", false, 0, &temp_settings.wconversion, nullptr},
-                {"Warn on signed/unsigned conv (-Wsign-conversion)", "Warnings", false, 0, &temp_settings.wsign_conversion, nullptr},
-                {"Warn on variable shadowing (-Wshadow)", "Warnings", false, 0, &temp_settings.wshadow, nullptr},
-                {"Warn on non-virtual destructors (-Wnon-virtual-dtor)", "Warnings", false, 0, &temp_settings.wnon_virtual_dtor, nullptr},
-                {"Warn on old-style casts (-Wold-style-cast)", "Warnings", false, 0, &temp_settings.wold_style_cast, nullptr},
-                {"Warn on overloaded virtuals (-Woverloaded-virtual)", "Warnings", false, 0, &temp_settings.woverloaded_virtual, nullptr},
-                {"Warn on null dereference (-Wnull-dereference)", "Warnings", false, 0, &temp_settings.wnull_dereference, nullptr},
-                {"Warn on double promotion (-Wdouble-promotion)", "Warnings", false, 0, &temp_settings.wdouble_promotion, nullptr},
-                {"Strict format string checking (-Wformat=2)", "Warnings", false, 0, &temp_settings.wformat_2, nullptr},
-                {"Keep frame pointer (-fno-omit-frame-pointer)", "Sanitizer", false, 0, &temp_settings.fno_omit_frame_pointer, nullptr},
-                {"Enable ASan and UBSan (-fsanitize=address,ub)", "Sanitizer", false, 0, &temp_settings.fsanitize_address_ub, nullptr},
-                {"Enable LeakSanitizer (-fsanitize=leak)", "Sanitizer", false, 0, &temp_settings.fsanitize_leak, nullptr},
-                {"Enable LTO (-flto)", "Sanitizer", false, 0, &temp_settings.flto, nullptr},
-                {"Optimise for host CPU (-march=native)", "Optimizer", false, 0, &temp_settings.march_native, nullptr},
-                {"Tune for host CPU (-mtune=native)", "Optimizer", false, 0, &temp_settings.mtune_native, nullptr}
-            };
-        } else {
-            opts = {
-                {"Warn on cast alignment (-Wcast-align)", "Warnings", false, 0, &temp_settings.wcast_align, nullptr},
-                {"Warn on cast qualifiers (-Wcast-qual)", "Warnings", false, 0, &temp_settings.wcast_qual, nullptr},
-                {"Warn on missing enum cases (-Wswitch-enum)", "Warnings", false, 0, &temp_settings.wswitch_enum, nullptr},
-                {"Warn on undefined macros (-Wundef)", "Warnings", false, 0, &temp_settings.wundef, nullptr},
-                {"Warn on redundant decls (-Wredundant-decls)", "Warnings", false, 0, &temp_settings.wredundant_decls, nullptr},
-                {"Warn on logical op issues (-Wlogical-op)", "Warnings", false, 0, &temp_settings.wlogical_op, nullptr},
-                {"Warn on useless casts (-Wuseless-cast)", "Warnings", false, 0, &temp_settings.wuseless_cast, nullptr},
-                {"Effective C++ warnings (-Weffc++)", "Warnings", false, 0, &temp_settings.weffcxx, nullptr},
-                {"Disable exceptions (-fno-exceptions)", "Functionality", false, 0, &temp_settings.fno_exceptions, nullptr},
-                {"Disable RTTI (-fno-rtti)", "Functionality", false, 0, &temp_settings.fno_rtti, nullptr},
-                {"Hide symbols by default (-fvisibility=hidden)", "Functionality", false, 0, &temp_settings.fvisibility_hidden, nullptr},
-                {"Enable strict aliasing (-fstrict-aliasing)", "Functionality", false, 0, &temp_settings.fstrict_aliasing, nullptr},
-                {"Sanitise ptr comparisons (-fsanitize=ptr-cmp)", "Sanitizer", false, 0, &temp_settings.fsanitize_pointer_compare, nullptr},
-                {"Sanitise ptr arithmetic (-fsanitize=ptr-sub)", "Sanitizer", false, 0, &temp_settings.fsanitize_pointer_subtract, nullptr},
-                {"Linker: remove unused deps (--as-needed)", "Linker", false, 0, &temp_settings.wl_as_needed, nullptr},
-                {"Linker: optimise linking (-Wl,-O1)", "Linker", false, 0, &temp_settings.wl_o1, nullptr}
-            };
-        }
-        return opts;
-    };
-
-    std::string base_cmd = m_buildSystem->guessCompileCommand(currentBuffer().filename);
-
-    nodelay(stdscr, FALSE);
-    bool dialog_active = true;
-    int last_tab = -1;
-
-    while (dialog_active) {
-        if (tabs.getActiveTab() != last_tab) {
-            top_opt = 0; sub_focus = 0;
-            last_tab = tabs.getActiveTab();
-        }
-
-        m_renderer->drawShadow(startx, starty, w, h);
-        m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Compiler Options ", Renderer::CP_DIALOG_TITLE, A_BOLD);
-
-        wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-        for (int i = 1; i < h - 1; ++i) mvwaddstr(stdscr, starty + i, startx + 1, std::string(w - 2, ' ').c_str());
-        wattroff(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-
-        m_renderer->drawText(startx + 2, starty + 2, "C++ Standard:", Renderer::CP_DIALOG);
-        stdCombo.draw(*m_renderer, startx + 17, starty + 2, 12, focus_area == 0);
-
-        tabs.draw(*m_renderer, startx + 2, starty + 4, w - 4, focus_area == 1);
-
-        auto current_opts = get_options(tabs.getActiveTab());
-        int visible_opt_rows = h - 20;
-        int opt_y = starty + 6;
-
-        struct Row { bool is_group; std::string text; int opt_idx; };
-        std::vector<Row> rows;
-        std::string last_group;
-        for (int i = 0; i < (int)current_opts.size(); ++i) {
-            if (current_opts[i].group != last_group) {
-                last_group = current_opts[i].group;
-                rows.push_back({true, "- Group: " + last_group, -1});
-            }
-            bool val = current_opts[i].is_radio ? (*current_opts[i].i_val == current_opts[i].radio_val) : *current_opts[i].b_val;
-            std::string mark = current_opts[i].is_radio ? (val ? "(•)" : "( )") : (val ? "[X]" : "[ ]");
-            rows.push_back({false, mark + " " + current_opts[i].label, i});
-        }
-
-        int selected_row = -1;
-        for(int i=0; i<(int)rows.size(); ++i) if(!rows[i].is_group && rows[i].opt_idx == sub_focus) selected_row = i;
-        if (selected_row < top_opt) top_opt = selected_row;
-        if (selected_row >= top_opt + visible_opt_rows) top_opt = selected_row - visible_opt_rows + 1;
-
-        for (int i = 0; i < visible_opt_rows && (top_opt + i) < (int)rows.size(); ++i) {
-            const auto& row = rows[top_opt + i];
-            if (row.is_group) m_renderer->drawText(startx + 2, opt_y + i, row.text, Renderer::CP_DIALOG, A_BOLD);
-            else {
-                int color = (focus_area == 2 && row.opt_idx == sub_focus) ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG;
-                m_renderer->drawText(startx + 4, opt_y + i, row.text, color);
-            }
-        }
-
-        m_renderer->drawBoxWithTitle(startx + 2, starty + h - 13, w - 4, 3, Renderer::CP_DIALOG, Renderer::SINGLE, " Optional flags ", Renderer::CP_DIALOG, (focus_area == 3 ? A_BOLD : 0));
-        m_renderer->drawText(startx + 4, starty + h - 12, std::string(w - 8, ' '), Renderer::CP_LIST_BOX);
-        m_renderer->drawText(startx + 4, starty + h - 12, temp_settings.optional_flags, Renderer::CP_LIST_BOX);
-
-        std::string final_cmd = m_buildSystem->get_full_compile_command(base_cmd, temp_settings);
-        std::vector<std::string> wrapped = wrap_text(final_cmd, w - 8);
-        m_renderer->drawBoxWithTitle(startx + 2, starty + h - 10, w - 4, 4, Renderer::CP_DIALOG, Renderer::SINGLE, " Final Command ", Renderer::CP_DIALOG, (focus_area == 4 ? A_BOLD : 0));
-        
-        int cmd_view_h = 2;
-        if (top_cmd_row < 0) top_cmd_row = 0;
-        if (top_cmd_row > (int)wrapped.size() - cmd_view_h) top_cmd_row = (int)wrapped.size() - cmd_view_h;
-        if (top_cmd_row < 0) top_cmd_row = 0;
-
-        for (int i = 0; i < cmd_view_h; ++i) {
-            if (top_cmd_row + i < (int)wrapped.size()) {
-                int color = (focus_area == 4) ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG;
-                m_renderer->drawText(startx + 4, starty + h - 9 + i, wrapped[top_cmd_row + i], color);
-            }
-        }
-
-        m_renderer->drawButton(startx + w/2 - 20, starty + h - 4, " &Ok ", focus_area == 5 && sub_focus == 0);
-        m_renderer->drawButton(startx + w/2 - 6, starty + h - 4, " Cop&y ", focus_area == 5 && sub_focus == 1);
-        m_renderer->drawButton(startx + w/2 + 8, starty + h - 4, " &Cancel ", focus_area == 5 && sub_focus == 2);
-
-        if (focus_area == 3) { m_renderer->showCursor(); move(starty + h - 12, startx + 4 + temp_settings.optional_flags.length()); }
-        else m_renderer->hideCursor();
-        m_renderer->refresh();
-
-        wint_t ch = m_renderer->getChar();
-        if (ch == 27) {
-            timeout(1); wint_t nch = m_renderer->getChar(); timeout(-1);
-            if (nch == ERR) { dialog_active = false; break; }
-            switch(tolower(nch)) {
-                case 'o': focus_area = 5; sub_focus = 0; break;
-                case 'y': { // Copy to clipboard
-                    FILE* xclip_pipe = popen("xclip -selection clipboard -i", "w");
-                    if (xclip_pipe) { fputs(final_cmd.c_str(), xclip_pipe); pclose(xclip_pipe); }
-                    break;
-                }
-                case 'c': dialog_active = false; break;
-            }
-        } else {
-            switch(ch) {
-                case 9: focus_area = (focus_area + 1) % 6; sub_focus = 0; break;
-                case KEY_BTAB: focus_area = (focus_area + 5) % 6; sub_focus = 0; break;
-                case KEY_UP:
-                    if (focus_area == 2 && sub_focus > 0) sub_focus--;
-                    else if (focus_area == 4 && top_cmd_row > 0) top_cmd_row--;
-                    else if (focus_area > 0) { 
-                        focus_area--; 
-                        if (focus_area == 2) sub_focus = get_options(tabs.getActiveTab()).size() - 1; 
-                        else sub_focus = 0; 
-                    }
-                    break;
-                case KEY_DOWN:
-                    if (focus_area == 2 && sub_focus < (int)get_options(tabs.getActiveTab()).size() - 1) sub_focus++;
-                    else if (focus_area == 4 && top_cmd_row < (int)wrapped.size() - cmd_view_h) top_cmd_row++;
-                    else if (focus_area < 5) { focus_area++; sub_focus = 0; }
-                    break;
-                case KEY_LEFT:
-                    if (focus_area == 0) { stdCombo.handleInput(ch); temp_settings.cpp_standard = stdCombo.getSelectedText(); }
-                    else if (focus_area == 1) tabs.handleInput(ch);
-                    else if (focus_area == 5 && sub_focus > 0) sub_focus--;
-                    break;
-                case KEY_RIGHT:
-                    if (focus_area == 0) { stdCombo.handleInput(ch); temp_settings.cpp_standard = stdCombo.getSelectedText(); }
-                    else if (focus_area == 1) tabs.handleInput(ch);
-                    else if (focus_area == 5 && sub_focus < 2) sub_focus++;
-                    break;
-                case ' ': case KEY_ENTER: case 10: case 13:
-                    if (focus_area == 2) {
-                        auto current = get_options(tabs.getActiveTab());
-                        if (current[sub_focus].is_radio) *current[sub_focus].i_val = current[sub_focus].radio_val;
-                        else *current[sub_focus].b_val = !*current[sub_focus].b_val;
-                    } else if (focus_area == 5) {
-                        if (sub_focus == 0) { settings = temp_settings; dialog_active = false; }
-                        else if (sub_focus == 1) { // Copy
-                            FILE* p = popen("xclip -selection clipboard -i", "w");
-                            if (p) { fputs(final_cmd.c_str(), p); pclose(p); }
-                        }
-                        else if (sub_focus == 2) dialog_active = false;
-                    }
-                    break;
-                case KEY_BACKSPACE: case 127: case 8:
-                    if (focus_area == 3 && !temp_settings.optional_flags.empty()) temp_settings.optional_flags.pop_back();
-                    break;
-                default:
-                    if (focus_area == 3 && ch > 31 && ch < KEY_MIN) temp_settings.optional_flags += wchar_to_utf8(ch);
-                    break;
-            }
-        }
-    }
-    copywin(behind, stdscr, 0, 0, starty, startx, h, w, FALSE); delwin(behind);
-    nodelay(stdscr, TRUE); m_renderer->showCursor(); handleResize();
+    if (currentBufferIdx() == -1) return;
+    CompileOptionsDialog::show(*m_renderer, *m_buildSystem, currentBuffer());
 }
 
-void TextEditor::AboutBox() { msgwin("gedi C++ Editor"); }
+void TextEditor::AboutBox() {
+    MessageDialog::show(*m_renderer, "gedi C++ Editor\nVersion 1.0\nAn interactive IDE for C++ programmers.");
+}
 
 void TextEditor::loadHelpFile() {
     std::string helpPath = "help.hlp";
@@ -2712,157 +2103,5 @@ void TextEditor::loadHelpFile() {
 }
 
 void TextEditor::showHelpDialog() {
-    if (m_helpProvider->getHelpData().find("main") == m_helpProvider->getHelpData().end()) {
-        msgwin("Error: /usr/share/gedi/help.hlp is missing or invalid.");
-        return;
-    }
-
-    m_renderer->hideCursor();
-    if(m_help_history.empty()){
-        m_help_history.push_back("main");
-    }
-
-    int h = 20, w = 70;
-    int starty = (m_renderer->getHeight() - h) / 2;
-    int startx = (m_renderer->getWidth() - w) / 2;
-
-    WINDOW* behind = newwin(h + 1, w + 1, starty, startx);
-    copywin(stdscr, behind, starty, startx, 0, 0, h, w, FALSE);
-
-    WINDOW* win = newwin(h, w, starty, startx);
-    keypad(win, TRUE);
-    nodelay(win, FALSE);
-
-    int scroll_offset = 0;
-    int selected_link_idx = 0;
-
-    m_renderer->drawShadow(startx, starty, w, h);
-    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Help System ", Renderer::CP_DIALOG_TITLE, A_BOLD);
-
-    while(true) {
-        wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-        for (int i = 1; i < h - 1; ++i) mvwaddstr(stdscr, starty + i, startx + 1, std::string(w - 2, ' ').c_str());
-        wattroff(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-
-        const std::string& current_id = m_help_history.back();
-        const HelpSection& section = m_helpProvider->getHelpData().at(current_id);
-
-        std::vector<HelpLine> render_lines;
-        struct LinkInfo { const TextSegment* segment; int y_pos; };
-        std::vector<LinkInfo> all_links;
-        int content_width = w - 4; // Margins on both sides
-
-        for (const auto& original_line : section.lines) {
-            HelpLine current_render_line;
-            int current_x = 0;
-
-            if (original_line.segments.empty()) {
-                render_lines.push_back(HelpLine());
-                continue;
-            }
-
-            for (const auto& segment : original_line.segments) {
-                std::string remaining_text = segment.text;
-                while (!remaining_text.empty()) {
-                    int space_left = content_width - current_x;
-                    if (space_left <= 0) {
-                        render_lines.push_back(current_render_line);
-                        current_render_line.segments.clear();
-                        current_x = 0;
-                        space_left = content_width;
-                    }
-
-                    std::string part = remaining_text.substr(0, space_left);
-                    current_render_line.segments.push_back({part, segment.style, segment.target_id});
-                    current_x += part.length();
-                    remaining_text = remaining_text.substr(part.length());
-                }
-            }
-            render_lines.push_back(current_render_line);
-        }
-
-        for(size_t y = 0; y < render_lines.size(); ++y) {
-            for (const auto& segment : render_lines[y].segments) {
-                if (segment.style == STYLE_LINK) {
-                    all_links.push_back({&segment, (int)y});
-                }
-            }
-        }
-
-        if (selected_link_idx >= (int)all_links.size()) {
-            selected_link_idx = all_links.empty() ? -1 : 0;
-        }
-
-        int max_view_lines = h - 2;
-        for (int i = 0; i < max_view_lines; ++i) {
-            int line_idx = scroll_offset + i;
-            if (line_idx < (int)render_lines.size()) {
-                const HelpLine& help_line = render_lines[line_idx];
-                int current_x = startx + 2;
-                move(starty + i + 1, current_x);
-
-                for (const auto& segment : help_line.segments) {
-                    int style_flags = 0;
-                    int color = Renderer::CP_DIALOG;
-
-                    if (segment.style == STYLE_BOLD) {
-                        style_flags = A_BOLD;
-                    } else if (segment.style == STYLE_LINK) {
-                        bool is_selected = !all_links.empty() && selected_link_idx >= 0 && &segment == all_links[selected_link_idx].segment;
-                        color = is_selected ? Renderer::CP_MENU_SELECTED : Renderer::CP_HIGHLIGHT;
-                        style_flags = A_BOLD;
-                    }
-
-                    attron(COLOR_PAIR(color) | style_flags);
-                    addstr(segment.text.c_str());
-                    attroff(COLOR_PAIR(color) | style_flags);
-                }
-            }
-        }
-        m_renderer->refresh();
-
-        int ch = m_renderer->getChar();
-        switch(ch) {
-        case KEY_UP:
-            if (scroll_offset > 0) scroll_offset--;
-            break;
-        case KEY_DOWN:
-            if (scroll_offset + max_view_lines < (int)render_lines.size()) scroll_offset++;
-            break;
-        case 9: // Tab key for link navigation
-            if (!all_links.empty()) {
-                selected_link_idx = (selected_link_idx + 1) % all_links.size();
-                int link_y_pos = all_links[selected_link_idx].y_pos;
-                if (link_y_pos < scroll_offset) scroll_offset = link_y_pos;
-                if (link_y_pos >= scroll_offset + max_view_lines) scroll_offset = link_y_pos - max_view_lines + 1;
-            }
-            break;
-        case KEY_ENTER: case 10: case 13:
-            if (selected_link_idx >= 0 && selected_link_idx < (int)all_links.size()) {
-                const std::string& target_id = all_links[selected_link_idx].segment->target_id;
-                if (m_helpProvider->getHelpData().count(target_id)) {
-                    m_help_history.push_back(target_id);
-                    scroll_offset = 0;
-                    selected_link_idx = 0;
-                }
-            }
-            break;
-        case KEY_BACKSPACE: case 127: case 8:
-            if (m_help_history.size() > 1) {
-                m_help_history.pop_back();
-                scroll_offset = 0;
-                selected_link_idx = 0;
-            }
-            break;
-        case 27: // ESC
-            goto end_help_loop;
-        }
-    }
-
-end_help_loop:
-    copywin(behind, stdscr, 0, 0, starty, startx, h, w, FALSE);
-    delwin(behind);
-    delwin(win);
-    m_renderer->showCursor();
-    handleResize();
+    HelpDialog::show(*m_renderer, *m_helpProvider, m_help_history);
 }

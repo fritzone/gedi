@@ -23,6 +23,15 @@ if(CURSES_FOUND)
         BufferManager.cpp
         ComboBox.cpp
         TabControl.cpp
+        KeyBindings.cpp
+        MessageDialog.cpp
+        QuestionDialog.cpp
+        SettingsDialog.cpp
+        ReplaceDialog.cpp
+        GoToLineDialog.cpp
+        CompileOptionsDialog.cpp
+        BuildOutputDialog.cpp
+        HelpDialog.cpp
         EditorBuffer.h
         Renderer.h
         TextEditor.h
