@@ -32,6 +32,8 @@ if(CURSES_FOUND)
         CompileOptionsDialog.cpp
         BuildOutputDialog.cpp
         HelpDialog.cpp
+        utils.cpp
+
         EditorBuffer.h
         Renderer.h
         TextEditor.h
@@ -43,8 +45,8 @@ if(CURSES_FOUND)
         HelpProvider.h
         BufferManager.h
         utils.h
-        utils.cpp
         EditorBuffer.cpp
+        CyclicEnum.h
     )
     target_link_libraries(${PROJECT_NAME} ${CURSES_LIBRARIES})
 else()

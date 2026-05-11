@@ -41,6 +41,7 @@ void KeyBindings::loadDefaults() {
     addBinding(ACT_FIND, CTRL('F'), "Ctrl+F");
     addBinding(ACT_REPLACE, CTRL('R'), "Ctrl+R");
     addBinding(ACT_GOTO_LINE, -1, "");
+    addBinding(ACT_GO_TO_DEFINITION, KEY_F(12), "F12");
     addBinding(ACT_COMPILE, KEY_ALT(KEY_F(9)), "Alt+F9"); 
     addBinding(ACT_RUN, CTRL(KEY_F(9)), "Ctrl+F9"); 
     addBinding(ACT_COMPILE_OPTIONS, -1, "");
@@ -88,65 +89,18 @@ void KeyBindings::loadFromConfig(const std::map<std::string, std::string>& confi
         }
     }
 }
+std::string_view KeyBindings::actionToString(EditorAction action) {
+    auto it = std::find_if(action_map.begin(), action_map.end(),
+                           [action](const auto& m) { return m.action == action; });
 
-std::string KeyBindings::actionToString(EditorAction action) {
-    switch(action) {
-        case ACT_NEW: return "new";
-        case ACT_OPEN: return "open";
-        case ACT_SAVE: return "save";
-        case ACT_SAVE_AS: return "save_as";
-        case ACT_EXIT: return "exit";
-        case ACT_UNDO: return "undo";
-        case ACT_REDO: return "redo";
-        case ACT_CUT: return "cut";
-        case ACT_COPY: return "copy";
-        case ACT_PASTE: return "paste";
-        case ACT_DELETE: return "delete";
-        case ACT_FIND: return "find";
-        case ACT_REPLACE: return "replace";
-        case ACT_GOTO_LINE: return "goto_line";
-        case ACT_COMPILE: return "compile";
-        case ACT_RUN: return "run";
-        case ACT_COMPILE_OPTIONS: return "compile_options";
-        case ACT_TOGGLE_OUTPUT: return "toggle_output";
-        case ACT_NEXT_BUFFER: return "next_buffer";
-        case ACT_PREV_BUFFER: return "prev_buffer";
-        case ACT_CLOSE_BUFFER: return "close_buffer";
-        case ACT_SETTINGS: return "settings";
-        case ACT_HELP: return "help";
-        case ACT_ABOUT: return "about";
-        case ACT_TOGGLE_COMMENT: return "toggle_comment";
-        default: return "unknown";
-    }
+    return (it != action_map.end()) ? it->name : "unknown";
 }
 
-EditorAction KeyBindings::stringToAction(const std::string& str) {
-    if (str == "new") return ACT_NEW;
-    if (str == "open") return ACT_OPEN;
-    if (str == "save") return ACT_SAVE;
-    if (str == "save_as") return ACT_SAVE_AS;
-    if (str == "exit") return ACT_EXIT;
-    if (str == "undo") return ACT_UNDO;
-    if (str == "redo") return ACT_REDO;
-    if (str == "cut") return ACT_CUT;
-    if (str == "copy") return ACT_COPY;
-    if (str == "paste") return ACT_PASTE;
-    if (str == "delete") return ACT_DELETE;
-    if (str == "find") return ACT_FIND;
-    if (str == "replace") return ACT_REPLACE;
-    if (str == "goto_line") return ACT_GOTO_LINE;
-    if (str == "compile") return ACT_COMPILE;
-    if (str == "run") return ACT_RUN;
-    if (str == "compile_options") return ACT_COMPILE_OPTIONS;
-    if (str == "toggle_output") return ACT_TOGGLE_OUTPUT;
-    if (str == "next_buffer") return ACT_NEXT_BUFFER;
-    if (str == "prev_buffer") return ACT_PREV_BUFFER;
-    if (str == "close_buffer") return ACT_CLOSE_BUFFER;
-    if (str == "settings") return ACT_SETTINGS;
-    if (str == "help") return ACT_HELP;
-    if (str == "about") return ACT_ABOUT;
-    if (str == "toggle_comment") return ACT_TOGGLE_COMMENT;
-    return ACT_UNKNOWN;
+EditorAction KeyBindings::stringToAction(std::string_view str) {
+    auto it = std::find_if(action_map.begin(), action_map.end(),
+                           [str](const auto& m) { return m.name == str; });
+
+    return (it != action_map.end()) ? it->action : ACT_UNKNOWN;
 }
 
 int KeyBindings::stringToKey(const std::string& str) {

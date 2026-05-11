@@ -1,7 +1,10 @@
 #include "GoToLineDialog.h"
 #include "utils.h"
+#include "CyclicEnum.h"
+
 #include <ncurses.h>
 #include <string>
+#include <type_traits>
 
 int GoToLineDialog::show(Renderer& renderer, int current_line, int max_lines) {
     renderer.hideCursor();
@@ -14,7 +17,7 @@ int GoToLineDialog::show(Renderer& renderer, int current_line, int max_lines) {
     copywin(stdscr, behind, starty, startx, 0, 0, h, w, FALSE);
 
     std::string line_buf = std::to_string(current_line);
-    int focus = 0; // 0: input, 1: Go, 2: Cancel
+    DeclareCyclicEnum(Focus, LINE_TO_GO=0, BTN_GO, BTN_CANCEL) focus = Focus::LINE_TO_GO;
 
     std::string go_btn_text = " &Go ";
     std::string cancel_btn_text = " &Cancel ";
@@ -35,15 +38,15 @@ int GoToLineDialog::show(Renderer& renderer, int current_line, int max_lines) {
 
         renderer.drawText(startx + 3, starty + 2, "Line Number (1-" + std::to_string(max_lines) + "):", Renderer::CP_DIALOG);
         renderer.drawText(startx + 3, starty + 4, std::string(w - 6, ' '), Renderer::CP_LIST_BOX);
-        renderer.drawText(startx + 19, starty + 4, line_buf, Renderer::CP_LIST_BOX);
+        renderer.drawText(startx + 4, starty + 4, line_buf, Renderer::CP_LIST_BOX);
 
         int btn_y = starty + h - 3;
-        renderer.drawButton(startx + w / 2 - 12, btn_y, go_btn_text, focus == 1, pressed && focus == 1);
-        renderer.drawButton(startx + w / 2 + 2, btn_y, cancel_btn_text, focus == 2, pressed && focus == 2);
+        renderer.drawButton(startx + w / 2 - 12, btn_y, go_btn_text, focus == Focus::BTN_GO, pressed && focus == Focus::BTN_GO);
+        renderer.drawButton(startx + w / 2 + 2, btn_y, cancel_btn_text, focus == Focus::BTN_CANCEL, pressed && focus == Focus::BTN_CANCEL);
 
-        if (focus == 0) {
+        if (focus == Focus::LINE_TO_GO) {
             renderer.showCursor();
-            move(starty + 4, startx + 19 + line_buf.length());
+            move(starty + 4, startx + 3 + line_buf.length());
         } else {
             renderer.hideCursor();
         }
@@ -62,34 +65,46 @@ int GoToLineDialog::show(Renderer& renderer, int current_line, int max_lines) {
             timeout(-1);
             if (next_ch == ERR) { break; }
             else {
-                if (tolower(next_ch) == 'g') { focus = 1; pressed = true; }
-                if (tolower(next_ch) == 'c') { focus = 2; pressed = true; }
+                if (tolower(next_ch) == 'g') { focus = Focus::BTN_GO; pressed = true; }
+                if (tolower(next_ch) == 'c') { focus = Focus::BTN_CANCEL; pressed = true; }
             }
         } else {
             switch (ch) {
-            case 9: focus = (focus + 1) % 3; break;
-            case KEY_BTAB: focus = (focus + 2) % 3; break;
-            case KEY_UP: if (focus > 0) focus = 0; break;
-            case KEY_DOWN: if (focus == 0) focus = 1; break;
-            case KEY_LEFT: if (focus == 2) focus = 1; break;
-            case KEY_RIGHT: if (focus == 1) focus = 2; break;
+            case 9:
+                focus = cycle_next(focus);
+                break;
+            case KEY_BTAB:
+                focus = cycle_prev(focus);
+                break;
+            case KEY_UP:
+                if (focus != Focus::LINE_TO_GO) focus = Focus::LINE_TO_GO;
+                break;
+            case KEY_DOWN:
+                if (focus == Focus::LINE_TO_GO) focus = Focus::BTN_GO;
+                break;
+            case KEY_LEFT:
+                if (focus == Focus::BTN_CANCEL) focus = Focus::BTN_GO;
+                break;
+            case KEY_RIGHT:
+                if (focus == Focus::BTN_GO) focus = Focus::BTN_CANCEL;
+                break;
             case KEY_BACKSPACE: case 127: case 8:
-                if (focus == 0 && !line_buf.empty()) line_buf.pop_back();
+                if (focus == Focus::LINE_TO_GO && !line_buf.empty()) line_buf.pop_back();
                 break;
             case KEY_ENTER: case 10: case 13:
-                if (focus == 1) {
+                if (focus == Focus::LINE_TO_GO) {
                     try {
                         result_line = std::stoi(line_buf);
                         if (result_line < 1) result_line = 1;
                         if (result_line > max_lines) result_line = max_lines;
                     } catch (...) { result_line = -1; }
                     pressed = true;
-                } else if (focus == 2) {
+                } else if (focus == Focus::BTN_CANCEL) {
                     pressed = true;
                 }
                 break;
             default:
-                if (focus == 0 && isdigit(ch)) {
+                if (focus == Focus::LINE_TO_GO && isdigit(ch)) {
                     line_buf += (char)ch;
                 }
                 break;
