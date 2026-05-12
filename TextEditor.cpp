@@ -1932,12 +1932,14 @@ void TextEditor::drawCompileOutputWindow() {
 
 
 void TextEditor::ActivateReplace() {
-    ReplaceResult res = ReplaceDialog::show(*m_renderer, m_search_term, m_replace_term);
-    if (res.action != ReplaceAction::CANCEL) {
-        m_search_term = res.find_term;
-        m_replace_term = res.replace_term;
-        if (res.action == ReplaceAction::REPLACE) PerformReplace();
-        else if (res.action == ReplaceAction::REPLACE_ALL) PerformReplaceAll();
+    DialogResult res = ReplaceDialog::show(*m_renderer, m_search_term, m_replace_term);
+
+    if (res.accepted()) {
+        m_search_term  = res["find"];
+        m_replace_term = res["replace"];
+
+        if      (res["action"] == "replace")     PerformReplace();
+        else if (res["action"] == "replace_all") PerformReplaceAll();
     }
 }
 

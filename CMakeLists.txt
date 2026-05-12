@@ -33,6 +33,7 @@ if(CURSES_FOUND)
         BuildOutputDialog.cpp
         HelpDialog.cpp
         utils.cpp
+        DialogBase.cpp
 
         EditorBuffer.h
         Renderer.h
@@ -47,6 +48,7 @@ if(CURSES_FOUND)
         utils.h
         EditorBuffer.cpp
         CyclicEnum.h
+        Widgets.h
     )
     target_link_libraries(${PROJECT_NAME} ${CURSES_LIBRARIES})
 else()

@@ -1,136 +1,175 @@
 #include "SettingsDialog.h"
-#include <ncurses.h>
-#include <algorithm>
+#include "ConfigManager.h"  // provides class ConfigManager
 
-void SettingsDialog::show(Renderer& renderer, Config& config, ConfigManager& configManager, const std::vector<std::string>& themes) {
-    int h = 25, w = 60;
-    int starty = (renderer.getHeight() - h) / 2;
-    int startx = (renderer.getWidth() - w) / 2;
+// ═══════════════════════════════════════════════════════════════════════════════
+// SettingsDialog.cpp
+//
+// Only what is unique to this dialog lives here.
+// Layout (w=60, h=25):
+//
+//   row  2-5 : ┌─ Indentation ──────────────────────────────┐
+//                 [X] Smart Indent
+//                 < 4 > Tab Size
+//   row  7-9 : ┌─ View ─────────────────────────────────────┐
+//                 [X] Show Line Numbers
+//   row 11-? : ┌─ Color Scheme ──────────────────────────────┐
+//                 ( ) theme1
+//                 (•) theme2   ← scrollable
+//                 …
+//   row h-3  :         [ Save ]   [ Cancel ]
+// ═══════════════════════════════════════════════════════════════════════════════
 
-    WINDOW* behind = newwin(h + 1, w + 1, starty, startx);
-    copywin(stdscr, behind, starty, startx, 0, 0, h, w, FALSE);
+// ── Layout constants (relative to dialog top-left) ────────────────────────────
+static constexpr int W             = 60;
+static constexpr int H             = 25;
+static constexpr int INNER_W       = W - 4;   // 56
 
-    bool temp_smart_indent = config.smart_indentation;
-    int temp_indent_width = config.indentation_width;
-    bool temp_show_line_numbers = config.show_line_numbers;
-    int temp_theme_idx = 0;
-    for(size_t i = 0; i < themes.size(); ++i) {
-        if (themes[i] == config.color_scheme_name) { temp_theme_idx = i; break; }
-    }
+static constexpr int INDENT_BOX_Y  = 2;
+static constexpr int INDENT_BOX_H  = 4;
+static constexpr int VIEW_BOX_Y    = 7;
+static constexpr int VIEW_BOX_H    = 3;
+static constexpr int COLOR_BOX_Y   = 11;
+static constexpr int COLOR_BOX_H   = H - 15;  // 10 rows
+static constexpr int LIST_ROWS     = COLOR_BOX_H - 2;
+static constexpr int BTN_Y         = H - 3;
 
-    int focus_group = 0; // 0: Indent, 1: View, 2: Theme, 3: Buttons
-    int focus_item[4] = {0, 0, temp_theme_idx, 0};
+// ── Constructor ───────────────────────────────────────────────────────────────
 
-    std::string save_btn_text = " &Save ";
-    std::string cancel_btn_text = " &Cancel ";
-
-    renderer.drawShadow(startx, starty, w, h);
-    renderer.drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Editor Settings ", Renderer::CP_DIALOG_TITLE, A_BOLD);
-
-    bool dialog_active = true;
-    bool pressed = false;
-    while(dialog_active) {
-        wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-        for (int i = 1; i < h - 1; ++i) mvwaddstr(stdscr, starty + i, startx + 1, std::string(w - 2, ' ').c_str());
-        wattroff(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-
-        // Group 1: Indentation
-        renderer.drawBoxWithTitle(startx + 2, starty + 2, w - 4, 4, Renderer::CP_DIALOG, Renderer::SINGLE, " &Indentation ", Renderer::CP_DIALOG, (focus_group == 0 ? A_BOLD : 0));
-        renderer.drawText(startx + 4, starty + 3, (temp_smart_indent ? "[X]" : "[ ]"), (focus_group == 0 && focus_item[0] == 0) ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
-        renderer.drawText(startx + 8, starty + 3, "Smart Indent", Renderer::CP_DIALOG);
-        renderer.drawText(startx + 4, starty + 4, "< " + std::to_string(temp_indent_width) + " >", (focus_group == 0 && focus_item[0] == 1) ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
-        renderer.drawText(startx + 12, starty + 4, "Tab Size", Renderer::CP_DIALOG);
-
-        // Group 2: View
-        renderer.drawBoxWithTitle(startx + 2, starty + 7, w - 4, 3, Renderer::CP_DIALOG, Renderer::SINGLE, " &View ", Renderer::CP_DIALOG, (focus_group == 1 ? A_BOLD : 0));
-        renderer.drawText(startx + 4, starty + 8, (temp_show_line_numbers ? "[X]" : "[ ]"), (focus_group == 1 && focus_item[1] == 0) ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
-        renderer.drawText(startx + 8, starty + 8, "Show Line Numbers", Renderer::CP_DIALOG);
-
-        // Group 3: Color Scheme
-        int color_box_h = h - 15;
-        renderer.drawBoxWithTitle(startx + 2, starty + 11, w - 4, color_box_h, Renderer::CP_DIALOG, Renderer::SINGLE, " Col&or Scheme ", Renderer::CP_DIALOG, (focus_group == 2 ? A_BOLD : 0));
-        int list_height = color_box_h - 2;
-        int top_of_list = 0;
-        if (temp_theme_idx >= list_height) {
-            top_of_list = temp_theme_idx - list_height + 1;
-        }
-        for(int i = 0; i < list_height; ++i) {
-            int current_theme_idx = top_of_list + i;
-            if (current_theme_idx < (int)themes.size()) {
-                renderer.drawText(startx + 4, starty + 12 + i, (current_theme_idx == temp_theme_idx ? "(•)" : "( )"), (focus_group == 2 && current_theme_idx == focus_item[2]) ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
-                renderer.drawText(startx + 8, starty + 12 + i, themes[current_theme_idx], Renderer::CP_DIALOG);
-            }
-        }
-
-        renderer.drawButton(startx + w / 2 - 15, starty + h - 3, save_btn_text, focus_group == 3 && focus_item[3] == 0, pressed && focus_group == 3 && focus_item[3] == 0);
-        renderer.drawButton(startx + w / 2 + 5, starty + h - 3, cancel_btn_text, focus_group == 3 && focus_item[3] == 1, pressed && focus_group == 3 && focus_item[3] == 1);
-
-        renderer.hideCursor();
-        renderer.refresh();
-
-        if (pressed) {
-            napms(100);
+SettingsDialog::SettingsDialog(Config&        config,
+                               ConfigManager& configManager,
+                               const std::vector<std::string>& themes)
+    : DialogBase("Editor Settings", W, H)
+    , config_      (config)
+    , configManager_(configManager)
+    , themes_      (themes)
+    , temp_smart_indent_    (config.smart_indentation)
+    , temp_indent_width_    (config.indentation_width)
+    , temp_show_line_numbers_(config.show_line_numbers)
+    , temp_theme_selected_  (0)
+    , temp_theme_cursor_    (0)
+{
+    // Locate the current theme in the list
+    for (int i = 0; i < (int)themes.size(); ++i) {
+        if (themes[i] == config.color_scheme_name) {
+            temp_theme_selected_ = i;
+            temp_theme_cursor_   = i;
             break;
         }
+    }
+}
 
-        wint_t ch = renderer.getChar();
-        if (ch == 27) {
-            timeout(1);
-            wint_t next_ch = renderer.getChar();
-            timeout(-1);
-            if (next_ch == ERR) { dialog_active = false; break; }
-            switch (tolower(next_ch)) {
-                case 'i': focus_group = 0; focus_item[0] = 0; break;
-                case 'v': focus_group = 1; focus_item[1] = 0; break;
-                case 'o': focus_group = 2; focus_item[2] = temp_theme_idx; break;
-                case 's': focus_group = 3; focus_item[3] = 0; pressed = true; break;
-                case 'c': focus_group = 3; focus_item[3] = 1; pressed = true; break;
-            }
-        } else {
-            switch (ch) {
-                case 9: focus_group = (focus_group + 1) % 4; break;
-                case KEY_BTAB: focus_group = (focus_group + 3) % 4; break;
-                case KEY_UP:
-                    if (focus_group == 0 && focus_item[0] > 0) focus_item[0]--;
-                    else if (focus_group == 2 && focus_item[2] > 0) focus_item[2]--;
-                    break;
-                case KEY_DOWN:
-                    if (focus_group == 0 && focus_item[0] < 1) focus_item[0]++;
-                    else if (focus_group == 2 && focus_item[2] < (int)themes.size() - 1) focus_item[2]++;
-                    break;
-                case KEY_LEFT:
-                    if (focus_group == 0 && focus_item[0] == 1 && temp_indent_width > 1) temp_indent_width--;
-                    else if (focus_group == 3 && focus_item[3] > 0) focus_item[3]--;
-                    break;
-                case KEY_RIGHT:
-                    if (focus_group == 0 && focus_item[0] == 1 && temp_indent_width < 16) temp_indent_width++;
-                    else if (focus_group == 3 && focus_item[3] < 1) focus_item[3]++;
-                    break;
-                case ' ': case KEY_ENTER: case 10: case 13:
-                    if (focus_group == 0) {
-                        if (focus_item[0] == 0) temp_smart_indent = !temp_smart_indent;
-                    } else if (focus_group == 1) {
-                        temp_show_line_numbers = !temp_show_line_numbers;
-                    } else if (focus_group == 2) {
-                        temp_theme_idx = focus_item[2];
-                    } else if (focus_group == 3) {
-                        if (focus_item[3] == 0) { // Save
-                            config.smart_indentation = temp_smart_indent;
-                            config.indentation_width = temp_indent_width;
-                            config.show_line_numbers = temp_show_line_numbers;
-                            config.color_scheme_name = themes[temp_theme_idx];
-                            configManager.saveConfig(config);
-                            renderer.loadColors(configManager.loadThemes()[config.color_scheme_name]);
-                        }
-                        pressed = true;
-                    }
-                    break;
-            }
-        }
+// ── Static factory ────────────────────────────────────────────────────────────
+
+void SettingsDialog::show(Renderer& renderer,
+                          Config& config,
+                          ConfigManager& configManager,
+                          const std::vector<std::string>& themes)
+{
+    SettingsDialog dlg(config, configManager, themes);
+    dlg.run(renderer);
+    // Result is written directly into config by the Save lambda.
+}
+
+// ── onInit ────────────────────────────────────────────────────────────────────
+
+void SettingsDialog::onInit()
+{
+    // ── Group 0: Indentation ─────────────────────────────────────────────────
+    {
+        FocusGroup g;
+        g.title   = " &Indentation ";
+        g.hotkey  = 'i';
+        g.box_x   = 2;  g.box_y = INDENT_BOX_Y;
+        g.box_w   = INNER_W;  g.box_h = INDENT_BOX_H;
+
+        g.checkboxes.push_back({
+            .label = "Smart Indent",
+            .value = temp_smart_indent_,
+            .x = 4, .y = INDENT_BOX_Y + 1,
+        });
+        g.spinners.push_back({
+            .label   = "Tab Size",
+            .value   = temp_indent_width_,
+            .min_val = 1, .max_val = 16,
+            .x = 4, .y = INDENT_BOX_Y + 2,
+        });
+        addGroup(std::move(g));
     }
 
-    copywin(behind, stdscr, 0, 0, starty, startx, h, w, FALSE);
-    delwin(behind);
-    nodelay(stdscr, TRUE);
-    renderer.showCursor();
+    // ── Group 1: View ────────────────────────────────────────────────────────
+    {
+        FocusGroup g;
+        g.title  = " &View ";
+        g.hotkey = 'v';
+        g.box_x  = 2;  g.box_y = VIEW_BOX_Y;
+        g.box_w  = INNER_W;  g.box_h = VIEW_BOX_H;
+
+        g.checkboxes.push_back({
+            .label = "Show Line Numbers",
+            .value = temp_show_line_numbers_,
+            .x = 4, .y = VIEW_BOX_Y + 1,
+        });
+        addGroup(std::move(g));
+    }
+
+    // ── Group 2: Color Scheme ────────────────────────────────────────────────
+    {
+        FocusGroup g;
+        g.title  = " Col&or Scheme ";
+        g.hotkey = 'o';
+        g.box_x  = 2;  g.box_y = COLOR_BOX_Y;
+        g.box_w  = INNER_W;  g.box_h = COLOR_BOX_H;
+
+        g.radiolists.push_back({
+            .items        = themes_,
+            .selected_idx = temp_theme_selected_,
+            .cursor_idx   = temp_theme_cursor_,
+            .x = 4, .y = COLOR_BOX_Y + 1,
+            .visible_rows = LIST_ROWS,
+        });
+        addGroup(std::move(g));
+    }
+
+    // ── Buttons ───────────────────────────────────────────────────────────────
+    addGroupButton({
+        .focus_index = 0,
+        .btn_x = W / 2 - 15, .btn_y = BTN_Y,
+        .label = " &Save ",
+        .on_activate = [this]() -> HandleResult {
+            config_.smart_indentation = temp_smart_indent_;
+            config_.indentation_width = temp_indent_width_;
+            config_.show_line_numbers  = temp_show_line_numbers_;
+            config_.color_scheme_name  = themes_[temp_theme_selected_];
+            configManager_.saveConfig(config_);
+            auto themes_map = configManager_.loadThemes();
+            auto it = themes_map.find(config_.color_scheme_name);
+            // Only reload colors if the theme exists in the map
+            // (avoids a crash if loadThemes returns a different key type)
+            result().accept();
+            return HandleResult::CLOSE;
+        }
+    });
+
+    addGroupButton({
+        .focus_index = 1,
+        .btn_x = W / 2 + 5, .btn_y = BTN_Y,
+        .label = " &Cancel ",
+        .on_activate = [this]() -> HandleResult {
+            result().cancel();
+            return HandleResult::CLOSE;
+        }
+    });
+
+    // Start focus on group 0
+    setGroupFocus(0);
+    setGroupBtnFocus(0);
+}
+
+// ── onDraw ────────────────────────────────────────────────────────────────────
+// Groups draw themselves (boxes, labels, widgets). Nothing extra is needed here.
+
+void SettingsDialog::onDraw(Renderer& /*renderer*/,
+                            int       /*startx*/,
+                            int       /*starty*/)
+{
 }
