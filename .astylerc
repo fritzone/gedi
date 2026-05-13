@@ -1,0 +1,14 @@
+mode=c
+style=attach
+
+indent=spaces=4
+
+align-pointer=type
+align-reference=type
+
+squeeze-ws
+
+attach-return-type
+attach-return-type-decl
+
+max-code-length=200

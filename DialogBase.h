@@ -13,56 +13,38 @@
 // ═══════════════════════════════════════════════════════════════════════════════
 // DialogBase.h
 //
-// Base class for all modal dialogs. Owns the event loop, backing-window
-// save/restore, shadow, box, Tab/Shift-Tab, and ESC handling.
+// Base class for all modal dialogs.
 //
-// Two usage modes — may be combined in one dialog:
+// All button management is now done through ButtonRow / Button widgets.
+// There is no longer a separate ButtonDescriptor type — buttons are first-class
+// widgets alongside CheckBox, Spinner, and RadioList.
 //
-// MODE A — Flat fields (GoToLineDialog, ReplaceDialog):
-//   Register InputDescriptor and ButtonDescriptor via addInput()/addButton().
-//   Tab cycles through all registered items by focus_index.
-//   Arrow keys use NavigationGraph edges.
+// Two layout modes (may be combined):
 //
-// MODE B — Focus groups (SettingsDialog):
-//   Register FocusGroup via addGroup() and ButtonDescriptor via addButton().
-//   Tab cycles between groups + the button row.
-//   Arrow keys dispatch to the active group's inner widgets.
+//   MODE A — flat (GoToLineDialog, ReplaceDialog)
+//     addInput()   — registers a text input field
+//     addButtons() — registers the ButtonRow (one Tab stop for all buttons)
+//     setNavigation() — registers arrow-key edges via NavigationGraph
 //
-// Mandatory hooks:
-//   void onInit()  — register widgets, set focus
-//   void onDraw()  — draw dynamic/static text not covered by widgets
+//   MODE B — grouped (SettingsDialog)
+//     addGroup()   — registers a FocusGroup (CheckBox/Spinner/RadioList)
+//     addButtons() — registers the ButtonRow as the final Tab stop
 //
-// Optional hook:
-//   HandleResult onKey(wint_t ch)  — handle exotic keys
+// Mandatory hooks:  onInit(), onDraw()
+// Optional hook:    onKey()
 // ═══════════════════════════════════════════════════════════════════════════════
 
-enum class HandleResult { CONTINUE, CLOSE };
+// HandleResult is defined in Widgets.h (included above)
 
 // ── Flat input descriptor (Mode A) ───────────────────────────────────────────
 struct InputDescriptor {
-    int         focus_index;
-    int         field_x, field_y;
-    int         field_w;
-    std::string label;
-    int         label_x, label_y;
+    int          focus_index;
+    int          field_x, field_y;
+    int          field_w;
+    std::string  label;
+    int          label_x, label_y;
     std::string& buffer;
-    bool        numeric_only = false;
-};
-
-// ── Button descriptor (both modes) ───────────────────────────────────────────
-struct ButtonDescriptor {
-    int         focus_index;
-    int         btn_x, btn_y;
-    std::string label;
-    std::function<HandleResult()> on_activate;
-
-    char hotkey() const noexcept {
-        for (std::size_t i = 0; i + 1 < label.size(); ++i)
-            if (label[i] == '&')
-                return static_cast<char>(
-                    std::tolower(static_cast<unsigned char>(label[i + 1])));
-        return '\0';
-    }
+    bool         numeric_only = false;
 };
 
 
@@ -84,8 +66,7 @@ protected:
     virtual HandleResult onKey(wint_t ch) { (void)ch; return HandleResult::CONTINUE; }
 
     // ── Mode A registration ───────────────────────────────────────────────────
-    void addInput (InputDescriptor  d) { inputs_.push_back(std::move(d));   }
-    void addButton(ButtonDescriptor d) { buttons_.push_back(std::move(d));  }
+    void addInput  (InputDescriptor d) { inputs_.push_back(std::move(d)); }
 
     template<CyclicEnum E>
     void setNavigation(const NavigationGraph<E>& graph) {
@@ -94,32 +75,50 @@ protected:
         };
     }
 
+    // ── Shared: register the button row (both modes) ──────────────────────────
+    // In Mode A, the ButtonRow's focus_index in the CyclicEnum determines when
+    // Tab reaches it. In Mode B it is always the last Tab stop automatically.
+    void addButtons(ButtonRow row) { button_row_ = std::move(row); }
+
     // ── Mode B registration ───────────────────────────────────────────────────
     void addGroup(FocusGroup g) { groups_.push_back(std::move(g)); }
 
-    // In Mode B the button row is always the last tab stop.
-    // focus_index on ButtonDescriptors is the index within the button row (0, 1, …).
-    void addGroupButton(ButtonDescriptor d) { group_buttons_.push_back(std::move(d)); }
-
     // ── Focus management ──────────────────────────────────────────────────────
-    void setFocus     (int i) noexcept { focus_ = i;       }
+    void setFocus     (int i) noexcept { focus_       = i; }
     void setFocusCount(int n) noexcept { focus_count_ = n; }
     int  getFocus     ()const noexcept { return focus_;    }
 
-    // Mode B helpers
-    void setGroupFocus    (int g) noexcept { group_focus_     = g; }
-    void setGroupBtnFocus (int b) noexcept { group_btn_focus_ = b; }
+    void setGroupFocus   (int g) noexcept { group_focus_     = g; }
+    void setGroupBtnFocus(int b) noexcept { button_row_.inner_focus = b; }
+
+    // Read the currently focused group index (Mode B)
+    int getFocusedGroup() const noexcept { return group_focus_; }
+
+    // Direct access to groups so subclasses can read/write widget state
+    // (e.g. sync OptionList content from a TabControl in onDraw)
+    std::vector<FocusGroup>& groups() noexcept { return groups_; }
+
+    // Trigger the press animation for a button by its index in the ButtonRow.
+    // Safe to call from onKey() — the animation runs on the next frame.
+    void activateButtonByIndex(int index) {
+        button_row_.inner_focus = index;
+        Button* btn = button_row_.focusedButton();
+        if (btn) armButton(btn);
+    }
+
+    // ── The button row focus index used in Mode A ─────────────────────────────
+    // Subclass sets this so the base knows which focus_index == button row.
+    void setButtonRowFocusIndex(int i) noexcept { btn_row_focus_index_ = i; }
 
     DialogResult& result() noexcept { return result_; }
 
 private:
     // ── Rendering ─────────────────────────────────────────────────────────────
-    void drawFrame    (Renderer&, int sx, int sy, bool pressed);
-    void clearInterior(int sx, int sy);
-    void drawInputs   (Renderer&, int sx, int sy);
-    void drawButtons  (Renderer&, int sx, int sy, bool pressed);
-    void drawGroups   (Renderer&, int sx, int sy, bool pressed);
-    void placeCursor  (Renderer&, int sx, int sy);
+    void drawFrame        (Renderer&, int sx, int sy, bool pressed);
+    void clearInterior    (int sx, int sy);
+    void drawInputs       (Renderer&, int sx, int sy);
+    void drawGroups       (Renderer&, int sx, int sy, bool pressed);
+    void placeCursor      (Renderer&, int sx, int sy);
     void runPressAnimation(Renderer&, int sx, int sy);
 
     // ── Dispatch — Mode A ─────────────────────────────────────────────────────
@@ -139,25 +138,37 @@ private:
                group_focus_ == static_cast<int>(groups_.size());
     }
 
+    // Try to activate a button by hotkey (both modes).
+    // Sets pending_button_ and pressed_. Returns true if found.
+    bool tryHotkeyActivate(char lower);
+
+    // Arm a button for the press animation.
+    void armButton(Button* btn) {
+        pending_button_ = btn;
+        pressed_        = true;
+    }
+
     // ── Data ──────────────────────────────────────────────────────────────────
     std::string title_;
     int         w_, h_;
 
     // Mode A
-    int  focus_       = 0;
-    int  focus_count_ = 0;
-    std::vector<InputDescriptor>  inputs_;
-    std::vector<ButtonDescriptor> buttons_;
+    int  focus_              = 0;
+    int  focus_count_        = 0;
+    int  btn_row_focus_index_= -1; // focus value that means "button row is active"
+    std::vector<InputDescriptor>      inputs_;
     std::function<int(int,Direction)> nav_;
 
     // Mode B
-    int  group_focus_     = 0;   // which group (or groups_.size() = button row)
-    int  group_btn_focus_ = 0;   // which button within the button row
-    std::vector<FocusGroup>       groups_;
-    std::vector<ButtonDescriptor> group_buttons_;
+    int  group_focus_ = 0;
+    std::vector<FocusGroup> groups_;
 
-    // Shared
-    bool              pressed_        = false;
-    ButtonDescriptor* pending_button_ = nullptr;
-    DialogResult      result_;
+    // Shared — the single ButtonRow
+    ButtonRow button_row_;
+
+    // Shared — press animation state
+    bool    pressed_        = false;
+    Button* pending_button_ = nullptr;
+
+    DialogResult result_;
 };

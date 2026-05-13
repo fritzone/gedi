@@ -1,8 +1,6 @@
 #include "TextEditor.h"
 #include "SyntaxHighlighter.h"
 #include "FileBrowser.h"
-#include "ComboBox.h"
-#include "TabControl.h"
 #include "utils.h"
 
 #include <ncurses.h>
@@ -513,7 +511,7 @@ void TextEditor::main_loop() {
     main_loop_running = true;
     while (main_loop_running) {
         if (m_output_screen_visible) {
-            showOutputScreen();
+            ShowOutputScreen();
             continue;
         }
 
@@ -1142,7 +1140,7 @@ void TextEditor::process_key(wint_t ch) {
                 case ACT_GOTO_LINE: GoToLineDialog(); return;
                 case ACT_COMPILE: compileOnly(); return;
                 case ACT_RUN: compileAndRun(); return;
-                case ACT_TOGGLE_OUTPUT: showOutputScreen(); return;
+                case ACT_TOGGLE_OUTPUT: ShowOutputScreen(); return;
                 case ACT_NEXT_BUFFER: NextWindow(); return;
                 case ACT_PREV_BUFFER: PreviousWindow(); return;
                 case ACT_CLOSE_BUFFER: CloseWindow(); return;
@@ -1713,7 +1711,7 @@ void TextEditor::EditorSettingsDialog() {
 
 // Build command generation is now handled by BuildSystem
 
-void TextEditor::showOutputScreen() {
+void TextEditor::ShowOutputScreen() {
     def_prog_mode();
     endwin();
 
@@ -1737,10 +1735,6 @@ void TextEditor::showOutputScreen() {
     handleResize();
 }
 
-
-// --- New function to display a scrollable dialog ---
-// --- Modified to display a scrollable dialog with better styling and smaller size ---
-// --- Modified to be taller and manage cursor visibility ---
 void TextEditor::showScrollableOutputDialog(const std::vector<std::string>& lines) {
     BuildOutputDialog::show(*m_renderer, lines);
 }

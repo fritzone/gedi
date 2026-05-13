@@ -1,6 +1,23 @@
 #include "DialogBase.h"
 #include <ncurses.h>
 
+// ── UTF-8 append helper (shared by dispatchChar and text_buffer typing) ─────────
+
+static void appendUtf8(std::string& buf, wint_t ch)
+{
+    if      (ch < 0x80)    { buf += static_cast<char>(ch); }
+    else if (ch < 0x800)   { buf += static_cast<char>(0xC0 |  (ch >> 6));
+                              buf += static_cast<char>(0x80 |  (ch & 0x3F)); }
+    else if (ch < 0x10000) { buf += static_cast<char>(0xE0 |  (ch >> 12));
+                              buf += static_cast<char>(0x80 | ((ch >>  6) & 0x3F));
+                              buf += static_cast<char>(0x80 |  (ch        & 0x3F)); }
+    else                   { buf += static_cast<char>(0xF0 |  (ch >> 18));
+                              buf += static_cast<char>(0x80 | ((ch >> 12) & 0x3F));
+                              buf += static_cast<char>(0x80 | ((ch >>  6) & 0x3F));
+                              buf += static_cast<char>(0x80 |  (ch        & 0x3F)); }
+}
+
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // DialogBase.cpp
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -68,15 +85,17 @@ DialogResult DialogBase::run(Renderer& renderer)
     return result_;
 }
 
-// ── Frame rendering ───────────────────────────────────────────────────────────
+// ── Rendering ─────────────────────────────────────────────────────────────────
 
 void DialogBase::drawFrame(Renderer& renderer, int sx, int sy, bool pressed)
 {
     clearInterior(sx, sy);
     onDraw(renderer, sx, sy);
     if (groups_.empty()) {
-        drawInputs (renderer, sx, sy);
-        drawButtons(renderer, sx, sy, pressed);
+        drawInputs(renderer, sx, sy);
+        // Button row: focused when focus_ == btn_row_focus_index_
+        bool row_focused = (focus_ == btn_row_focus_index_);
+        button_row_.draw(renderer, sx, sy, row_focused, pressed);
     } else {
         drawGroups(renderer, sx, sy, pressed);
     }
@@ -105,46 +124,39 @@ void DialogBase::drawInputs(Renderer& renderer, int sx, int sy)
     }
 }
 
-void DialogBase::drawButtons(Renderer& renderer, int sx, int sy, bool pressed)
-{
-    for (const auto& btn : buttons_) {
-        bool sel  = (focus_ == btn.focus_index);
-        bool pres = pressed && sel;
-        renderer.drawButton(sx + btn.btn_x, sy + btn.btn_y, btn.label, sel, pres);
-    }
-}
-
 void DialogBase::drawGroups(Renderer& renderer, int sx, int sy, bool pressed)
 {
     for (int g = 0; g < (int)groups_.size(); ++g)
         groups_[g].draw(renderer, sx, sy, g == group_focus_);
 
-    // Button row — last tab stop
-    bool btn_row_focused = inGroupButtonRow();
-    for (const auto& btn : group_buttons_) {
-        bool sel  = btn_row_focused && (btn.focus_index == group_btn_focus_);
-        bool pres = pressed && sel;
-        renderer.drawButton(sx + btn.btn_x, sy + btn.btn_y, btn.label, sel, pres);
-    }
+    bool row_focused = inGroupButtonRow();
+    button_row_.draw(renderer, sx, sy, row_focused, pressed);
 }
 
-void DialogBase::placeCursor(Renderer& renderer, int /*sx*/, int /*sy*/)
+void DialogBase::placeCursor(Renderer& renderer, int sx, int sy)
 {
-    // Groups and buttons never show a text cursor.
-    if (!groups_.empty()) { renderer.hideCursor(); return; }
+    // Mode B: show cursor only when the focused group has a text_buffer
+    if (!groups_.empty()) {
+        if (!inGroupButtonRow() && group_focus_ < (int)groups_.size()) {
+            const auto& g = groups_[group_focus_];
+            if (g.text_buffer) {
+                renderer.showCursor();
+                // Position: the subclass sets box_x+2 as the field origin
+                move(sy + g.box_y + 1,
+                     sx + g.box_x + 2 + static_cast<int>(g.text_buffer->size()));
+                return;
+            }
+        }
+        renderer.hideCursor();
+        return;
+    }
 
+    // Mode A
     for (const auto& inp : inputs_) {
         if (focus_ == inp.focus_index) {
             renderer.showCursor();
-            // starty/startx are baked into field_y/field_x as absolute offsets
-            // from the dialog corner, but we need screen coords here.
-            // The caller passes sx/sy; we stored them via the frame helpers.
-            // For simplicity we re-derive them from the stored w_/h_ — but
-            // actually we don't have them here. Accept that cursor placement
-            // for Mode A is handled by the subclass via onDraw if needed,
-            // OR we store sx/sy as members when drawFrame is called.
-            // For now hide — Mode A subclasses override placeCursor via onDraw.
-            renderer.hideCursor();
+            move(sy + inp.field_y,
+                 sx + inp.field_x + static_cast<int>(inp.buffer.size()));
             return;
         }
     }
@@ -158,6 +170,15 @@ void DialogBase::runPressAnimation(Renderer& renderer, int sx, int sy)
     napms(80);
 }
 
+// ── Shared hotkey helper ──────────────────────────────────────────────────────
+
+bool DialogBase::tryHotkeyActivate(char lower)
+{
+    Button* btn = button_row_.findByHotkey(lower);
+    if (btn) { armButton(btn); return true; }
+    return false;
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // Mode A dispatch
 // ══════════════════════════════════════════════════════════════════════════════
@@ -165,14 +186,66 @@ void DialogBase::runPressAnimation(Renderer& renderer, int sx, int sy)
 HandleResult DialogBase::dispatchKey(wint_t ch)
 {
     switch (ch) {
-    case 9:      focus_ = (focus_ + 1)              % focus_count_; return HandleResult::CONTINUE;
-    case KEY_BTAB: focus_ = (focus_ + focus_count_ - 1) % focus_count_; return HandleResult::CONTINUE;
+    case 9:
+        if (focus_ == btn_row_focus_index_) {
+            // On the button row: Tab moves to the next button.
+            // Only when we pass the last button do we wrap back to focus 0.
+            if (button_row_.inner_focus < (int)button_row_.buttons.size() - 1) {
+                ++button_row_.inner_focus;          // stay on row, next button
+            } else {
+                button_row_.inner_focus = 0;        // reset row to first button
+                focus_ = 0;                         // jump to first focus stop
+            }
+        } else {
+            focus_ = (focus_ + 1) % focus_count_;
+            // When Tab lands on the button row, always start at the first button
+            if (focus_ == btn_row_focus_index_)
+                button_row_.inner_focus = 0;
+        }
+        return HandleResult::CONTINUE;
+    case KEY_BTAB:
+        if (focus_ == btn_row_focus_index_) {
+            // On the button row: Shift-Tab moves to the previous button.
+            // Only when we pass the first button do we leave the row.
+            if (button_row_.inner_focus > 0) {
+                --button_row_.inner_focus;          // stay on row, prev button
+            } else {
+                // Jump to the last focus stop before the button row
+                focus_ = (btn_row_focus_index_ - 1 + focus_count_) % focus_count_;
+                // Leave inner_focus on the last button for consistency
+                button_row_.inner_focus = (int)button_row_.buttons.size() - 1;
+            }
+        } else {
+            focus_ = (focus_ + focus_count_ - 1) % focus_count_;
+            // When Shift-Tab lands on the button row, start at the last button
+            if (focus_ == btn_row_focus_index_)
+                button_row_.inner_focus = (int)button_row_.buttons.size() - 1;
+        }
+        return HandleResult::CONTINUE;
+
     case KEY_UP:    return dispatchArrow(KEY_UP);
     case KEY_DOWN:  return dispatchArrow(KEY_DOWN);
-    case KEY_LEFT:  return dispatchArrow(KEY_LEFT);
-    case KEY_RIGHT: return dispatchArrow(KEY_RIGHT);
-    case KEY_BACKSPACE: case 127: case 8: return dispatchBackspace();
-    case KEY_ENTER: case 10: case 13:    return dispatchEnter();
+
+    // Left/Right: if focus is on the button row, move within it; else nav graph
+    case KEY_LEFT:
+        if (focus_ == btn_row_focus_index_) {
+            button_row_.handleNavKey(KEY_LEFT);
+            return HandleResult::CONTINUE;
+        }
+        return dispatchArrow(KEY_LEFT);
+    case KEY_RIGHT:
+        if (focus_ == btn_row_focus_index_) {
+            button_row_.handleNavKey(KEY_RIGHT);
+            return HandleResult::CONTINUE;
+        }
+        return dispatchArrow(KEY_RIGHT);
+
+    case KEY_BACKSPACE: case 127: case 8:
+        return dispatchBackspace();
+
+    case KEY_ENTER: case 10: case 13:
+        return dispatchEnter();
+
     default:
         if (ch > 31 && ch < KEY_MIN) return dispatchChar(ch);
         return onKey(ch);
@@ -182,14 +255,7 @@ HandleResult DialogBase::dispatchKey(wint_t ch)
 HandleResult DialogBase::dispatchAltKey(wint_t ch)
 {
     char lower = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    for (auto& btn : buttons_) {
-        if (btn.hotkey() == lower) {
-            focus_          = btn.focus_index;
-            pending_button_ = &btn;
-            pressed_        = true;
-            return HandleResult::CONTINUE;
-        }
-    }
+    tryHotkeyActivate(lower);
     return HandleResult::CONTINUE;
 }
 
@@ -210,12 +276,11 @@ HandleResult DialogBase::dispatchArrow(wint_t ch)
 
 HandleResult DialogBase::dispatchEnter()
 {
-    for (auto& btn : buttons_) {
-        if (focus_ == btn.focus_index) {
-            pending_button_ = &btn;
-            pressed_        = true;
-            return HandleResult::CONTINUE;
-        }
+    // If focus is on the button row, activate the currently focused button
+    if (focus_ == btn_row_focus_index_) {
+        Button* btn = button_row_.focusedButton();
+        if (btn) armButton(btn);
+        return HandleResult::CONTINUE;
     }
     return HandleResult::CONTINUE;
 }
@@ -241,70 +306,134 @@ HandleResult DialogBase::dispatchChar(wint_t ch)
             if (ch >= L'0' && ch <= L'9') inp.buffer += static_cast<char>(ch);
             return HandleResult::CONTINUE;
         }
-        if      (ch < 0x80)    { inp.buffer += static_cast<char>(ch); }
-        else if (ch < 0x800)   { inp.buffer += static_cast<char>(0xC0|(ch>>6));
-                                  inp.buffer += static_cast<char>(0x80|(ch&0x3F)); }
-        else if (ch < 0x10000) { inp.buffer += static_cast<char>(0xE0|(ch>>12));
-                                  inp.buffer += static_cast<char>(0x80|((ch>>6)&0x3F));
-                                  inp.buffer += static_cast<char>(0x80|(ch&0x3F)); }
-        else                   { inp.buffer += static_cast<char>(0xF0|(ch>>18));
-                                  inp.buffer += static_cast<char>(0x80|((ch>>12)&0x3F));
-                                  inp.buffer += static_cast<char>(0x80|((ch>>6)&0x3F));
-                                  inp.buffer += static_cast<char>(0x80|(ch&0x3F)); }
+        appendUtf8(inp.buffer, ch);
         return HandleResult::CONTINUE;
     }
-    return HandleResult::CONTINUE;
+    // No input field consumed this character — give the subclass a chance.
+    return onKey(ch);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Mode B dispatch (focus groups)
+// Mode B dispatch
 // ══════════════════════════════════════════════════════════════════════════════
 
 HandleResult DialogBase::dispatchGroupKey(wint_t ch)
 {
     const int total_tabs = static_cast<int>(groups_.size())
-                         + (group_buttons_.empty() ? 0 : 1);
+                         + (button_row_.buttons.empty() ? 0 : 1);
 
     switch (ch) {
-    // ── Tab / Shift-Tab: cycle between groups and the button row ──────────────
     case 9:
-        group_focus_ = (group_focus_ + 1) % total_tabs;
+        if (inGroupButtonRow()) {
+            // On the button row: Tab moves to the next button.
+            // Only after the last button do we wrap back to group 0.
+            if (button_row_.inner_focus < (int)button_row_.buttons.size() - 1) {
+                ++button_row_.inner_focus;          // stay on row, next button
+            } else {
+                button_row_.inner_focus = 0;        // reset to first button
+                group_focus_ = 0;                   // jump to first group
+            }
+        } else {
+            group_focus_ = (group_focus_ + 1) % total_tabs;
+            // When Tab lands on the button row, always start at the first button
+            if (inGroupButtonRow())
+                button_row_.inner_focus = 0;
+        }
         return HandleResult::CONTINUE;
     case KEY_BTAB:
-        group_focus_ = (group_focus_ + total_tabs - 1) % total_tabs;
+        if (inGroupButtonRow()) {
+            // On the button row: Shift-Tab moves to the previous button.
+            // Only before the first button do we leave the row.
+            if (button_row_.inner_focus > 0) {
+                --button_row_.inner_focus;          // stay on row, prev button
+            } else {
+                // Jump to the last group before the button row
+                group_focus_ = total_tabs - 2;     // -1 for btn row, then -1 more
+                if (group_focus_ < 0) group_focus_ = 0;
+                button_row_.inner_focus = (int)button_row_.buttons.size() - 1;
+            }
+        } else {
+            group_focus_ = (group_focus_ + total_tabs - 1) % total_tabs;
+            // When Shift-Tab lands on the button row, start at the last button
+            if (inGroupButtonRow())
+                button_row_.inner_focus = (int)button_row_.buttons.size() - 1;
+        }
         return HandleResult::CONTINUE;
 
-    // ── Button row: Left/Right move between buttons, Enter activates ──────────
     case KEY_LEFT:
-        if (inGroupButtonRow() && group_btn_focus_ > 0) {
-            --group_btn_focus_;
+        if (inGroupButtonRow()) {
+            button_row_.handleNavKey(KEY_LEFT);
             return HandleResult::CONTINUE;
         }
         break;
     case KEY_RIGHT:
-        if (inGroupButtonRow() &&
-            group_btn_focus_ < (int)group_buttons_.size() - 1) {
-            ++group_btn_focus_;
+        if (inGroupButtonRow()) {
+            button_row_.handleNavKey(KEY_RIGHT);
             return HandleResult::CONTINUE;
         }
         break;
+
     case KEY_ENTER: case 10: case 13:
         if (inGroupButtonRow()) {
-            for (auto& btn : group_buttons_) {
-                if (btn.focus_index == group_btn_focus_) {
-                    pending_button_ = &btn;
-                    pressed_        = true;
-                    return HandleResult::CONTINUE;
-                }
-            }
+            Button* btn = button_row_.focusedButton();
+            if (btn) armButton(btn);
+            return HandleResult::CONTINUE;
         }
         break;
     }
 
-    // ── Delegate everything else to the focused group ─────────────────────────
+    // Delegate to the focused group
     if (!inGroupButtonRow() && group_focus_ < (int)groups_.size()) {
-        groups_[group_focus_].handleKey(ch);
+        auto& g = groups_[group_focus_];
+
+        // text_buffer group: backspace and printable chars go directly to the buffer
+        if (g.text_buffer) {
+            if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
+                if (!g.text_buffer->empty()) {
+                    // UTF-8 aware pop
+                    auto& buf = *g.text_buffer;
+                    while (!buf.empty() &&
+                           (static_cast<unsigned char>(buf.back()) & 0xC0) == 0x80)
+                        buf.pop_back();
+                    if (!buf.empty()) buf.pop_back();
+                }
+                return HandleResult::CONTINUE;
+            }
+            if (ch > 31 && ch < KEY_MIN) {
+                appendUtf8(*g.text_buffer, ch);
+                return HandleResult::CONTINUE;
+            }
+            return HandleResult::CONTINUE;
+        }
+
+        // Remember the active tab before the key so we can detect tab changes
+        int old_tab = -1;
+        for (auto& tc : g.tabcontrols) old_tab = tc.active_tab;
+
+        // If the group has no widgets at all (e.g. a read-only display group),
+        // fall through to onKey so the subclass can handle the key (e.g. scroll).
+        bool group_has_widgets = !g.checkboxes.empty()  || !g.spinners.empty()   ||
+                                 !g.comboboxes.empty()  || !g.tabcontrols.empty()||
+                                 !g.optionlists.empty() || !g.radiolists.empty();
+
+        if (group_has_widgets) {
+            bool consumed = g.handleKey(ch);
+
+            // If a TabControl changed its active tab, reset all OptionLists
+            for (auto& tc : g.tabcontrols) {
+                if (tc.active_tab != old_tab) {
+                    for (auto& ol : g.optionlists) ol.reset();
+                    break;
+                }
+            }
+
+            if (consumed) return HandleResult::CONTINUE;
+        }
+
+        // Key was not consumed by any widget — give the subclass a chance.
+        return onKey(ch);
     }
+
     return HandleResult::CONTINUE;
 }
 
@@ -312,7 +441,7 @@ HandleResult DialogBase::dispatchGroupAltKey(wint_t ch)
 {
     char lower = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
 
-    // Check group hotkeys first
+    // Group hotkeys jump focus to the group
     for (int g = 0; g < (int)groups_.size(); ++g) {
         if (groups_[g].hotkey == lower) {
             group_focus_ = g;
@@ -320,15 +449,7 @@ HandleResult DialogBase::dispatchGroupAltKey(wint_t ch)
         }
     }
 
-    // Then button hotkeys — these trigger the press animation
-    for (auto& btn : group_buttons_) {
-        if (btn.hotkey() == lower) {
-            group_focus_     = static_cast<int>(groups_.size()); // button row
-            group_btn_focus_ = btn.focus_index;
-            pending_button_  = &btn;
-            pressed_         = true;
-            return HandleResult::CONTINUE;
-        }
-    }
+    // Button hotkeys trigger the press animation
+    tryHotkeyActivate(lower);
     return HandleResult::CONTINUE;
 }

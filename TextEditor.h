@@ -144,7 +144,7 @@ private:
     void SwitchToBuffer(int index);
     void compileAndRun();
     void compileOnly();
-    void showOutputScreen();
+    void ShowOutputScreen();
     void CompileOptionsDialog();
     void AboutBox();
     void handleToggleComment();

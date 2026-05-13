@@ -1,90 +1,128 @@
 #include "QuestionDialog.h"
-#include <ncurses.h>
-#include <algorithm>
 
-int QuestionDialog::ask(Renderer& renderer, const std::string& question, const std::string& info) {
-    renderer.hideCursor();
+// ═══════════════════════════════════════════════════════════════════════════════
+// QuestionDialog.cpp
+//
+// Layout (w=54, h=8):
+//
+//   ╔══════════════════ Question ═════════════════════╗
+//   ║                                                 ║
+//   ║  <question text>                                ║
+//   ║    <info text, bold, truncated if too long>     ║
+//   ║                                                 ║
+//   ║           [ &Yes ]    [ &No ]                   ║
+//   ║                                                 ║
+//   ╚═════════════════════════════════════════════════╝
+//
+// Button positions are computed from label widths so the row stays centred
+// even if the labels change.
+// ═══════════════════════════════════════════════════════════════════════════════
 
-    int h = 8, w = 54;
-    int starty = (renderer.getHeight() - h) / 2;
-    int startx = (renderer.getWidth() - w) / 2;
+static constexpr int W = 54;
+static constexpr int H = 8;
 
-    std::string display_info = info;
-    int max_text_width = w - 6;
-    if (display_info.length() > (size_t)max_text_width) {
-        display_info = "..." + display_info.substr(display_info.length() - (max_text_width - 3));
+// ── Constructor ───────────────────────────────────────────────────────────────
+
+QuestionDialog::QuestionDialog(const std::string& question,
+                               const std::string& info)
+    : DialogBase("Question", W, H)
+    , question_(question)
+    , info_(info)
+{
+    // Truncate info to fit: w - 6 usable chars (2-char margin each side + 1 pad)
+    const int max_w = W - 6;
+    if ((int)info_.length() > max_w)
+        info_ = "..." + info_.substr(info_.length() - (max_w - 3));
+}
+
+// ── Static factory ────────────────────────────────────────────────────────────
+
+int QuestionDialog::ask(Renderer&          renderer,
+                        const std::string& question,
+                        const std::string& info)
+{
+    QuestionDialog dlg(question, info);
+    DialogResult r = dlg.run(renderer);
+    if (r.cancelled()) return -1;
+    return r.as_int("answer").value_or(-1);
+}
+
+// ── onInit ────────────────────────────────────────────────────────────────────
+
+void QuestionDialog::onInit()
+{
+    // This is a button-only dialog — the ButtonRow is the sole Tab stop.
+    // focus_count=1 means Tab/Shift-Tab cycle within the row (Yes↔No),
+    // handled by the special case in DialogBase::dispatchKey.
+    setFocusCount(1);
+    setFocus(0);
+    setButtonRowFocusIndex(0);
+
+    // ── Button positions — centred, computed from label widths ────────────────
+    const std::string yes_label  = " &Yes ";
+    const std::string no_label   = " &No ";
+    const int gap        = 4;
+    const int total_w    = (int)yes_label.size() + gap + (int)no_label.size();
+    const int yes_x      = (W - total_w) / 2;
+    const int no_x       = yes_x + (int)yes_label.size() + gap;
+    const int btn_y      = H - 3;
+
+    addButtons(ButtonRow{
+        .buttons = {
+            Button{
+                .label = yes_label,
+                .x = yes_x, .y = btn_y,
+                .on_activate = [this]() -> HandleResult {
+                    result().accept();
+                    result().set("answer", "1");
+                    return HandleResult::CLOSE;
+                }
+            },
+            Button{
+                .label = no_label,
+                .x = no_x, .y = btn_y,
+                .on_activate = [this]() -> HandleResult {
+                    result().accept();
+                    result().set("answer", "0");
+                    return HandleResult::CLOSE;
+                }
+            },
+        },
+        .inner_focus = 0,   // start with Yes highlighted
+    });
+}
+
+// ── onDraw ────────────────────────────────────────────────────────────────────
+
+void QuestionDialog::onDraw(Renderer& renderer, int startx, int starty)
+{
+    renderer.drawText(startx + 2, starty + 2, question_, Renderer::CP_DIALOG);
+    if (!info_.empty())
+        renderer.drawText(startx + 4, starty + 3, info_,
+                          Renderer::CP_DIALOG, A_BOLD);
+}
+
+// ── onKey ─────────────────────────────────────────────────────────────────────
+//
+// Reached for any printable character that no input field consumed
+// (dispatchChar fall-through). Handles Y/N direct activation so the user
+// doesn't have to press Alt — matching the original dialog's behaviour.
+//
+// Routes through activateButtonByIndex() so the press animation (dip + rise)
+// runs before the on_activate lambda is called, exactly as for Enter.
+
+HandleResult QuestionDialog::onKey(wint_t ch)
+{
+    switch (ch) {
+    case 'y': case 'Y':
+        activateButtonByIndex(0);       // arm Yes for the press animation
+        return HandleResult::CONTINUE;  // run() will animate then call on_activate
+
+    case 'n': case 'N':
+        activateButtonByIndex(1);       // arm No for the press animation
+        return HandleResult::CONTINUE;
+
+    default:
+        return HandleResult::CONTINUE;
     }
-
-    WINDOW* behind = newwin(h + 1, w + 1, starty, startx);
-    copywin(stdscr, behind, starty, startx, 0, 0, h, w, FALSE);
-
-    renderer.drawShadow(startx, starty, w, h);
-    renderer.drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Question ", Renderer::CP_DIALOG_TITLE, A_BOLD);
-
-    wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-    for (int i = 1; i < h - 1; ++i) {
-        mvwaddstr(stdscr, starty + i, startx + 1, std::string(w - 2, ' ').c_str());
-    }
-    wattroff(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-
-    renderer.drawText(startx + 2, starty + 2, question, Renderer::CP_DIALOG);
-    if (!display_info.empty()) {
-        renderer.drawText(startx + 4, starty + 3, display_info, Renderer::CP_DIALOG, A_BOLD);
-    }
-
-    int selection = 0; // 0 for Yes, 1 for No
-    nodelay(stdscr, FALSE);
-    int final_result = -1;
-    bool pressed = false;
-
-    std::string yes_text = " &Yes ";
-    std::string no_text = " &No ";
-    int total_btn_width = yes_text.length() + no_text.length() + 4;
-    int btn_y = starty + h - 3;
-    int yes_x = startx + (w - total_btn_width) / 2;
-    int no_x = yes_x + yes_text.length() + 4;
-
-    while(true) {
-        renderer.drawButton(yes_x, btn_y, yes_text, selection == 0, pressed && selection == 0);
-        renderer.drawButton(no_x, btn_y, no_text, selection == 1, pressed && selection == 1);
-        renderer.refresh();
-
-        if (pressed) {
-            napms(100);
-            goto end_dialog;
-        }
-
-        wint_t ch = renderer.getChar();
-
-        if (ch == 27) { // Alt key sequence or ESC
-            timeout(1);
-            wint_t next_ch = renderer.getChar();
-            timeout(-1);
-            if (next_ch != ERR) {
-                if (tolower(next_ch) == 'y') { final_result = 1; selection = 0; pressed = true; }
-                else if (tolower(next_ch) == 'n') { final_result = 0; selection = 1; pressed = true; }
-            } else { // Just ESC
-                final_result = -1; break;
-            }
-        } else {
-            switch (ch) {
-                case KEY_LEFT: case KEY_RIGHT: case 9: // Tab
-                    selection = 1 - selection;
-                    break;
-                case 'y': case 'Y': final_result = 1; selection = 0; pressed = true; break;
-                case 'n': case 'N': final_result = 0; selection = 1; pressed = true; break;
-                case ' ': case KEY_ENTER: case 10: case 13:
-                    final_result = (selection == 0) ? 1 : 0;
-                    pressed = true;
-                    break;
-            }
-        }
-    }
-
-end_dialog:
-    copywin(behind, stdscr, 0, 0, starty, startx, h, w, FALSE);
-    delwin(behind);
-    nodelay(stdscr, TRUE);
-    renderer.showCursor();
-    return final_result;
 }

@@ -21,8 +21,6 @@ if(CURSES_FOUND)
         SearchEngine.cpp
         HelpProvider.cpp
         BufferManager.cpp
-        ComboBox.cpp
-        TabControl.cpp
         KeyBindings.cpp
         MessageDialog.cpp
         QuestionDialog.cpp
@@ -49,6 +47,7 @@ if(CURSES_FOUND)
         EditorBuffer.cpp
         CyclicEnum.h
         Widgets.h
+        Config.h
     )
     target_link_libraries(${PROJECT_NAME} ${CURSES_LIBRARIES})
 else()
