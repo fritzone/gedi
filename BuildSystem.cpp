@@ -48,6 +48,42 @@ CompilationResult BuildSystem::runCompilationProcess(EditorBuffer& buffer) {
     return result;
 }
 
+std::vector<std::string> BuildSystem::getClangArguments(EditorBuffer& buffer) {
+    std::vector<std::string> args;
+    args.push_back("-xc++");
+    args.push_back("-std=" + (buffer.compiler_settings.cpp_standard.empty() ? "c++20" : buffer.compiler_settings.cpp_standard));
+    
+    // Add common includes
+    args.push_back("-I.");
+    args.push_back("-I/usr/include");
+    args.push_back("-I/usr/local/include");
+
+    // Add flags from settings if they are relevant for parsing
+    if (!buffer.compiler_settings.optional_flags.empty()) {
+        std::stringstream ss(buffer.compiler_settings.optional_flags);
+        std::string flag;
+        while (ss >> flag) {
+            if (flag.rfind("-I", 0) == 0 || flag.rfind("-D", 0) == 0) {
+                args.push_back(flag);
+            }
+        }
+    }
+
+    // Try to get more flags from guessed command
+    std::string base_cmd = guessCompileCommand(buffer.filename);
+    if (!base_cmd.empty()) {
+        std::stringstream ss(base_cmd);
+        std::string part;
+        while (ss >> part) {
+            if (part.rfind("-I", 0) == 0 || part.rfind("-D", 0) == 0) {
+                args.push_back(part);
+            }
+        }
+    }
+
+    return args;
+}
+
 std::string BuildSystem::guessCompileCommand(const std::string& filename) {
     if (m_compile_command_cache.count(filename)) {
         return m_compile_command_cache[filename];

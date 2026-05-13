@@ -116,9 +116,9 @@ std::vector<SyntaxToken> SyntaxHighlighter::parseLine(EditorBuffer& buffer, cons
         }
     }
 
-    // Check for preprocessor directives (lines starting with #)
+    // Check for preprocessor directives or comments (lines starting with #)
     size_t first_char_pos = line.find_first_not_of(" \t");
-    if (buffer.syntax_type != EditorBuffer::PRIMAL && first_char_pos != std::string::npos && line[first_char_pos] == '#') {
+    if (buffer.syntax_type != EditorBuffer::PRIMAL && buffer.syntax_type != EditorBuffer::ST_CMAKE && first_char_pos != std::string::npos && line[first_char_pos] == '#') {
         i = first_char_pos;
         tokens.push_back({line.substr(0, i), Renderer::CP_DEFAULT_TEXT}); // Add leading whitespace
 
@@ -158,7 +158,7 @@ std::vector<SyntaxToken> SyntaxHighlighter::parseLine(EditorBuffer& buffer, cons
             break; // Rest of the line is a comment
         }
 
-        if(buffer.syntax_type == EditorBuffer::PRIMAL) {
+        if(buffer.syntax_type == EditorBuffer::PRIMAL || buffer.syntax_type == EditorBuffer::ST_CMAKE) {
             if (line.substr(i, 1) == "#") {
                 tokens.push_back({line.substr(i), Renderer::CP_SYNTAX_COMMENT});
                 break; // Rest of the line is a comment
@@ -217,8 +217,14 @@ std::vector<SyntaxToken> SyntaxHighlighter::parseLine(EditorBuffer& buffer, cons
             size_t start = i;
             while (i < line.length() && (isalnum(line[i]) || line[i] == '_')) i++;
             std::string word = line.substr(start, i - start);
-            if (buffer.keywords.count(word)) {
-                int color = buffer.keywords.at(word);
+            
+            std::string lookup_word = word;
+            if (buffer.syntax_type == EditorBuffer::ST_CMAKE) {
+                std::transform(lookup_word.begin(), lookup_word.end(), lookup_word.begin(), ::tolower);
+            }
+
+            if (buffer.keywords.count(lookup_word)) {
+                int color = buffer.keywords.at(lookup_word);
                 int flags = renderer.getStyleFlags(static_cast<Renderer::ColorPairID>(color));
                 tokens.push_back({word, color, flags});
             } else {

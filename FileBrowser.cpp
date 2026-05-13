@@ -233,8 +233,12 @@ std::string FileBrowser::open(Renderer& renderer) {
             case KEY_ENTER: case 10: case 13:
                 if (focus == 3) pressed = true;
                 else if (focus == 2 || (focus == 1 && !filename_buffer.empty())) {
-                    result_filename = current_path + "/" + filename_buffer;
-                    pressed = true;
+                    std::string full_path = current_path + "/" + filename_buffer;
+                    struct stat st;
+                    if (stat(full_path.c_str(), &st) == 0 && !S_ISDIR(st.st_mode)) {
+                        result_filename = full_path;
+                        pressed = true;
+                    }
                 } else if (focus == 0 && selection < (int)entries.size()) {
                     FileEntry& sel = entries[selection];
                     if (sel.is_directory) {
@@ -384,8 +388,16 @@ std::string FileBrowser::save(Renderer& renderer, const std::string& current_fil
             case KEY_ENTER: case 10: case 13:
                 if (focus == 3) pressed = true;
                 else if (focus == 2 || (focus == 1 && !filename_buffer.empty())) {
-                    result_filename = current_path + "/" + filename_buffer;
-                    pressed = true;
+                    std::string full_path = current_path + "/" + filename_buffer;
+                    struct stat st;
+                    bool is_dir = false;
+                    if (stat(full_path.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+                        is_dir = true;
+                    }
+                    if (!is_dir) {
+                        result_filename = full_path;
+                        pressed = true;
+                    }
                 } else if (focus == 0 && selection < (int)entries.size()) {
                     FileEntry& sel = entries[selection];
                     if (sel.is_directory) {

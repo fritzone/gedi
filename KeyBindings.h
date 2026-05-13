@@ -57,7 +57,8 @@ class KeyBindings {
         ActionMapping{ACT_SETTINGS, "settings"},
         ActionMapping{ACT_HELP, "help"},
         ActionMapping{ACT_ABOUT, "about"},
-        ActionMapping{ACT_TOGGLE_COMMENT, "toggle_comment"}
+        ActionMapping{ACT_TOGGLE_COMMENT, "toggle_comment"},
+        ActionMapping{ACT_GO_TO_DEFINITION, "go_to_definition"}
     };
 
 public:

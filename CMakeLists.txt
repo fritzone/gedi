@@ -8,10 +8,27 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CURSES_NEED_WIDE TRUE) # Request wide-character Curses
 find_package(Curses REQUIRED)
 
-if(CURSES_FOUND)
-    include_directories(${CURSES_INCLUDE_DIRS})
+# Find libclang
+find_path(CLANG_INCLUDE_DIR clang-c/Index.h)
+find_library(CLANG_LIBRARY NAMES clang libclang)
+
+include(FindPackageHandleStandardArgs)
+find_package_handle_standard_args(Clang DEFAULT_MSG CLANG_LIBRARY CLANG_INCLUDE_DIR)
+
+if(NOT CLANG_FOUND)
+    message(FATAL_ERROR "libclang not found. Please install libclang-dev or equivalent.")
+endif()
+
+if(NOT CURSES_FOUND)
+    message(FATAL_ERROR "ncurses not found. Please install libncurses-dev or equivalent")
+endif()
+
+if(CURSES_FOUND AND CLANG_FOUND)
+    include_directories(${CURSES_INCLUDE_DIRS} ${CLANG_INCLUDE_DIR})
     add_executable(${PROJECT_NAME}
-        tedit.cpp
+        gedi.cpp
+
+        EditorBuffer.cpp
         Renderer.cpp
         TextEditor.cpp
         SyntaxHighlighter.cpp
@@ -33,25 +50,37 @@ if(CURSES_FOUND)
         utils.cpp
         DialogBase.cpp
 
-        EditorBuffer.h
-        Renderer.h
-        TextEditor.h
-        SyntaxHighlighter.h
-        FileBrowser.h
-        ConfigManager.h
-        BuildSystem.h
-        SearchEngine.h
-        HelpProvider.h
         BufferManager.h
-        utils.h
-        EditorBuffer.cpp
-        CyclicEnum.h
-        Widgets.h
+        BuildOutputDialog.h
+        BuildSystem.h
+        CompileOptionsDialog.h
+        CompilerSettings.h
         Config.h
+        ConfigManager.h
+        CyclicEnum.h
+        DialogBase.h
+        DialogResult.h
+        EditorBuffer.h
+        FileBrowser.h
+        GoToLineDialog.h
+        HelpDialog.h
+        HelpProvider.h
+        KeyBindings.h
+        MessageDialog.h
+        NavigationGraph.h
+        QuestionDialog.h
+        Renderer.h
+        ReplaceDialog.h
+        SearchEngine.h
+        SettingsDialog.h
+        SyntaxHighlighter.h
+        TextEditor.h
+        utils.h
+        Widgets.h
     )
-    target_link_libraries(${PROJECT_NAME} ${CURSES_LIBRARIES})
-else()
-    message(FATAL_ERROR "Curses library (with wide character support) not found. Please install ncurses-devel or equivalent.")
+
+    target_link_libraries(${PROJECT_NAME} ${CURSES_LIBRARIES} ${CLANG_LIBRARY})
+
 endif()
 
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)

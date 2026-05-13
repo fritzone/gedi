@@ -205,6 +205,30 @@ void Renderer::loadColors(const json &theme_data) {
     init_pair(CP_COMPILE_ERROR, COLOR_RED, dialog_bg);
     init_pair(CP_COMPILE_WARNING, COLOR_YELLOW, dialog_bg);
     init_pair(CP_DEFAULT_ON_SELECTION, default_fg, sel_bg);
+
+    // Ensure shadows blend correctly with their respective backgrounds
+    short shadow_fg, shadow_bg;
+    if (m_color_pair_map.count("shadow")) {
+        pair_content(CP_SHADOW, &shadow_fg, &shadow_bg);
+        init_pair(CP_SHADOW, shadow_fg, default_bg);
+    }
+    if (m_color_pair_map.count("button_shadow")) {
+        pair_content(CP_BUTTON_SHADOW, &shadow_fg, &shadow_bg);
+        init_pair(CP_BUTTON_SHADOW, shadow_fg, dialog_bg);
+    }
+
+    // Fix gutter colors to match editor background
+    short g_fg, g_bg;
+    if (m_color_pair_map.count("gutter_bg")) {
+        pair_content(CP_GUTTER_BG, &g_fg, &g_bg);
+        init_pair(CP_GUTTER_BG, g_fg, default_bg);
+    }
+    if (m_color_pair_map.count("gutter_fg")) {
+        pair_content(CP_GUTTER_FG, &g_fg, &g_bg);
+        // Toned down foreground: if it's bright (>= 8), use the non-bright version
+        if (g_fg >= 8) g_fg -= 8; 
+        init_pair(CP_GUTTER_FG, g_fg, default_bg);
+    }
 }
 
 

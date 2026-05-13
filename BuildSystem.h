@@ -37,6 +37,7 @@ public:
     void setConfig(const Config& config) { m_config = config; }
     void invalidateCache(const std::string& filename) { m_compile_command_cache.erase(filename); }
 
+    std::vector<std::string> getClangArguments(EditorBuffer& buffer);
     std::string guessCompileCommand(const std::string& filename);
     std::string get_full_compile_command(const std::string& base_command, const CompilerSettings& settings);
 

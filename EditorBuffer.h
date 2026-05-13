@@ -46,6 +46,7 @@ public:
     std::string filename{"noname00.cpp"};
     bool changed = false;
     bool is_new_file = true;
+    bool read_only = false;
     bool insert_mode = true;
     Line *current_line = nullptr;
     Line *first_visible_line = nullptr;

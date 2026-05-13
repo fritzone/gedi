@@ -127,6 +127,7 @@ private:
     void PerformReplace();
     void PerformReplaceAll();
     void GoToLineDialog();
+    void GoToDefinition();
     void GoToNextWord();
     void GoToPreviousWord();
     void GoToNextParagraph();

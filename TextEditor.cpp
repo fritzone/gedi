@@ -4,6 +4,7 @@
 #include "utils.h"
 
 #include <ncurses.h>
+#include <clang-c/Index.h>
 
 #include <filesystem>
 #include <fstream>
@@ -96,19 +97,50 @@ void TextEditor::run(int argc, char* argv[]) {
         }
     }
 
-    if (argc < 2) {
-        DoNew();
-    } else {
-        m_bufferManager->addBuffer();
-        currentBuffer().filename = argv[1];
-        read_file(currentBuffer());
-    }
-
     m_text_area_start_x = 1;
     m_text_area_start_y = 2;
     m_text_area_end_x = m_renderer->getWidth() - 3;
     m_text_area_end_y = m_renderer->getHeight() - 4;
-    currentBuffer().cursor_screen_y = m_text_area_start_y;
+
+    if (argc < 2) {
+        DoNew();
+    } else {
+        std::string input = argv[1];
+        int jump_line = -1;
+        
+        size_t last_colon = input.find_last_of(':');
+        if (last_colon != std::string::npos && last_colon > 0) {
+            std::string line_part = input.substr(last_colon + 1);
+            bool is_numeric = !line_part.empty();
+            for (char c : line_part) if (!std::isdigit(static_cast<unsigned char>(c))) { is_numeric = false; break; }
+
+            if (is_numeric) {
+                try {
+                    jump_line = std::stoi(line_part);
+                    input = input.substr(0, last_colon);
+                } catch (...) {
+                    jump_line = -1;
+                }
+            }
+        }
+
+        m_bufferManager->addBuffer();
+        currentBuffer().filename = input;
+        read_file(currentBuffer());
+
+        if (jump_line > 0) {
+            if (jump_line > currentBuffer().total_lines) jump_line = currentBuffer().total_lines;
+            currentBuffer().current_line_num = jump_line;
+            // Recalculate pointers
+            currentBuffer().current_line = currentBuffer().document_head;
+            for (int i = 1; i < jump_line; ++i) {
+                if (currentBuffer().current_line->next) {
+                    currentBuffer().current_line = currentBuffer().current_line->next;
+                } else break;
+            }
+            update_cursor_and_scroll();
+        }
+    }
 
     main_loop();
 }
@@ -143,6 +175,14 @@ void TextEditor::read_file(EditorBuffer& buffer) {
     }
     buffer.current_line = buffer.first_visible_line = buffer.document_head;
     buffer.current_line_num = 1; buffer.cursor_col = 1; buffer.cursor_screen_y = m_text_area_start_y; buffer.changed = false;
+    
+    // Check if it's a system file
+    if (buffer.filename.rfind("/usr/include", 0) == 0 || buffer.filename.rfind("/usr/local/include", 0) == 0) {
+        buffer.read_only = true;
+    } else {
+        buffer.read_only = false;
+    }
+
     SyntaxHighlighter::setSyntaxType(buffer);
 }
 
@@ -203,6 +243,18 @@ void TextEditor::drawMainUI() {
 
     m_renderer->drawBox(box_x, box_y, box_w, box_h, Renderer::CP_DIALOG_TITLE, Renderer::BoxStyle::DOUBLE);
 
+    // Add connectors for the gutter if it's visible
+    if (m_gutter_width > 0) {
+        int connector_x = m_text_area_start_x + m_gutter_width - 1;
+        
+        cchar_t top_conn, bot_conn;
+        setcchar(&top_conn, L"╤", WA_NORMAL, Renderer::CP_DIALOG_TITLE, NULL);
+        setcchar(&bot_conn, L"╧", WA_NORMAL, Renderer::CP_DIALOG_TITLE, NULL);
+        
+        mvwadd_wch(stdscr, box_y, connector_x, &top_conn);
+        mvwadd_wch(stdscr, box_y + box_h - 1, connector_x, &bot_conn);
+    }
+
     if (currentBufferIdx() != -1) {
         std::string filename_part = " " + currentBuffer().filename + " ";
         filename_part = get_full_path(filename_part);
@@ -255,7 +307,7 @@ void TextEditor::drawTextArea() {
 
         if (m_gutter_width > 0) {
             m_renderer->drawText(m_text_area_start_x, current_screen_y, std::string(m_gutter_width, ' '), Renderer::CP_GUTTER_BG);
-            m_renderer->drawText(m_text_area_start_x + m_gutter_width - 1, current_screen_y, "│", Renderer::CP_GUTTER_BG);
+            m_renderer->drawText(m_text_area_start_x + m_gutter_width - 1, current_screen_y, "│", Renderer::CP_DIALOG_TITLE);
         }
 
         if (p != nullptr) {
@@ -357,7 +409,7 @@ void TextEditor::drawStatusBar() {
     if (currentBufferIdx() != -1) {
         EditorBuffer& buffer = currentBuffer();
         char status_buf[120];
-        snprintf(status_buf, sizeof(status_buf), "Line: %-5d Col: %-5d %s", buffer.current_line_num, buffer.cursor_col, (buffer.insert_mode ? "INS" : "OVR"));
+        snprintf(status_buf, sizeof(status_buf), "%s Line: %-5d Col: %-5d %s", (buffer.read_only ? "[RO]" : ""), buffer.current_line_num, buffer.cursor_col, (buffer.insert_mode ? "INS" : "OVR"));
         if (w > 50 + (int)strlen(status_buf)) {
             m_renderer->drawText(w - strlen(status_buf) - 2, h - 1, status_buf, Renderer::CP_STATUS_BAR);
         }
@@ -995,6 +1047,194 @@ void TextEditor::RestoreStateFromRecord(EditorBuffer& buffer, const UndoRecord& 
     update_cursor_and_scroll();
 }
 
+void TextEditor::GoToDefinition() {
+    if (currentBufferIdx() == -1) return;
+    EditorBuffer& buffer = currentBuffer();
+
+    // 0. Extract symbol name for display
+    std::string symbol_name;
+    if (buffer.current_line) {
+        int col = buffer.cursor_col - 1;
+        const std::string& text = buffer.current_line->text;
+        if (col < (int)text.length()) {
+            // Find start of identifier
+            int start = col;
+            while (start > 0 && (isalnum(text[start-1]) || text[start-1] == '_')) start--;
+            // Find end of identifier
+            int end = col;
+            if (end < (int)text.length() && (isalnum(text[end]) || text[end] == '_')) {
+                while (end < (int)text.length() && (isalnum(text[end]) || text[end] == '_')) end++;
+            }
+            if (end > start) symbol_name = text.substr(start, end - start);
+        }
+    }
+
+    auto show_status = [&](const std::string& msg, const std::string& bold_part, char spinner_char) {
+        int w = m_renderer->getWidth();
+        int h = m_renderer->getHeight();
+        m_renderer->drawText(0, h - 1, std::string(w, ' '), Renderer::CP_STATUS_BAR);
+        
+        std::string prefix = msg + " ";
+        m_renderer->drawText(1, h - 1, prefix, Renderer::CP_STATUS_BAR);
+        int current_x = 1 + prefix.length();
+        
+        m_renderer->drawText(current_x, h - 1, bold_part, Renderer::CP_STATUS_BAR, A_BOLD);
+        current_x += bold_part.length();
+        
+        std::string suffix = " " + std::string(1, spinner_char);
+        m_renderer->drawText(current_x, h - 1, suffix, Renderer::CP_STATUS_BAR);
+        
+        m_renderer->refresh();
+    };
+
+    const char spinner[] = {'|', '/', '-', '\\'};
+    int spinner_idx = 0;
+    
+    show_status("Looking for definition of", symbol_name, spinner[spinner_idx]);
+
+    // 1. Gather all open buffers as "unsaved files" for libclang
+    std::vector<CXUnsavedFile> unsavedFiles;
+    std::vector<std::string> bufferContents;
+    std::vector<std::string> bufferPaths; // Keep absolute paths alive
+    
+    for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
+        EditorBuffer& b = m_bufferManager->getBuffer(i);
+        std::string content;
+        for (Line* l = b.document_head; l != nullptr; l = l->next) {
+            content += l->text + "\n";
+        }
+        bufferContents.push_back(std::move(content));
+        bufferPaths.push_back(get_full_path(b.filename));
+    }
+
+    for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
+        CXUnsavedFile uf;
+        uf.Filename = bufferPaths[i].c_str();
+        uf.Contents = bufferContents[i].c_str();
+        uf.Length = bufferContents[i].length();
+        unsavedFiles.push_back(uf);
+    }
+
+    // Update spinner
+    spinner_idx = (spinner_idx + 1) % 4;
+    show_status("Looking for definition of", symbol_name, spinner[spinner_idx]);
+
+    // 2. Prepare compiler arguments
+    std::vector<std::string> argsStr = m_buildSystem->getClangArguments(buffer);
+    std::vector<const char*> args;
+    for (const auto& s : argsStr) args.push_back(s.c_str());
+    
+    // 3. Parse current file (use absolute path)
+    std::string absoluteCurrentFile = get_full_path(buffer.filename);
+    CXIndex index = clang_createIndex(0, 0);
+    
+    // Update spinner
+    spinner_idx = (spinner_idx + 1) % 4;
+    show_status("Looking for definition of", symbol_name, spinner[spinner_idx]);
+
+    CXTranslationUnit tu = clang_parseTranslationUnit(
+        index, absoluteCurrentFile.c_str(), 
+        args.data(), args.size(),
+        unsavedFiles.data(), unsavedFiles.size(),
+        CXTranslationUnit_DetailedPreprocessingRecord
+    );
+
+    if (!tu) {
+        clang_disposeIndex(index);
+        msgwin("Failed to parse file for definition.");
+        return;
+    }
+
+    // Update spinner
+    spinner_idx = (spinner_idx + 1) % 4;
+    show_status("Looking for definition of", symbol_name, spinner[spinner_idx]);
+
+    // 4. Get cursor at current position
+    CXFile file = clang_getFile(tu, absoluteCurrentFile.c_str());
+    if (!file) {
+        clang_disposeTranslationUnit(tu);
+        clang_disposeIndex(index);
+        msgwin("Clang could not find current file in TU.");
+        return;
+    }
+    
+    CXSourceLocation loc = clang_getLocation(tu, file, buffer.current_line_num, buffer.cursor_col);
+    CXCursor cursor = clang_getCursor(tu, loc);
+
+    // If we're at a space or something that isn't an identifier/ref, try one char back
+    if (clang_Cursor_isNull(cursor) || clang_isInvalid(clang_getCursorKind(cursor)) || clang_getCursorKind(cursor) == CXCursor_NoDeclFound || clang_getCursorKind(cursor) == CXCursor_TranslationUnit) {
+        if (buffer.cursor_col > 1) {
+            loc = clang_getLocation(tu, file, buffer.current_line_num, buffer.cursor_col - 1);
+            cursor = clang_getCursor(tu, loc);
+        }
+    }
+
+    // 5. Find definition (try referenced then definition for better results)
+    CXCursor referenced = clang_getCursorReferenced(cursor);
+    CXCursor definition = clang_getCursorDefinition(referenced);
+    
+    // Fallbacks
+    if (clang_Cursor_isNull(definition) || clang_isInvalid(clang_getCursorKind(definition))) {
+        definition = referenced;
+    }
+    if (clang_Cursor_isNull(definition) || clang_isInvalid(clang_getCursorKind(definition))) {
+        definition = clang_getCursorDefinition(cursor);
+    }
+
+    if (!clang_Cursor_isNull(definition) && !clang_isInvalid(clang_getCursorKind(definition))) {
+        CXSourceLocation defLoc = clang_getCursorLocation(definition);
+        CXFile defFile;
+        unsigned line, col, offset;
+        clang_getSpellingLocation(defLoc, &defFile, &line, &col, &offset);
+
+        if (defFile) {
+            CXString fileNameStr = clang_getFileName(defFile);
+            std::string defFileName = clang_getCString(fileNameStr);
+            clang_disposeString(fileNameStr);
+
+            // Navigate to the definition
+            bool foundBuffer = false;
+            std::string fullDefPath = get_full_path(defFileName);
+            
+            for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
+                if (get_full_path(m_bufferManager->getBuffer(i).filename) == fullDefPath) {
+                    SwitchToBuffer(i);
+                    foundBuffer = true;
+                    break;
+                }
+            }
+
+            if (!foundBuffer) {
+                m_bufferManager->addBuffer();
+                currentBuffer().filename = defFileName;
+                read_file(currentBuffer());
+            }
+
+            // Move cursor
+            EditorBuffer& newBuffer = currentBuffer();
+            newBuffer.current_line_num = line;
+            newBuffer.cursor_col = col;
+            
+            // Recalculate pointers
+            newBuffer.current_line = newBuffer.document_head;
+            for (int i = 1; i < (int)line; ++i) {
+                if (newBuffer.current_line->next) newBuffer.current_line = newBuffer.current_line->next;
+                else break;
+            }
+            
+            handleResize();
+        } else {
+            msgwin("Definition location not found.");
+        }
+    } else {
+        msgwin("Definition not found.");
+    }
+
+    clang_disposeTranslationUnit(tu);
+    clang_disposeIndex(index);
+    // drawStatusBar() will be called in the next loop iteration, restoring the original state
+}
+
 void TextEditor::GoToNextWord() {
     if (currentBufferIdx() == -1) return;
     EditorBuffer& buffer = currentBuffer();
@@ -1130,14 +1370,15 @@ void TextEditor::process_key(wint_t ch) {
                 case ACT_SAVE: if (currentBuffer().is_new_file) SaveFileBrowser(); else write_file(currentBuffer()); return;
                 case ACT_SAVE_AS: SaveFileBrowser(); return;
                 case ACT_EXIT: TryExit(); return;
-                case ACT_UNDO: HandleUndo(); return;
-                case ACT_REDO: HandleRedo(); return;
-                case ACT_CUT: HandleCut(); return;
+                case ACT_UNDO: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } HandleUndo(); return;
+                case ACT_REDO: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } HandleRedo(); return;
+                case ACT_CUT: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } HandleCut(); return;
                 case ACT_COPY: HandleCopy(); return;
-                case ACT_PASTE: HandlePaste(); return;
+                case ACT_PASTE: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } HandlePaste(); return;
                 case ACT_FIND: ActivateSearch(); return;
-                case ACT_REPLACE: ActivateReplace(); return;
+                case ACT_REPLACE: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } ActivateReplace(); return;
                 case ACT_GOTO_LINE: GoToLineDialog(); return;
+                case ACT_GO_TO_DEFINITION: GoToDefinition(); return;
                 case ACT_COMPILE: compileOnly(); return;
                 case ACT_RUN: compileAndRun(); return;
                 case ACT_TOGGLE_OUTPUT: ShowOutputScreen(); return;
@@ -1147,8 +1388,8 @@ void TextEditor::process_key(wint_t ch) {
                 case ACT_SETTINGS: EditorSettingsDialog(); return;
                 case ACT_HELP: showHelpDialog(); return;
                 case ACT_ABOUT: AboutBox(); return;
-                case ACT_TOGGLE_COMMENT: handleToggleComment(); return;
-                case ACT_DELETE: DeleteSelection(); return;
+                case ACT_TOGGLE_COMMENT: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } handleToggleComment(); return;
+                case ACT_DELETE: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } DeleteSelection(); return;
                 default: break;
             }
         }
@@ -1228,6 +1469,10 @@ void TextEditor::process_key(wint_t ch) {
     if (ch == 3) { HandleCopy(); return; } if (ch == 24) { HandleCut(); return; } if (ch == 22) { HandlePaste(); return; }
 
     if ( (ch > 31 && ch < KEY_MIN) || ch == KEY_ENTER || ch == 10 || ch == 13 || ch == KEY_BACKSPACE || ch == 127 || ch == 8 || ch == 9 || ch == KEY_DC ) {
+        if (currentBuffer().read_only) {
+            msgwin("Buffer is Read-Only.");
+            return;
+        }
         CreateUndoPoint(currentBuffer());
     }
 
