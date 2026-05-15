@@ -1,5 +1,4 @@
 #include "FileBrowser.h"
-#include "Renderer.h"
 #include "utils.h"
 
 #include <ncurses.h>
@@ -9,415 +8,467 @@
 #include <grp.h>
 #include <unistd.h>
 #include <algorithm>
-#include <vector>
 #include <string>
 
-// --- Helper Functions for UI Rendering ---
+// ═══════════════════════════════════════════════════════════════════════════════
+// FileBrowser.cpp
+//
+// All three public methods (open / save / selectDirectory) delegate to run().
+// run() is parameterised by Mode, which controls:
+//   - The dialog title and button labels
+//   - Whether the filename input row is shown (hidden for SELECT_DIR)
+//   - What counts as a valid selection on Enter/Ok
+//   - Which entries are highlighted as selectable
+// ═══════════════════════════════════════════════════════════════════════════════
 
-static void drawDialogFrame(Renderer& renderer, int x, int y, int w, int h, const std::string& title) {
-    renderer.drawShadow(x, y, w, h);
-    renderer.drawBoxWithTitle(x, y, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " " + title + " ", Renderer::CP_DIALOG_TITLE, A_BOLD);
-    
-    // Clear the interior
-    wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-    for (int i = 1; i < h - 1; ++i) {
-        mvwaddstr(stdscr, y + i, x + 1, std::string(w - 2, ' ').c_str());
+// ── Public entry points ───────────────────────────────────────────────────────
+
+std::string FileBrowser::open(Renderer& renderer)
+{
+    return run(renderer, Mode::OPEN, "");
+}
+
+std::string FileBrowser::save(Renderer& renderer, const std::string& current_filename)
+{
+    // Pre-fill the filename field with the basename of the current file
+    std::string initial;
+    auto slash = current_filename.find_last_of('/');
+    initial = (slash != std::string::npos)
+                  ? current_filename.substr(slash + 1)
+                  : current_filename;
+    return run(renderer, Mode::SAVE, initial);
+}
+
+std::string FileBrowser::selectDirectory(Renderer& renderer)
+{
+    return run(renderer, Mode::SELECT_DIR, "");
+}
+
+// ── Directory helpers ─────────────────────────────────────────────────────────
+
+std::vector<FileEntry> FileBrowser::readDirectory(const std::string& path)
+{
+    std::vector<FileEntry> entries;
+    DIR* dir = opendir(path.c_str());
+    if (!dir) return entries;
+
+    struct dirent* ent;
+    while ((ent = readdir(dir)) != nullptr) {
+        std::string name      = ent->d_name;
+        std::string full_path = path + "/" + name;
+        struct stat st{};
+        if (stat(full_path.c_str(), &st) != 0) continue;
+
+        struct passwd* pw = getpwuid(st.st_uid);
+        struct group*  gr = getgrgid(st.st_gid);
+        entries.push_back({
+            .name        = name,
+            .is_directory= S_ISDIR(st.st_mode),
+            .size        = st.st_size,
+            .mod_time    = st.st_mtime,
+            .permissions = st.st_mode,
+            .owner       = pw ? pw->pw_name : std::to_string(st.st_uid),
+            .group       = gr ? gr->gr_name : std::to_string(st.st_gid),
+        });
     }
+    closedir(dir);
+    return entries;
+}
+
+void FileBrowser::sortEntries(std::vector<FileEntry>& entries)
+{
+    std::sort(entries.begin(), entries.end(),
+              [](const FileEntry& a, const FileEntry& b) {
+                  if (a.name == ".")  return true;
+                  if (b.name == ".")  return false;
+                  if (a.name == "..") return true;
+                  if (b.name == "..") return false;
+                  if (a.is_directory != b.is_directory) return a.is_directory;
+                  return a.name < b.name;
+              });
+}
+
+// ── Drawing helpers ───────────────────────────────────────────────────────────
+
+void FileBrowser::drawFrame(Renderer& renderer,
+                            int x, int y, int w, int h,
+                            const std::string& title)
+{
+    renderer.drawShadow(x, y, w, h);
+    renderer.drawBoxWithTitle(x, y, w, h,
+                              Renderer::CP_DIALOG, Renderer::DOUBLE,
+                              " " + title + " ", Renderer::CP_DIALOG_TITLE, A_BOLD);
+
+    wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
+    for (int i = 1; i < h - 1; ++i)
+        mvwaddstr(stdscr, y + i, x + 1, std::string(w - 2, ' ').c_str());
     wattroff(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
 }
 
-static void drawPathHeader(Renderer& renderer, int x, int y, int w, const std::string& path) {
-    std::string path_str = " Path: " + path;
-    if (path_str.length() > (size_t)w - 4) {
-        path_str = " Path: ..." + path_str.substr(path_str.length() - (w - 10));
-    }
+void FileBrowser::drawPathHeader(Renderer& renderer,
+                                 int x, int y, int w,
+                                 const std::string& path)
+{
+    std::string label = " Path: " + path;
+    if ((int)label.size() > w - 4)
+        label = " Path: ..." + label.substr(label.size() - (w - 10));
     renderer.drawText(x + 1, y + 1, std::string(w - 2, ' '), Renderer::CP_HIGHLIGHT);
-    renderer.drawText(x + 2, y + 1, path_str, Renderer::CP_HIGHLIGHT, A_BOLD);
+    renderer.drawText(x + 2, y + 1, label, Renderer::CP_HIGHLIGHT, A_BOLD);
 }
 
-static void drawFileList(Renderer& renderer, int x, int y, int w, int h, const std::vector<FileEntry>& entries, int selection, int top_of_list, bool has_focus) {
-    int list_height = h;
+void FileBrowser::drawFileList(Renderer& renderer,
+                               int x, int y, int w, int h,
+                               const std::vector<FileEntry>& entries,
+                               int selection, int top,
+                               bool focused, bool dirs_only)
+{
+    // Background
     wattron(stdscr, COLOR_PAIR(Renderer::CP_LIST_BOX));
-    for(int i=0; i<list_height; ++i) {
+    for (int i = 0; i < h; ++i)
         mvwaddstr(stdscr, y + i, x, std::string(w, ' ').c_str());
-    }
     wattroff(stdscr, COLOR_PAIR(Renderer::CP_LIST_BOX));
 
-    for (int i = 0; i < list_height; ++i) {
-        int entry_idx = top_of_list + i;
-        if (entry_idx < (int)entries.size()) {
-            const FileEntry& entry = entries[entry_idx];
-            std::string prefix = entry.is_directory ? " [DIR] " : " [FIL] ";
-            std::string display_name = prefix + entry.name;
-            if (entry.is_directory && entry.name != "." && entry.name != "..") display_name += "/";
-            
-            if (display_name.length() > (size_t)w - 2) {
-                display_name = display_name.substr(0, w - 5) + "...";
-            } else {
-                // Pad to full width for full-line selection
-                display_name += std::string(w - display_name.length() - 1, ' ');
-            }
+    for (int i = 0; i < h; ++i) {
+        int idx = top + i;
+        if (idx >= (int)entries.size()) break;
+        const auto& e = entries[idx];
 
-            int color = (has_focus && entry_idx == selection) ? Renderer::CP_MENU_SELECTED : Renderer::CP_LIST_BOX;
-            int style = (entry.is_directory && !(has_focus && entry_idx == selection)) ? A_BOLD : 0;
-            renderer.drawText(x + 1, y + i, display_name, color, style);
-        }
+        // In SELECT_DIR mode dim regular files to make dirs stand out
+        bool selectable = dirs_only ? e.is_directory : !e.is_directory
+                                                           || e.name == ".." || e.name == ".";
+        // Actually in SELECT_DIR we allow navigating into dirs AND selecting them
+        // so all entries are shown; files are just greyed out / non-selectable.
+
+        std::string prefix = e.is_directory ? " [DIR] " : " [FIL] ";
+        std::string text   = prefix + e.name;
+        if (e.is_directory && e.name != "." && e.name != "..") text += "/";
+
+        if ((int)text.size() > w - 2)
+            text = text.substr(0, w - 5) + "...";
+        else
+            text += std::string(w - (int)text.size() - 1, ' ');
+
+        bool is_sel = focused && (idx == selection);
+        int  color  = is_sel ? Renderer::CP_MENU_SELECTED : Renderer::CP_LIST_BOX;
+
+        // Dim non-selectable files in SELECT_DIR mode
+        int style = 0;
+        if (dirs_only && !e.is_directory)
+            style = A_DIM;
+        else if (e.is_directory && !is_sel)
+            style = A_BOLD;
+
+        renderer.drawText(x + 1, y + i, text, color, style);
     }
 }
 
-static void drawFileDetails(Renderer& renderer, int x, int y, const FileEntry* selected) {
-    if (!selected) return;
-
-    int field_y = y;
-    auto drawField = [&](const std::string& label, const std::string& value) {
-        renderer.drawText(x, field_y, label, Renderer::CP_DIALOG);
-        renderer.drawText(x + 2, field_y + 1, value, Renderer::CP_DIALOG, A_BOLD);
-        field_y += 2; // More compact spacing
+void FileBrowser::drawFileDetails(Renderer& renderer,
+                                  int x, int y,
+                                  const FileEntry* e)
+{
+    if (!e) return;
+    int fy = y;
+    auto field = [&](const std::string& label, const std::string& val) {
+        renderer.drawText(x, fy,     label, Renderer::CP_DIALOG);
+        renderer.drawText(x + 2, fy + 1, val, Renderer::CP_DIALOG, A_BOLD);
+        fy += 2;
     };
-
-    drawField("Type:", selected->is_directory ? "Dir" : "File");
-    drawField("Owner:", selected->owner);
-    drawField("Perms:", formatPermissions(selected->permissions));
-    if (!selected->is_directory) {
-        drawField("Size:", formatSize(selected->size));
-    }
-    drawField("Mod:", formatTime(selected->mod_time).substr(0, 10)); // Date only
+    field("Type:",  e->is_directory ? "Dir" : "File");
+    field("Owner:", e->owner);
+    field("Perms:", formatPermissions(e->permissions));
+    if (!e->is_directory)
+        field("Size:", formatSize(e->size));
+    field("Mod:",   formatTime(e->mod_time).substr(0, 10));
 }
 
-static void drawInputArea(Renderer& renderer, int x, int y, int w, const std::string& label, const std::string& value, bool has_focus) {
+void FileBrowser::drawInputField(Renderer& renderer,
+                                 int x, int y, int w,
+                                 const std::string& label,
+                                 const std::string& value,
+                                 bool focused)
+{
     std::string full_label = " " + label + " ";
     int field_w = w - 2;
-    std::string display_value = value;
-    if (full_label.length() + display_value.length() > (size_t)field_w) {
-        display_value = display_value.substr(display_value.length() - (field_w - full_label.length()));
-    }
-    
-    // Draw full width background for the input field
+    std::string val = value;
+    if ((int)(full_label.size() + val.size()) > field_w)
+        val = val.substr(val.size() - (field_w - full_label.size()));
+
     renderer.drawText(x + 1, y, std::string(field_w, ' '), Renderer::CP_LIST_BOX);
-    renderer.drawText(x + 1, y, full_label + display_value, Renderer::CP_LIST_BOX);
-    
-    if (has_focus) {
+    renderer.drawText(x + 1, y, full_label + val,         Renderer::CP_LIST_BOX);
+
+    if (focused) {
         renderer.showCursor();
-        // Use setCursor for precise positioning
-        renderer.setCursor(x + 1 + full_label.length() + display_value.length(), y);
+        renderer.setCursor(x + 1 + (int)full_label.size() + (int)val.size(), y);
     }
 }
 
-static void drawActionButtons(Renderer& renderer, int x, int y, int w, const std::string& ok_text, bool ok_selected, const std::string& cancel_text, bool cancel_selected, bool pressed = false) {
-    renderer.drawButton(x + w/2 - 12, y, ok_text, ok_selected, pressed && ok_selected);
-    renderer.drawButton(x + w/2 + 2, y, cancel_text, cancel_selected, pressed && cancel_selected);
+void FileBrowser::drawButtons(Renderer& renderer,
+                              int x, int y, int w,
+                              const std::string& ok_text,  bool ok_sel,
+                              const std::string& can_text, bool can_sel,
+                              bool pressed)
+{
+    renderer.drawButton(x + w/2 - 12, y, ok_text,  ok_sel,  pressed && ok_sel);
+    renderer.drawButton(x + w/2 + 2,  y, can_text, can_sel, pressed && can_sel);
 }
 
-// --- Main FileBrowser Methods ---
+// ── Focus constants ───────────────────────────────────────────────────────────
+// Shared by all three modes.  SELECT_DIR skips INPUT (focus 1) entirely.
+namespace {
+constexpr int F_LIST   = 0;
+constexpr int F_INPUT  = 1;   // skipped in SELECT_DIR
+constexpr int FOKUS_OK     = 2;
+constexpr int F_CANCEL = 3;
+constexpr int F_COUNT  = 4;
+}
 
-std::string FileBrowser::open(Renderer& renderer) {
-    char CWD_BUFFER[1024];
-    getcwd(CWD_BUFFER, sizeof(CWD_BUFFER));
-    std::string current_path(CWD_BUFFER);
+// ── Core implementation ───────────────────────────────────────────────────────
 
-    int h = renderer.getHeight() - 10; // Slightly shorter
-    int w = renderer.getWidth() - 20;  // Slightly narrower
-    if (h < 15) h = 15;
-    if (w < 60) w = 60;
-    if (h > 20) h = 20; // Cap height
-    if (w > 80) w = 80; // Cap width
+std::string FileBrowser::run(Renderer& renderer, Mode mode,
+                             const std::string& initial_filename)
+{
+    // ── Window size ───────────────────────────────────────────────────────────
+    int h = std::min(20, std::max(15, renderer.getHeight() - 10));
+    int w = std::min(80, std::max(60, renderer.getWidth()  - 20));
     int starty = (renderer.getHeight() - h) / 2;
-    int startx = (renderer.getWidth() - w) / 2;
+    int startx = (renderer.getWidth()  - w) / 2;
 
     WINDOW* behind = newwin(h + 1, w + 1, starty, startx);
     copywin(stdscr, behind, starty, startx, 0, 0, h, w, FALSE);
     nodelay(stdscr, FALSE);
 
-    std::vector<FileEntry> entries;
-    int selection = 0;
-    int top_of_list = 0;
-    std::string filename_buffer;
-    int focus = 0; // 0: List, 1: Input, 2: Open, 3: Cancel
+    // ── Mode-specific strings ─────────────────────────────────────────────────
+    const bool dirs_only   = (mode == Mode::SELECT_DIR);
+    const bool has_input   = (mode != Mode::SELECT_DIR);
+    const std::string title    = (mode == Mode::OPEN)       ? "Open File"
+                              : (mode == Mode::SAVE)       ? "Save File As"
+                                                     :                              "Select Directory";
+    const std::string ok_text  = (mode == Mode::OPEN)       ? " &Open "
+                                : (mode == Mode::SAVE)       ? " &Save "
+                                                       :                              " &Select ";
+    const std::string can_text = " &Cancel ";
+    const std::string input_label = (mode == Mode::SAVE)    ? "Save:" : "File:";
 
-    std::string open_btn_text = " &Open ";
-    std::string cancel_btn_text = " &Cancel ";
-    std::string result_filename = "";
+    // ── State ─────────────────────────────────────────────────────────────────
+    char cwd_buf[1024];
+    getcwd(cwd_buf, sizeof(cwd_buf));
+    std::string current_path = cwd_buf;
 
-    bool browser_active = true;
-    bool pressed = false;
-    while (browser_active) {
-        entries.clear();
-        DIR *dir = opendir(current_path.c_str());
-        if (dir) {
-            struct dirent *ent;
-            while ((ent = readdir(dir)) != nullptr) {
-                std::string name = ent->d_name;
-                std::string full_path = current_path + "/" + name;
-                struct stat st;
-                if (stat(full_path.c_str(), &st) == 0) {
-                    struct passwd *pw = getpwuid(st.st_uid);
-                    struct group  *gr = getgrgid(st.st_gid);
-                    std::string owner = (pw != NULL) ? pw->pw_name : std::to_string(st.st_uid);
-                    std::string group = (gr != NULL) ? gr->gr_name : std::to_string(st.st_gid);
-                    entries.push_back({name, S_ISDIR(st.st_mode), st.st_size, st.st_mtime, st.st_mode, owner, group});
+    std::string filename_buf  = initial_filename;
+    std::string result;
+    int selection    = 0;
+    int top_of_list  = 0;
+
+    // In SELECT_DIR mode skip the input stop; Tab cycles LIST→OK→CANCEL
+    int initial_focus = (mode == Mode::SAVE || mode == Mode::OPEN) ? F_INPUT : F_LIST;
+    // OPEN starts on the list; SAVE starts on the input; SELECT_DIR on the list
+    if (mode == Mode::OPEN) initial_focus = F_LIST;
+    int focus        = initial_focus;
+    bool pressed     = false;
+
+    // ── Layout constants ──────────────────────────────────────────────────────
+    const int list_w       = (w * 3) / 5;
+    const int visible_rows = h - (has_input ? 12 : 10);
+    const int details_x    = startx + list_w + 2;
+    const int input_y      = starty + h - 6;
+    const int btn_y        = starty + h - 4;
+
+    // ── Helper: navigate focus, skipping F_INPUT in SELECT_DIR ───────────────
+    auto next_focus = [&](int f, int step) -> int {
+        int count = F_COUNT;
+        do {
+            f = (f + step + count) % count;
+        } while (!has_input && f == F_INPUT);
+        return f;
+    };
+
+    // ── Helper: try to enter a directory ─────────────────────────────────────
+    auto enter_dir = [&](const std::string& name) {
+        if (chdir(name.c_str()) == 0) {
+            getcwd(cwd_buf, sizeof(cwd_buf));
+            current_path = cwd_buf;
+            selection    = 0;
+            top_of_list  = 0;
+            filename_buf.clear();
+        }
+    };
+
+    // ── Helper: check if current state is a valid result ─────────────────────
+    auto tryAccept = [&]() -> bool {
+        if (dirs_only) {
+            // SELECT_DIR: accept current directory itself, or
+            // a selected directory entry that isn't . or ..
+            std::vector<FileEntry> tmp = readDirectory(current_path);
+            sortEntries(tmp);
+            if (selection < (int)tmp.size()) {
+                const auto& sel = tmp[selection];
+                if (sel.is_directory && sel.name != "." && sel.name != "..") {
+                    result = current_path + "/" + sel.name;
+                    return true;
                 }
             }
-            closedir(dir);
+            // Accept current directory
+            result = current_path;
+            return true;
         }
-        std::sort(entries.begin(), entries.end(), [](const FileEntry& a, const FileEntry& b){
-            if (a.name == ".") return true; if (b.name == ".") return false;
-            if (a.name == "..") return true; if (b.name == "..") return false;
-            if (a.is_directory != b.is_directory) return a.is_directory;
-            return a.name < b.name;
-        });
+        // OPEN / SAVE
+        if (filename_buf.empty()) return false;
+        std::string full = current_path + "/" + filename_buf;
+        struct stat st{};
+        if (mode == Mode::OPEN) {
+            // Must exist and be a regular file
+            return (stat(full.c_str(), &st) == 0 && !S_ISDIR(st.st_mode))
+                   && (result = full, true);
+        } else {
+            // SAVE: target must not be an existing directory
+            bool is_dir = (stat(full.c_str(), &st) == 0 && S_ISDIR(st.st_mode));
+            return !is_dir && (result = full, true);
+        }
+    };
 
-        drawDialogFrame(renderer, startx, starty, w, h, "Open File");
-        drawPathHeader(renderer, startx, starty, w, current_path);
+    // ── Main loop ─────────────────────────────────────────────────────────────
+    while (true) {
+        // Re-read directory every frame (handles external changes)
+        auto entries = readDirectory(current_path);
+        sortEntries(entries);
 
-        int list_w = (w * 3) / 5;
-        int visible_items = h - 12; // More space for gaps
-        int details_x = startx + list_w + 2;
+        // Keep selection in bounds after directory changes
+        if (selection >= (int)entries.size()) selection = (int)entries.size() - 1;
+        if (selection < 0) selection = 0;
 
-        drawFileList(renderer, startx + 1, starty + 3, list_w, visible_items, entries, selection, top_of_list, focus == 0);
-        
-        if (selection < (int)entries.size()) {
+        // ── Draw ──────────────────────────────────────────────────────────────
+        drawFrame      (renderer, startx, starty, w, h, title);
+        drawPathHeader (renderer, startx, starty, w, current_path);
+        drawFileList   (renderer, startx + 1, starty + 3, list_w, visible_rows,
+                     entries, selection, top_of_list, focus == F_LIST, dirs_only);
+
+        if (!entries.empty() && selection < (int)entries.size())
             drawFileDetails(renderer, details_x, starty + 3, &entries[selection]);
-        }
 
-        drawActionButtons(renderer, startx, starty + h - 4, w, open_btn_text, focus == 2, cancel_btn_text, focus == 3, pressed);
-        drawInputArea(renderer, startx + 1, starty + h - 6, w - 2, "File:", filename_buffer, focus == 1);
+        if (has_input)
+            drawInputField(renderer, startx + 1, input_y, w - 2,
+                           input_label, filename_buf, focus == F_INPUT);
 
-        if (focus != 1) renderer.hideCursor();
+        drawButtons(renderer, startx, btn_y, w,
+                    ok_text,  focus == FOKUS_OK,
+                    can_text, focus == F_CANCEL,
+                    pressed);
+
+        if (focus != F_INPUT) renderer.hideCursor();
         renderer.refresh();
 
-        if (pressed) {
-            napms(100);
-            break;
-        }
+        // ── Press animation then exit ─────────────────────────────────────────
+        if (pressed) { napms(100); break; }
 
+        // ── Input ─────────────────────────────────────────────────────────────
         wint_t ch = renderer.getChar();
+
+        // ESC / Alt
         if (ch == 27) {
-            timeout(50); wint_t next_ch = renderer.getChar(); timeout(-1);
-            if (next_ch == ERR) { browser_active = false; continue; }
-            switch(tolower(next_ch)) {
-                case 'o': focus = 2; pressed = true; break;
-                case 'c': focus = 3; pressed = true; break;
+            timeout(50);
+            wint_t next = renderer.getChar();
+            timeout(-1);
+            if (next == ERR) break;   // bare ESC → cancel
+
+            char lower = static_cast<char>(std::tolower(static_cast<unsigned char>(next)));
+            // Ok hotkey
+            if ((mode == Mode::OPEN   && lower == 'o') ||
+                (mode == Mode::SAVE   && lower == 's') ||
+                (mode == Mode::SELECT_DIR && lower == 's')) {
+                focus = FOKUS_OK;
+                if (tryAccept()) { pressed = true; }
+            } else if (lower == 'c') {
+                focus = F_CANCEL; pressed = true;
             }
+            continue;
         }
 
         switch (ch) {
-            case 9: focus = (focus + 1) % 4; break;
-            case KEY_BTAB: focus = (focus + 3) % 4; break;
-            case KEY_LEFT: if (focus == 3) focus = 2; break;
-            case KEY_RIGHT: if (focus == 1) focus = 0; else if (focus == 2) focus = 3; break;
-            case KEY_UP:
-                if (focus == 0 && selection > 0) {
-                    selection--;
+        // ── Tab / Shift-Tab ───────────────────────────────────────────────────
+        case 9:
+            focus = next_focus(focus, +1);
+            break;
+        case KEY_BTAB:
+            focus = next_focus(focus, -1);
+            break;
+
+        // ── Arrow keys ────────────────────────────────────────────────────────
+        case KEY_UP:
+            if (focus == F_LIST) {
+                if (selection > 0) {
+                    --selection;
                     if (selection < top_of_list) top_of_list = selection;
-                    if (!entries[selection].is_directory) filename_buffer = entries[selection].name;
-                } else if (focus == 1) focus = 0;
-                break;
-            case KEY_DOWN:
-                if (focus == 0) {
-                    if (selection < (int)entries.size() - 1) {
-                        selection++;
-                        if (selection >= top_of_list + visible_items) top_of_list++;
-                        if (!entries[selection].is_directory) filename_buffer = entries[selection].name;
-                    } else focus = 1;
+                    if (has_input && !entries[selection].is_directory)
+                        filename_buf = entries[selection].name;
                 }
-                break;
-            case KEY_BACKSPACE: case 127: case 8:
-                if (focus == 1 && !filename_buffer.empty()) filename_buffer.pop_back();
-                else if (focus == 0) { // Go to parent directory
-                    if (chdir("..") == 0) {
-                        getcwd(CWD_BUFFER, sizeof(CWD_BUFFER)); current_path = CWD_BUFFER;
-                        selection = 0; top_of_list = 0; filename_buffer.clear();
-                    }
+            } else if (focus == F_INPUT) {
+                focus = F_LIST;
+            } else if (focus ==  FOKUS_OK|| focus == F_CANCEL) {
+                focus = has_input ? F_INPUT : F_LIST;
+            }
+            break;
+
+        case KEY_DOWN:
+            if (focus == F_LIST) {
+                if (selection < (int)entries.size() - 1) {
+                    ++selection;
+                    if (selection >= top_of_list + visible_rows) ++top_of_list;
+                    if (has_input && !entries[selection].is_directory)
+                        filename_buf = entries[selection].name;
+                } else {
+                    focus = next_focus(F_LIST, +1);
                 }
-                break;
-            case KEY_ENTER: case 10: case 13:
-                if (focus == 3) pressed = true;
-                else if (focus == 2 || (focus == 1 && !filename_buffer.empty())) {
-                    std::string full_path = current_path + "/" + filename_buffer;
-                    struct stat st;
-                    if (stat(full_path.c_str(), &st) == 0 && !S_ISDIR(st.st_mode)) {
-                        result_filename = full_path;
-                        pressed = true;
-                    }
-                } else if (focus == 0 && selection < (int)entries.size()) {
-                    FileEntry& sel = entries[selection];
-                    if (sel.is_directory) {
-                        if (chdir(sel.name.c_str()) == 0) {
-                            getcwd(CWD_BUFFER, sizeof(CWD_BUFFER)); current_path = CWD_BUFFER;
-                            selection = 0; top_of_list = 0; filename_buffer.clear();
-                        }
-                    } else {
-                        filename_buffer = sel.name;
-                        focus = 1;
-                    }
-                }
-                break;
-            default:
-                if (focus == 1 && ch > 31 && ch < KEY_MIN) filename_buffer += wchar_to_utf8(ch);
-                break;
-        }
-    }
+            } else if (focus == F_INPUT) {
+                focus = FOKUS_OK;
+            }
+            break;
 
-    copywin(behind, stdscr, 0, 0, starty, startx, h, w, FALSE); delwin(behind);
-    nodelay(stdscr, TRUE); renderer.showCursor();
-    return result_filename;
-}
+        case KEY_LEFT:
+            if (focus == F_CANCEL) focus = FOKUS_OK;
+            break;
 
-std::string FileBrowser::save(Renderer& renderer, const std::string& current_filename) {
-    char CWD_BUFFER[1024];
-    getcwd(CWD_BUFFER, sizeof(CWD_BUFFER));
-    std::string current_path(CWD_BUFFER);
+        case KEY_RIGHT:
+            if (focus == FOKUS_OK) focus = F_CANCEL;
+            break;
 
-    size_t last_slash = current_filename.find_last_of('/');
-    std::string filename_buffer = (last_slash != std::string::npos) ? current_filename.substr(last_slash + 1) : current_filename;
+        // ── Backspace ─────────────────────────────────────────────────────────
+        case KEY_BACKSPACE: case 127: case 8:
+            if (focus == F_INPUT && !filename_buf.empty()) {
+                filename_buf.pop_back();
+            } else if (focus == F_LIST) {
+                enter_dir("..");
+            }
+            break;
 
-    int h = renderer.getHeight() - 10;
-    int w = renderer.getWidth() - 20;
-    if (h < 15) h = 15;
-    if (w < 60) w = 60;
-    if (h > 20) h = 20;
-    if (w > 80) w = 80;
-    int starty = (renderer.getHeight() - h) / 2;
-    int startx = (renderer.getWidth() - w) / 2;
-
-    WINDOW* behind = newwin(h + 1, w + 1, starty, startx);
-    copywin(stdscr, behind, starty, startx, 0, 0, h, w, FALSE);
-    nodelay(stdscr, FALSE);
-
-    std::vector<FileEntry> entries;
-    int selection = 0;
-    int top_of_list = 0;
-    int focus = 1; // 0: List, 1: Input, 2: Save, 3: Cancel
-
-    std::string save_btn_text = " &Save ";
-    std::string cancel_btn_text = " &Cancel ";
-    std::string result_filename = "";
-
-    bool browser_active = true;
-    bool pressed = false;
-    while (browser_active) {
-        entries.clear();
-        DIR *dir = opendir(current_path.c_str());
-        if (dir) {
-            struct dirent *ent;
-            while ((ent = readdir(dir)) != nullptr) {
-                std::string name = ent->d_name;
-                std::string full_path = current_path + "/" + name;
-                struct stat st;
-                if (stat(full_path.c_str(), &st) == 0) {
-                    struct passwd *pw = getpwuid(st.st_uid);
-                    struct group  *gr = getgrgid(st.st_gid);
-                    std::string owner = (pw != NULL) ? pw->pw_name : std::to_string(st.st_uid);
-                    std::string group = (gr != NULL) ? gr->gr_name : std::to_string(st.st_gid);
-                    entries.push_back({name, S_ISDIR(st.st_mode), st.st_size, st.st_mtime, st.st_mode, owner, group});
+        // ── Enter ─────────────────────────────────────────────────────────────
+        case KEY_ENTER: case 10: case 13:
+            if (focus == F_CANCEL) {
+                pressed = true;   // cancel — result stays empty
+            } else if (focus ==  FOKUS_OK|| focus == F_INPUT) {
+                if (tryAccept()) pressed = true;
+            } else if (focus == F_LIST && selection < (int)entries.size()) {
+                auto& sel = entries[selection];
+                if (sel.is_directory) {
+                    enter_dir(sel.name);
+                } else if (!dirs_only) {
+                    filename_buf = sel.name;
+                    focus = F_INPUT;
                 }
             }
-            closedir(dir);
-        }
-        std::sort(entries.begin(), entries.end(), [](const FileEntry& a, const FileEntry& b){
-            if (a.name == ".") return true; if (b.name == ".") return false;
-            if (a.name == "..") return true; if (b.name == "..") return false;
-            if (a.is_directory != b.is_directory) return a.is_directory;
-            return a.name < b.name;
-        });
+            break;
 
-        drawDialogFrame(renderer, startx, starty, w, h, "Save File As");
-        drawPathHeader(renderer, startx, starty, w, current_path);
-
-        int list_w = (w * 3) / 5;
-        int visible_items = h - 12; // More space for gaps
-        int details_x = startx + list_w + 2;
-
-        drawFileList(renderer, startx + 1, starty + 3, list_w, visible_items, entries, selection, top_of_list, focus == 0);
-        
-        if (selection < (int)entries.size()) {
-            drawFileDetails(renderer, details_x, starty + 3, &entries[selection]);
-        }
-
-        drawActionButtons(renderer, startx, starty + h - 4, w, save_btn_text, focus == 2, cancel_btn_text, focus == 3, pressed);
-        drawInputArea(renderer, startx + 1, starty + h - 6, w - 2, "Save:", filename_buffer, focus == 1);
-
-        if (focus != 1) renderer.hideCursor();
-        renderer.refresh();
-
-        if (pressed) {
-            napms(100);
+        // ── Printable: type into filename field ───────────────────────────────
+        default:
+            if (has_input && focus == F_INPUT && ch > 31 && ch < KEY_MIN)
+                filename_buf += wchar_to_utf8(ch);
             break;
         }
-
-        wint_t ch = renderer.getChar();
-        if (ch == 27) {
-            timeout(50); wint_t next_ch = renderer.getChar(); timeout(-1);
-            if (next_ch == ERR) { browser_active = false; continue; }
-            switch(tolower(next_ch)) {
-                case 's': focus = 2; pressed = true; break;
-                case 'c': focus = 3; pressed = true; break;
-            }
-        }
-
-        switch (ch) {
-            case 9: focus = (focus + 1) % 4; break;
-            case KEY_BTAB: focus = (focus + 3) % 4; break;
-            case KEY_LEFT: if (focus == 3) focus = 2; break;
-            case KEY_RIGHT: if (focus == 1) focus = 0; else if (focus == 2) focus = 3; break;
-            case KEY_UP:
-                if (focus == 0 && selection > 0) {
-                    selection--;
-                    if (selection < top_of_list) top_of_list = selection;
-                    if (!entries[selection].is_directory) filename_buffer = entries[selection].name;
-                } else if (focus == 1) focus = 0;
-                break;
-            case KEY_DOWN:
-                if (focus == 0) {
-                    if (selection < (int)entries.size() - 1) {
-                        selection++;
-                        if (selection >= top_of_list + visible_items) top_of_list++;
-                        if (!entries[selection].is_directory) filename_buffer = entries[selection].name;
-                    } else focus = 1;
-                }
-                break;
-            case KEY_BACKSPACE: case 127: case 8:
-                if (focus == 1 && !filename_buffer.empty()) filename_buffer.pop_back();
-                else if (focus == 0) {
-                    if (chdir("..") == 0) {
-                        getcwd(CWD_BUFFER, sizeof(CWD_BUFFER)); current_path = CWD_BUFFER;
-                        selection = 0; top_of_list = 0; filename_buffer.clear();
-                    }
-                }
-                break;
-            case KEY_ENTER: case 10: case 13:
-                if (focus == 3) pressed = true;
-                else if (focus == 2 || (focus == 1 && !filename_buffer.empty())) {
-                    std::string full_path = current_path + "/" + filename_buffer;
-                    struct stat st;
-                    bool is_dir = false;
-                    if (stat(full_path.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
-                        is_dir = true;
-                    }
-                    if (!is_dir) {
-                        result_filename = full_path;
-                        pressed = true;
-                    }
-                } else if (focus == 0 && selection < (int)entries.size()) {
-                    FileEntry& sel = entries[selection];
-                    if (sel.is_directory) {
-                        if (chdir(sel.name.c_str()) == 0) {
-                            getcwd(CWD_BUFFER, sizeof(CWD_BUFFER)); current_path = CWD_BUFFER;
-                            selection = 0; top_of_list = 0; filename_buffer.clear();
-                        }
-                    } else {
-                        filename_buffer = sel.name;
-                        focus = 1;
-                    }
-                }
-                break;
-            default:
-                if (focus == 1 && ch > 31 && ch < KEY_MIN) filename_buffer += wchar_to_utf8(ch);
-                break;
-        }
     }
 
-    copywin(behind, stdscr, 0, 0, starty, startx, h, w, FALSE); delwin(behind);
-    nodelay(stdscr, TRUE); renderer.showCursor();
-    return result_filename;
+    // ── Restore ───────────────────────────────────────────────────────────────
+    copywin(behind, stdscr, 0, 0, starty, startx, starty + h, startx + w, FALSE);
+    delwin(behind);
+    nodelay(stdscr, TRUE);
+    renderer.showCursor();
+    return result;
 }

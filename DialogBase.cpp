@@ -53,6 +53,7 @@ DialogResult DialogBase::run(Renderer& renderer)
             if (pending_button_) {
                 HandleResult hr = pending_button_->on_activate();
                 pending_button_ = nullptr;
+                nodelay(stdscr, FALSE); // restore blocking mode in case sub-dialog changed it
                 if (hr == HandleResult::CLOSE) break;
             } else {
                 break;
@@ -78,7 +79,7 @@ DialogResult DialogBase::run(Renderer& renderer)
         if (hr == HandleResult::CLOSE) break;
     }
 
-    copywin(behind, stdscr, 0, 0, starty, startx, h_, w_, FALSE);
+    copywin(behind, stdscr, 0, 0, starty, startx, starty + h_, startx + w_, FALSE);
     delwin(behind);
     nodelay(stdscr, TRUE);
     renderer.showCursor();
@@ -137,6 +138,7 @@ void DialogBase::placeCursor(Renderer& renderer, int sx, int sy)
 {
     // Mode B: show cursor only when the focused group has a text_buffer
     if (!groups_.empty()) {
+        if (onPlaceCursor(renderer, sx, sy)) return;   // subclass handled it
         if (!inGroupButtonRow() && group_focus_ < (int)groups_.size()) {
             const auto& g = groups_[group_focus_];
             if (g.text_buffer) {
@@ -174,8 +176,19 @@ void DialogBase::runPressAnimation(Renderer& renderer, int sx, int sy)
 
 bool DialogBase::tryHotkeyActivate(char lower)
 {
-    Button* btn = button_row_.findByHotkey(lower);
-    if (btn) { armButton(btn); return true; }
+    for (int i = 0; i < (int)button_row_.buttons.size(); ++i) {
+        Button& btn = button_row_.buttons[i];
+        if (btn.hotkey() == lower) {
+            // Move visual focus to the button row so the press animation is visible.
+            button_row_.inner_focus = i;
+            if (!groups_.empty())
+                group_focus_ = static_cast<int>(groups_.size());
+            else
+                focus_ = btn_row_focus_index_;
+            armButton(&btn);
+            return true;
+        }
+    }
     return false;
 }
 
@@ -324,39 +337,32 @@ HandleResult DialogBase::dispatchGroupKey(wint_t ch)
 
     switch (ch) {
     case 9:
-        if (inGroupButtonRow()) {
-            // On the button row: Tab moves to the next button.
-            // Only after the last button do we wrap back to group 0.
-            if (button_row_.inner_focus < (int)button_row_.buttons.size() - 1) {
-                ++button_row_.inner_focus;          // stay on row, next button
+        if (!onTab(true)) {
+            if (inGroupButtonRow()) {
+                if (button_row_.inner_focus < (int)button_row_.buttons.size() - 1)
+                    ++button_row_.inner_focus;
+                else { button_row_.inner_focus = 0; group_focus_ = 0; }
             } else {
-                button_row_.inner_focus = 0;        // reset to first button
-                group_focus_ = 0;                   // jump to first group
+                group_focus_ = (group_focus_ + 1) % total_tabs;
+                if (inGroupButtonRow()) button_row_.inner_focus = 0;
             }
-        } else {
-            group_focus_ = (group_focus_ + 1) % total_tabs;
-            // When Tab lands on the button row, always start at the first button
-            if (inGroupButtonRow())
-                button_row_.inner_focus = 0;
         }
         return HandleResult::CONTINUE;
     case KEY_BTAB:
-        if (inGroupButtonRow()) {
-            // On the button row: Shift-Tab moves to the previous button.
-            // Only before the first button do we leave the row.
-            if (button_row_.inner_focus > 0) {
-                --button_row_.inner_focus;          // stay on row, prev button
+        if (!onTab(false)) {
+            if (inGroupButtonRow()) {
+                if (button_row_.inner_focus > 0) {
+                    --button_row_.inner_focus;
+                } else {
+                    group_focus_ = total_tabs - 2;
+                    if (group_focus_ < 0) group_focus_ = 0;
+                    button_row_.inner_focus = (int)button_row_.buttons.size() - 1;
+                }
             } else {
-                // Jump to the last group before the button row
-                group_focus_ = total_tabs - 2;     // -1 for btn row, then -1 more
-                if (group_focus_ < 0) group_focus_ = 0;
-                button_row_.inner_focus = (int)button_row_.buttons.size() - 1;
+                group_focus_ = (group_focus_ + total_tabs - 1) % total_tabs;
+                if (inGroupButtonRow())
+                    button_row_.inner_focus = (int)button_row_.buttons.size() - 1;
             }
-        } else {
-            group_focus_ = (group_focus_ + total_tabs - 1) % total_tabs;
-            // When Shift-Tab lands on the button row, start at the last button
-            if (inGroupButtonRow())
-                button_row_.inner_focus = (int)button_row_.buttons.size() - 1;
         }
         return HandleResult::CONTINUE;
 
@@ -403,7 +409,7 @@ HandleResult DialogBase::dispatchGroupKey(wint_t ch)
                 appendUtf8(*g.text_buffer, ch);
                 return HandleResult::CONTINUE;
             }
-            return HandleResult::CONTINUE;
+            return onKey(ch);   // let subclass handle arrows, etc.
         }
 
         // Remember the active tab before the key so we can detect tab changes

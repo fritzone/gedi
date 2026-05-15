@@ -24,6 +24,8 @@
 #include "BuildOutputDialog.h"
 #include "HelpDialog.h"
 #include "KeyBindings.h"
+#include "NewProjectDialog.h"
+#include "AddFileDialog.h"
 
 enum MenuAction { CLOSE_MENU, ITEM_SELECTED, NAVIGATE_LEFT, NAVIGATE_RIGHT, RESIZE_OCCURRED };
 
@@ -79,6 +81,7 @@ private:
     std::vector<std::string> m_submenu_edit;
     std::vector<std::string> m_submenu_search;
     std::vector<std::string> m_submenu_build;
+    std::vector<std::string> m_submenu_project;
     std::vector<std::string> m_submenu_window;
     std::vector<std::string> m_submenu_options;
     std::vector<std::string> m_submenu_help;
@@ -134,6 +137,8 @@ private:
     void GoToPreviousParagraph();
     void ActivateMenuBar(int initial_menu_id);
     MenuAction CallSubMenu(const std::vector<std::string>& menuItems, int x, int y, int menu_id);
+    void CreateNewProject();
+    void AddFileToProject();
     void DoNew();
     void selectfile();
     void OpenFileBrowser();

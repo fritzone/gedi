@@ -21,6 +21,7 @@ void KeyBindings::loadDefaults() {
     m_keyToAction.clear();
 
     addBinding(ACT_NEW, CTRL('N'), "Ctrl+N");
+    addBinding(ACT_NEW_PROJECT, -1, "");
     
     // Multiple bindings for Open
     addBinding(ACT_OPEN, CTRL('O'), "Ctrl+O");

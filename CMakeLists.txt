@@ -47,6 +47,8 @@ if(CURSES_FOUND AND CLANG_FOUND)
         CompileOptionsDialog.cpp
         BuildOutputDialog.cpp
         HelpDialog.cpp
+        NewProjectDialog.cpp
+        AddFileDialog.cpp
         utils.cpp
         DialogBase.cpp
 
@@ -68,6 +70,7 @@ if(CURSES_FOUND AND CLANG_FOUND)
         KeyBindings.h
         MessageDialog.h
         NavigationGraph.h
+        NewProjectDialog.h
         QuestionDialog.h
         Renderer.h
         ReplaceDialog.h
@@ -91,6 +94,7 @@ install(
         help.hlp
         colors.json
         config.json
+        librarian.py
     DESTINATION
         share/gedi
 )

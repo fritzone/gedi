@@ -352,6 +352,10 @@ struct FocusGroup {
     // stores the buffer reference here and the base class handles typing/backspace.
     std::string* text_buffer = nullptr;   // nullptr = no raw text input
 
+    // Set true when the subclass draws all widgets itself in onDraw.
+    // FocusGroup::draw() will still draw the box/title but skip all widgets.
+    bool draw_widgets_manually = false;
+
     int inner_focus = 0;
 
     // Total focusable items: cb + sp + combo + tab + optionlist
@@ -372,11 +376,8 @@ struct FocusGroup {
                                       title, Renderer::CP_DIALOG,
                                       focused ? A_BOLD : 0);
 
-        // text_buffer group: just draw the input field, no inner items
-        if (text_buffer) {
-            // The drawing is done by the dialog's onDraw — nothing extra here
-            return;
-        }
+        // text_buffer or manually-drawn group: box is drawn above; widgets skipped
+        if (text_buffer || draw_widgets_manually) return;
 
         int item = 0;
         for (const auto& cb : checkboxes)

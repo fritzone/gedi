@@ -62,8 +62,12 @@ protected:
     virtual void onInit() = 0;
     virtual void onDraw(Renderer& renderer, int startx, int starty) = 0;
 
-    // ── Optional hook ─────────────────────────────────────────────────────────
+    // ── Optional hooks ────────────────────────────────────────────────────────
     virtual HandleResult onKey(wint_t ch) { (void)ch; return HandleResult::CONTINUE; }
+
+    // Called from placeCursor before the default logic runs.
+    // Return true to take over cursor placement (hides/shows cursor yourself).
+    virtual bool onPlaceCursor(Renderer&, int /*sx*/, int /*sy*/) { return false; }
 
     // ── Mode A registration ───────────────────────────────────────────────────
     void addInput  (InputDescriptor d) { inputs_.push_back(std::move(d)); }
@@ -92,7 +96,15 @@ protected:
     void setGroupBtnFocus(int b) noexcept { button_row_.inner_focus = b; }
 
     // Read the currently focused group index (Mode B)
-    int getFocusedGroup() const noexcept { return group_focus_; }
+    int  getFocusedGroup()    const noexcept { return group_focus_; }
+    bool inButtonRow()        const noexcept { return inGroupButtonRow(); }
+    int  getBtnInnerFocus()   const noexcept { return button_row_.inner_focus; }
+    int  groupCount()         const noexcept { return (int)groups_.size(); }
+
+    // Mode B: intercept Tab / Shift-Tab before default navigation runs.
+    // Call setGroupFocus() / setGroupBtnFocus() to redirect focus, then return true.
+    // Return false to let the default logic handle it.
+    virtual bool onTab(bool /*forward*/) { return false; }
 
     // Direct access to groups so subclasses can read/write widget state
     // (e.g. sync OptionList content from a TabControl in onDraw)
@@ -102,6 +114,10 @@ protected:
     // Safe to call from onKey() — the animation runs on the next frame.
     void activateButtonByIndex(int index) {
         button_row_.inner_focus = index;
+        if (!groups_.empty())
+            group_focus_ = static_cast<int>(groups_.size());
+        else
+            focus_ = btn_row_focus_index_;
         Button* btn = button_row_.focusedButton();
         if (btn) armButton(btn);
     }

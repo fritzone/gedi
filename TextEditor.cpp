@@ -502,8 +502,8 @@ std::string TextEditor::formatMenuItem(const std::string& label, EditorAction ac
 }
 
 void TextEditor::updateMenuLabels() {
-    m_menus = {" &File " , " &Edit " , " &Search ", " &Build " , " &Window ", " &Options ", " &Help "  };
-    m_menu_positions = { 1, 7, 13, 21, 28, 36, 45 };
+    m_menus = {" &File ", " &Edit ", " &Search ", " &Build ", " &Project ", " &Window ", " &Options ", " &Help "};
+    m_menu_positions = { 1, 7, 13, 21, 28, 37, 45, 54 };
 
     m_submenu_file = {
         formatMenuItem("&New", ACT_NEW),
@@ -513,6 +513,12 @@ void TextEditor::updateMenuLabels() {
         formatMenuItem("Save &As...", ACT_SAVE_AS),
         " -------------- ",
         formatMenuItem("E&xit", ACT_EXIT)
+    };
+
+    m_submenu_project = {
+        formatMenuItem("New &Project...", ACT_NEW_PROJECT),
+        " -------------- ",
+        formatMenuItem("Add &File to Project...", ACT_ADD_FILE)
     };
 
     m_submenu_edit = {
@@ -731,10 +737,11 @@ void TextEditor::HandleAltKey(wint_t key) {
     case 'f': ActivateMenuBar(1); break; // File
     case 'e': ActivateMenuBar(2); break; // Edit
     case 's': ActivateMenuBar(3); break; // Search
-    case 'b': ActivateMenuBar(4); break; // Build (was 5)
-    case 'w': ActivateMenuBar(5); break; // Window (was 6)
-    case 'o': ActivateMenuBar(6); break; // Options (was 7)
-    case 'h': ActivateMenuBar(7); break; // Help (was 8)
+    case 'b': ActivateMenuBar(4); break; // Build
+    case 'p': ActivateMenuBar(5); break; // Project
+    case 'w': ActivateMenuBar(6); break; // Window
+    case 'o': ActivateMenuBar(7); break; // Options
+    case 'h': ActivateMenuBar(8); break; // Help
     case 'y': HandleRedo(); break;
     case KEY_BACKSPACE: HandleUndo(); break;
     case 'c': CloseWindow(); break;
@@ -1366,6 +1373,7 @@ void TextEditor::process_key(wint_t ch) {
         if (action != ACT_UNKNOWN) {
             switch (action) {
                 case ACT_NEW: DoNew(); return;
+                case ACT_NEW_PROJECT: CreateNewProject(); return;
                 case ACT_OPEN: selectfile(); return;
                 case ACT_SAVE: if (currentBuffer().is_new_file) SaveFileBrowser(); else write_file(currentBuffer()); return;
                 case ACT_SAVE_AS: SaveFileBrowser(); return;
@@ -1637,6 +1645,287 @@ void TextEditor::process_key(wint_t ch) {
     }
 }
 
+
+// ── Project helpers ───────────────────────────────────────────────────────────
+
+static std::string findCMakeLists(const std::string& start_dir)
+{
+    namespace fs = std::filesystem;
+    fs::path dir(start_dir);
+    for (int depth = 0; depth < 6 && dir != dir.parent_path(); ++depth) {
+        fs::path cmake = dir / "CMakeLists.txt";
+        if (fs::exists(cmake)) return cmake.string();
+        dir = dir.parent_path();
+    }
+    return {};
+}
+
+static bool addFileToCMakeLists(const std::string& cmake_path, const std::string& new_file)
+{
+    namespace fs = std::filesystem;
+
+    std::ifstream fin(cmake_path);
+    if (!fin) return false;
+    std::string content((std::istreambuf_iterator<char>(fin)), {});
+    fin.close();
+
+    // Compute relative path from cmake dir to the new file
+    std::string rel;
+    try { rel = fs::relative(new_file, fs::path(cmake_path).parent_path()).string(); }
+    catch (...) { rel = new_file; }
+
+    for (const char* kw : {"add_executable(", "add_library("}) {
+        size_t pos = content.find(kw);
+        if (pos == std::string::npos) continue;
+
+        // Find the matching closing ')' using depth tracking
+        int depth = 0;
+        size_t close = std::string::npos;
+        for (size_t i = pos; i < content.size(); ++i) {
+            if      (content[i] == '(') ++depth;
+            else if (content[i] == ')') { if (--depth == 0) { close = i; break; } }
+        }
+        if (close == std::string::npos) continue;
+
+        // Already listed between the call and its closing ')'?
+        if (content.find(rel, pos) < close) return true;
+
+        // Decide how to insert: if ')' is on its own line, indent to match; else inline.
+        size_t line_start = content.rfind('\n', close);
+        std::string ins;
+        if (line_start != std::string::npos) {
+            std::string before = content.substr(line_start + 1, close - line_start - 1);
+            bool only_ws = before.find_first_not_of(" \t") == std::string::npos;
+            if (only_ws && !before.empty()) {
+                ins = before + rel + "\n";   // same indent as ')'
+            } else {
+                ins = " " + rel;             // all on one line → just append
+            }
+        } else {
+            ins = " " + rel;
+        }
+        content.insert(close, ins);
+
+        std::ofstream fout(cmake_path);
+        if (!fout) return false;
+        fout << content;
+        return true;
+    }
+    return false;
+}
+
+void TextEditor::CreateNewProject()
+{
+    ProjectTemplate temp;
+    temp.name = "MyNewProject";
+
+    char cwd_buf[1024];
+    if (getcwd(cwd_buf, sizeof(cwd_buf)))
+        temp.path = cwd_buf;
+    temp.type         = 0;        // Executable
+    temp.cpp_standard = "c++17";
+
+    if (!NewProjectDialog::show(*m_renderer, temp))
+        return;   // user cancelled
+
+    std::filesystem::path root(temp.path);
+    root /= temp.name;
+
+    try {
+        // ── Directory ──────────────────────────────────────────────────────────
+        if (std::filesystem::exists(root)) {
+            if (msgwin_yesno("Directory already exists. Overwrite contents?",
+                             root.string()) != 1)
+                return;
+        } else {
+            std::filesystem::create_directories(root);
+        }
+
+        // ── CMakeLists.txt ────────────────────────────────────────────────────
+        std::filesystem::path cmakeFile = root / "CMakeLists.txt";
+        {
+            // Strip "c++" prefix: "c++17" → "17"
+            std::string std_num = temp.cpp_standard;
+            if (std_num.substr(0, 3) == "c++") std_num = std_num.substr(3);
+
+            // Derive a CMake-safe variable name from a library short_name
+            auto cmake_varname = [](const std::string& s) -> std::string {
+                std::string v;
+                for (unsigned char c : s)
+                    v += std::isalnum(static_cast<int>(c))
+                         ? static_cast<char>(std::toupper(static_cast<int>(c)))
+                         : '_';
+                return v;
+            };
+
+            std::ofstream cm(cmakeFile);
+            cm << "cmake_minimum_required(VERSION 3.10)\n"
+               << "project(" << temp.name << ")\n\n"
+               << "set(CMAKE_CXX_STANDARD " << std_num << ")\n"
+               << "set(CMAKE_CXX_STANDARD_REQUIRED ON)\n\n";
+
+            if (!temp.selected_libraries.empty()) {
+                cm << "find_package(PkgConfig REQUIRED)\n";
+                for (const auto& lib : temp.selected_libraries)
+                    cm << lib.cmake_find_package_hint << "\n";
+                cm << "\n";
+            }
+
+            if (temp.type == 0)
+                cm << "add_executable(" << temp.name << " main.cpp)\n";
+            else
+                cm << "add_library(" << temp.name << " STATIC library.cpp)\n";
+
+            for (const auto& lib : temp.selected_libraries) {
+                const std::string var = cmake_varname(lib.short_name);
+
+                if (!lib.include_directories.empty()) {
+                    cm << "target_include_directories(" << temp.name << " PRIVATE";
+                    for (const auto& d : lib.include_directories) cm << " " << d;
+                    cm << ")\n";
+                }
+                if (!lib.link_libraries.empty()) {
+                    cm << "target_link_libraries(" << temp.name << " PRIVATE";
+                    for (const auto& l : lib.link_libraries) cm << " " << l;
+                    cm << ")\n";
+                }
+                if (!lib.compiler_flags.empty()) {
+                    cm << "target_compile_options(" << temp.name << " PRIVATE";
+                    for (const auto& f : lib.compiler_flags) cm << " " << f;
+                    cm << ")\n";
+                }
+                if (!lib.link_directories.empty()) {
+                    cm << "target_link_directories(" << temp.name << " PRIVATE";
+                    for (const auto& d : lib.link_directories) cm << " " << d;
+                    cm << ")\n";
+                }
+            }
+        }
+
+        // ── Source file ───────────────────────────────────────────────────────
+        std::filesystem::path srcFile;
+        if (temp.type == 0) {
+            srcFile = root / "main.cpp";
+            std::ofstream s(srcFile);
+            s << "#include <iostream>\n\n"
+              << "int main() {\n"
+              << "    std::cout << \"Hello, " << temp.name << "!\" << std::endl;\n"
+              << "    return 0;\n"
+              << "}\n";
+        } else {
+            srcFile = root / "library.cpp";
+            std::ofstream s(srcFile);
+            s << "#include <iostream>\n\n"
+              << "void hello() {\n"
+              << "    std::cout << \"Hello from library!\" << std::endl;\n"
+              << "}\n";
+        }
+
+        // ── Open both files in the editor ─────────────────────────────────────
+        m_bufferManager->addBuffer();
+        currentBuffer().filename = srcFile.string();
+        read_file(currentBuffer());
+
+        m_bufferManager->addBuffer();
+        currentBuffer().filename = cmakeFile.string();
+        read_file(currentBuffer());
+
+        handleResize();
+
+    } catch (const std::exception& e) {
+        msgwin("Error creating project: " + std::string(e.what()));
+    }
+}
+
+void TextEditor::AddFileToProject()
+{
+    namespace fs = std::filesystem;
+
+    // Find the project's CMakeLists.txt by searching upward from the current file
+    std::string start;
+    if (!currentBuffer().is_new_file && !currentBuffer().filename.empty())
+        start = fs::path(currentBuffer().filename).parent_path().string();
+    else {
+        char buf[1024];
+        if (getcwd(buf, sizeof(buf))) start = buf;
+    }
+
+    std::string cmake_path = findCMakeLists(start);
+    if (cmake_path.empty()) {
+        msgwin("No CMakeLists.txt found. Open a project file first.");
+        return;
+    }
+
+    std::string project_dir = fs::path(cmake_path).parent_path().string();
+
+    AddFileInfo info;
+    info.is_new    = true;
+    info.filepath  = project_dir + "/newfile.cpp";
+
+    if (!AddFileDialog::show(*m_renderer, project_dir, info))
+        return;
+
+    if (info.filepath.empty()) return;
+
+    try {
+        if (info.is_new) {
+            if (fs::exists(info.filepath)) {
+                if (msgwin_yesno("File already exists. Open it anyway?",
+                                 info.filepath) != 1)
+                    return;
+            } else {
+                // Create the file with a minimal template
+                std::ofstream f(info.filepath);
+                if (!f) { msgwin("Cannot create: " + info.filepath); return; }
+
+                std::string ext = fs::path(info.filepath).extension().string();
+                if (ext == ".h" || ext == ".hpp" || ext == ".hxx") {
+                    std::string stem = fs::path(info.filepath).stem().string();
+                    std::string guard;
+                    for (unsigned char c : stem)
+                        guard += std::isalnum(c) ? (char)std::toupper(c) : '_';
+                    f << "#ifndef " << guard << "_H\n"
+                      << "#define " << guard << "_H\n\n\n\n"
+                      << "#endif // " << guard << "_H\n";
+                } else if (ext == ".cpp" || ext == ".cc" || ext == ".cxx") {
+                    f << "#include <iostream>\n\n";
+                }
+                // Other extensions: leave empty
+            }
+        } else {
+            if (!fs::exists(info.filepath)) {
+                msgwin("File not found: " + info.filepath);
+                return;
+            }
+        }
+
+        // Update CMakeLists.txt
+        bool updated = addFileToCMakeLists(cmake_path, info.filepath);
+
+        // Open the file in the editor
+        m_bufferManager->addBuffer();
+        currentBuffer().filename = info.filepath;
+        read_file(currentBuffer());
+
+        // Reload CMakeLists.txt in the editor if it's currently open
+        for (int i = 0; i < (int)m_bufferManager->bufferCount(); ++i) {
+            auto& buf = m_bufferManager->getBuffer(i);
+            if (buf.filename == cmake_path) {
+                read_file(buf);
+                break;
+            }
+        }
+
+        if (!updated)
+            msgwin("File opened, but CMakeLists.txt could not be updated automatically.");
+
+        handleResize();
+
+    } catch (const std::exception& e) {
+        msgwin("Error: " + std::string(e.what()));
+    }
+}
+
 void TextEditor::DoNew() {
     static int new_file_counter = 0;
     std::string filename;
@@ -1678,10 +1967,14 @@ void TextEditor::ActivateMenuBar(int initial_menu_id) {
 
     MenuAction action;
     std::map<int, std::pair<const std::vector<std::string>*, int>> menus_by_id = {
-        {1, {&m_submenu_file, m_menu_positions[0] - 1}}, {2, {&m_submenu_edit, m_menu_positions[1] - 1}},
-        {3, {&m_submenu_search, m_menu_positions[2] - 1}}, {4, {&m_submenu_build, m_menu_positions[3] - 1}},
-        {5, {&m_submenu_window, m_menu_positions[4] - 1}}, {6, {&m_submenu_options, m_menu_positions[5] - 1}},
-        {7, {&m_submenu_help, help_x}}
+        {1, {&m_submenu_file,    m_menu_positions[0] - 1}},
+        {2, {&m_submenu_edit,    m_menu_positions[1] - 1}},
+        {3, {&m_submenu_search,  m_menu_positions[2] - 1}},
+        {4, {&m_submenu_build,   m_menu_positions[3] - 1}},
+        {5, {&m_submenu_project, m_menu_positions[4] - 1}},
+        {6, {&m_submenu_window,  m_menu_positions[5] - 1}},
+        {7, {&m_submenu_options, m_menu_positions[6] - 1}},
+        {8, {&m_submenu_help,    help_x}}
     };
 
     do {
@@ -1700,7 +1993,19 @@ void TextEditor::ActivateMenuBar(int initial_menu_id) {
 
 MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, int x, int y, int menu_id) {
     std::vector<std::string> finalMenuItems = menuItems;
-    if (menu_id == 5) { // Window menu
+    std::vector<bool> item_disabled(menuItems.size(), false);
+
+    if (menu_id == 5) { // Project — disable "Add File" when no CMakeLists.txt found
+        std::string start;
+        auto& buf = currentBuffer();
+        if (!buf.is_new_file && !buf.filename.empty())
+            start = std::filesystem::path(buf.filename).parent_path().string();
+        else { char cwd[1024]; if (getcwd(cwd, sizeof(cwd))) start = cwd; }
+        if (findCMakeLists(start).empty() && item_disabled.size() > 2)
+            item_disabled[2] = true;
+    }
+
+    if (menu_id == 6) { // Window menu
         finalMenuItems.push_back(" ----------------- ");
         for(size_t i = 0; i < m_bufferManager->bufferCount() && i < 10; ++i) {
             std::string hotkey_num = (i < 9) ? std::to_string(i + 1) : "0";
@@ -1718,6 +2023,7 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
             std::string item = text_part + std::string(padding, ' ') + hotkey_part;
             finalMenuItems.push_back(item);
         }
+        item_disabled.resize(finalMenuItems.size(), false);
     }
 
     int w = 0;
@@ -1753,20 +2059,35 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
             }
             m_renderer->drawText(x + 1, y + 1 + i, std::string(w - 2, ' '), Renderer::CP_MENU_ITEM);
             bool is_selected = (i + 1) == selection;
-            int text_color = is_selected ? Renderer::CP_MENU_SELECTED : Renderer::CP_MENU_ITEM;
+            bool is_disabled = (i < item_disabled.size() && item_disabled[i]);
+            int text_color = is_disabled ? Renderer::CP_DIALOG
+                           : (is_selected ? Renderer::CP_MENU_SELECTED : Renderer::CP_MENU_ITEM);
             m_renderer->drawStyledText(x + 2, y + 1 + i, finalMenuItems[i], text_color);
         }
         m_renderer->refresh();
         ch = m_renderer->getChar();
         switch (ch) {
-        case KEY_UP:   if (selection > 1) selection--; else selection = finalMenuItems.size(); if(finalMenuItems[selection-1].find("---") != std::string::npos) if(selection>1) selection--; else selection = finalMenuItems.size(); break;
-        case KEY_DOWN: if (selection < (int)finalMenuItems.size()) selection++; else selection = 1; if(finalMenuItems[selection-1].find("---") != std::string::npos) if(selection<finalMenuItems.size()) selection++; else selection=1; break;
-        case KEY_LEFT:  copywin(behind, stdscr, 0, 0, y, x, h, w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return NAVIGATE_LEFT;
-        case KEY_RIGHT: copywin(behind, stdscr, 0, 0, y, x, h, w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return NAVIGATE_RIGHT;
-        case KEY_RESIZE: copywin(behind, stdscr, 0, 0, y, x, h, w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return RESIZE_OCCURRED;
-        case 27: copywin(behind, stdscr, 0, 0, y, x, h, w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return CLOSE_MENU;
+        case KEY_UP: {
+            int tries = (int)finalMenuItems.size();
+            do { if (selection > 1) selection--; else selection = finalMenuItems.size(); --tries; }
+            while (tries > 0 && (finalMenuItems[selection-1].find("---") != std::string::npos ||
+                                  (selection-1 < (int)item_disabled.size() && item_disabled[selection-1])));
+            break;
+        }
+        case KEY_DOWN: {
+            int tries = (int)finalMenuItems.size();
+            do { if (selection < (int)finalMenuItems.size()) selection++; else selection = 1; --tries; }
+            while (tries > 0 && (finalMenuItems[selection-1].find("---") != std::string::npos ||
+                                  (selection-1 < (int)item_disabled.size() && item_disabled[selection-1])));
+            break;
+        }
+        case KEY_LEFT:  copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return NAVIGATE_LEFT;
+        case KEY_RIGHT: copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return NAVIGATE_RIGHT;
+        case KEY_RESIZE: copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return RESIZE_OCCURRED;
+        case 27: copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return CLOSE_MENU;
 
         case KEY_ENTER: case 10: case 13:
+            if (selection-1 < (int)item_disabled.size() && item_disabled[selection-1]) break;
         handle_selection:
             delwin(behind); drawEditorState(-1); nodelay(stdscr, TRUE);
             // Re-numbered cases for menu logic
@@ -1795,27 +2116,31 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
                 else if (selection == 4) ActivateReplace();
                 else if (selection == 6) GoToLineDialog();
                 break;
-            case 4: // Build (was 5)
+            case 4: // Build
                 if (selection == 1) compileAndRun();
                 else if (selection == 2) compileOnly();
                 else if (selection == 3) CompileOptionsDialog();
                 break;
-            case 5: // Window (was 6), updated selection logic
-                if (selection == 1) { // New: Output Screen
+            case 5: // Project
+                if (selection == 1) CreateNewProject();
+                else if (selection == 3) AddFileToProject();
+                break;
+            case 6: // Window
+                if (selection == 1) {
                     m_output_screen_visible = !m_output_screen_visible;
                     if (!m_output_screen_visible) handleResize();
                 }
                 else if (selection == 3) NextWindow();
                 else if (selection == 4) PreviousWindow();
                 else if (selection == 5) CloseWindow();
-                else if (selection > 6) { // File list starts after static items + 2 separators
+                else if (selection > 6) {
                     int buffer_idx = selection - 7;
                     if (buffer_idx < (int)m_bufferManager->bufferCount()) SwitchToBuffer(buffer_idx);
                 }
                 break;
-            case 6: // Options
+            case 7: // Options
                 EditorSettingsDialog(); break;
-            case 7: // Help
+            case 8: // Help
                 if (selection == 1) showHelpDialog();
                 else if (selection == 2) AboutBox();
                 break;
@@ -1832,6 +2157,7 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
                         wchar_t hotkey = tolower(finalMenuItems[i][amp_pos + 1]);
                         if (lower_ch == hotkey) {
                             if(finalMenuItems[i].find("---") != std::string::npos) continue;
+                            if(i < item_disabled.size() && item_disabled[i]) continue;
                             selection = i + 1;
                             goto handle_selection;
                         }
