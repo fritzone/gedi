@@ -50,6 +50,99 @@ CompilationResult BuildSystem::runCompilationProcess(EditorBuffer& buffer) {
     return result;
 }
 
+// ── settingsToFlags ───────────────────────────────────────────────────────────
+
+std::string BuildSystem::settingsToFlags(const CompilerSettings& s)
+{
+    std::string f;
+    if (s.debug_symbols)         f += "-g ";
+    if (s.optimization_level==0) f += "-O0 ";
+    else if (s.optimization_level==1) f += "-O2 ";
+    else if (s.optimization_level==2) f += "-O3 ";
+    if (s.wall)            f += "-Wall ";
+    if (s.wextra)          f += "-Wextra ";
+    if (s.wpedantic)       f += "-Wpedantic ";
+    if (s.werror)          f += "-Werror ";
+    if (s.wconversion)     f += "-Wconversion ";
+    if (s.wsign_conversion)f += "-Wsign-conversion ";
+    if (s.wshadow)         f += "-Wshadow ";
+    if (s.wnon_virtual_dtor)  f += "-Wnon-virtual-dtor ";
+    if (s.wold_style_cast) f += "-Wold-style-cast ";
+    if (s.woverloaded_virtual) f += "-Woverloaded-virtual ";
+    if (s.wnull_dereference)   f += "-Wnull-dereference ";
+    if (s.wdouble_promotion)   f += "-Wdouble-promotion ";
+    if (s.wformat_2)       f += "-Wformat=2 ";
+    if (s.fno_omit_frame_pointer) f += "-fno-omit-frame-pointer ";
+    if (s.fsanitize_address_ub)   f += "-fsanitize=address,undefined ";
+    if (s.fsanitize_leak)  f += "-fsanitize=leak ";
+    if (s.flto)            f += "-flto ";
+    if (s.march_native)    f += "-march=native ";
+    if (s.mtune_native)    f += "-mtune=native ";
+    if (s.wcast_align)     f += "-Wcast-align ";
+    if (s.wcast_qual)      f += "-Wcast-qual ";
+    if (s.wswitch_enum)    f += "-Wswitch-enum ";
+    if (s.wundef)          f += "-Wundef ";
+    if (s.wredundant_decls)f += "-Wredundant-decls ";
+    if (s.wlogical_op)     f += "-Wlogical-op ";
+    if (s.wuseless_cast)   f += "-Wuseless-cast ";
+    if (s.weffcxx)         f += "-Weffc++ ";
+    if (s.fno_exceptions)  f += "-fno-exceptions ";
+    if (s.fno_rtti)        f += "-fno-rtti ";
+    if (s.fvisibility_hidden) f += "-fvisibility=hidden ";
+    if (s.fstrict_aliasing)   f += "-fstrict-aliasing ";
+    if (s.fsanitize_pointer_compare)  f += "-fsanitize=pointer-compare ";
+    if (s.fsanitize_pointer_subtract) f += "-fsanitize=pointer-subtract ";
+    if (s.wl_as_needed)    f += "-Wl,--as-needed ";
+    if (s.wl_o1)           f += "-Wl,-O1 ";
+    if (!s.optional_flags.empty()) f += s.optional_flags + " ";
+    if (!f.empty() && f.back() == ' ') f.pop_back();
+    return f;
+}
+
+// ── buildProjectPreview ───────────────────────────────────────────────────────
+
+std::string BuildSystem::buildProjectPreview(const GediProject& project, const CompilerSettings& s)
+{
+    const std::string& root = project.root;
+    std::string std_num = s.cpp_standard;
+    if (std_num.rfind("c++", 0) == 0) std_num = std_num.substr(3);
+
+    // cmake build type
+    std::string bt;
+    if (s.debug_symbols && s.optimization_level == 0)  bt = "Debug";
+    else if (s.debug_symbols && s.optimization_level > 0) bt = "RelWithDebInfo";
+    else if (s.optimization_level == 2) bt = "Release";
+    else bt = "Debug";
+
+    std::string flags = settingsToFlags(s);
+
+    if (project.build_system == "cmake") {
+        std::string build_dir = root + "/build";
+        std::string args;
+        args += " -DCMAKE_BUILD_TYPE=" + bt;
+        args += " -DCMAKE_CXX_STANDARD=" + std_num;
+        if (!flags.empty()) args += " \"-DCMAKE_CXX_FLAGS=" + flags + "\"";
+        return "cmake -S \"" + root + "\" -B \"" + build_dir + "\"" + args + "\n"
+             + "cmake --build \"" + build_dir + "\"";
+    }
+    if (project.build_system == "make") {
+        std::string cxxflags = "-std=" + s.cpp_standard;
+        if (!flags.empty()) cxxflags += " " + flags;
+        return "make -C \"" + root + "\" CXXFLAGS=\"" + cxxflags + "\"";
+    }
+    if (project.build_system == "meson") {
+        std::string build_dir = root + "/builddir";
+        std::string buildtype = (bt == "Release") ? "release" : "debug";
+        std::string cxxflags = "-std=" + s.cpp_standard;
+        if (!flags.empty()) cxxflags += " " + flags;
+        return "meson setup \"" + build_dir + "\" \"" + root + "\" --buildtype=" + buildtype + "\n"
+             + "CXXFLAGS=\"" + cxxflags + "\" ninja -C \"" + build_dir + "\"";
+    }
+    return "(unknown build system: " + project.build_system + ")";
+}
+
+// ── runProjectBuild ───────────────────────────────────────────────────────────
+
 CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
     CompilationResult result;
     result.success = false;
@@ -80,8 +173,22 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
 
     result.output_lines.push_back("=== Building project: " + project.name + " ===");
 
+    const CompilerSettings& cs = project.compiler_settings;
+
+    // cmake build type string
+    std::string bt;
+    if (cs.debug_symbols && cs.optimization_level == 0)  bt = "Debug";
+    else if (cs.debug_symbols && cs.optimization_level > 0) bt = "RelWithDebInfo";
+    else if (cs.optimization_level == 2) bt = "Release";
+    else bt = "Debug";
+
+    std::string std_num = cs.cpp_standard;
+    if (std_num.rfind("c++", 0) == 0) std_num = std_num.substr(3);
+
+    std::string extra_flags = settingsToFlags(cs);
+
     if (project.build_system == "cmake") {
-        // Locate existing configured build directory
+        // Locate or create build directory
         for (const char* candidate : {"build", "cmake-build-debug", "cmake-build-release"}) {
             std::string d = root + "/" + candidate;
             if (std::filesystem::exists(d + "/CMakeCache.txt")) { build_dir = d; break; }
@@ -89,31 +196,45 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
         if (build_dir.empty()) {
             build_dir = root + "/build";
             result.output_lines.push_back("No CMake build directory found — configuring...");
-            if (!run_cmd("cmake -S \"" + root + "\" -B \"" + build_dir + "\" 2>&1")) {
-                result.output_lines.push_back("=== CMake configure failed ===");
-                return result;
-            }
-            result.output_lines.push_back("");
         }
+        // Always (re)configure so setting changes are picked up
+        std::string cmake_args;
+        cmake_args += " -DCMAKE_BUILD_TYPE=" + bt;
+        cmake_args += " -DCMAKE_CXX_STANDARD=" + std_num;
+        if (!extra_flags.empty())
+            cmake_args += " \"-DCMAKE_CXX_FLAGS=" + extra_flags + "\"";
+        if (!run_cmd("cmake -S \"" + root + "\" -B \"" + build_dir + "\"" + cmake_args + " 2>&1")) {
+            result.output_lines.push_back("=== CMake configure failed ===");
+            return result;
+        }
+        result.output_lines.push_back("");
         build_cmd = "cmake --build \"" + build_dir + "\" 2>&1";
         result.executable_name = build_dir + "/" + project.name;
 
     } else if (project.build_system == "make") {
-        build_dir  = root;
-        build_cmd  = "make -C \"" + root + "\" 2>&1";
+        build_dir = root;
+        std::string cxxflags = "-std=" + cs.cpp_standard;
+        if (!extra_flags.empty()) cxxflags += " " + extra_flags;
+        build_cmd = "make -C \"" + root + "\" CXXFLAGS=\"" + cxxflags + "\" 2>&1";
         result.executable_name = root + "/" + project.name;
 
     } else if (project.build_system == "meson") {
         build_dir = root + "/builddir";
+        std::string buildtype = (bt == "Release") ? "release" : "debug";
         if (!std::filesystem::exists(build_dir + "/build.ninja")) {
             result.output_lines.push_back("No Meson build directory found — setting up...");
-            if (!run_cmd("meson setup \"" + build_dir + "\" \"" + root + "\" 2>&1")) {
+            if (!run_cmd("meson setup \"" + build_dir + "\" \"" + root + "\" --buildtype=" + buildtype + " 2>&1")) {
                 result.output_lines.push_back("=== Meson setup failed ===");
                 return result;
             }
             result.output_lines.push_back("");
+        } else {
+            // Update build type if project already configured
+            run_cmd("meson configure \"" + build_dir + "\" --buildtype=" + buildtype + " 2>&1");
         }
-        build_cmd = "ninja -C \"" + build_dir + "\" 2>&1";
+        std::string cxxflags = "-std=" + cs.cpp_standard;
+        if (!extra_flags.empty()) cxxflags += " " + extra_flags;
+        build_cmd = "CXXFLAGS=\"" + cxxflags + "\" ninja -C \"" + build_dir + "\" 2>&1";
         result.executable_name = build_dir + "/" + project.name;
 
     } else {

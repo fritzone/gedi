@@ -18,6 +18,7 @@ enum EditorAction {
     ACT_NEXT_BUFFER, ACT_PREV_BUFFER, ACT_CLOSE_BUFFER,
     ACT_SETTINGS, ACT_HELP, ACT_ABOUT, ACT_TOGGLE_COMMENT,
     ACT_TOGGLE_PROJECT_PANEL, ACT_CLOSE_PROJECT,
+    ACT_PROJECT_PROPERTIES,
     ACT_UNKNOWN
 };
 
@@ -63,7 +64,8 @@ class KeyBindings {
         ActionMapping{ACT_TOGGLE_COMMENT, "toggle_comment"},
         ActionMapping{ACT_GO_TO_DEFINITION, "go_to_definition"},
         ActionMapping{ACT_TOGGLE_PROJECT_PANEL, "toggle_project_panel"},
-        ActionMapping{ACT_CLOSE_PROJECT,        "close_project"}
+        ActionMapping{ACT_CLOSE_PROJECT,        "close_project"},
+        ActionMapping{ACT_PROJECT_PROPERTIES,   "project_properties"}
     };
 
 public:

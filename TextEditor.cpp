@@ -1,6 +1,7 @@
 #include "TextEditor.h"
 #include "SyntaxHighlighter.h"
 #include "FileBrowser.h"
+#include "PickTargetDialog.h"
 #include "utils.h"
 
 #include <ncurses.h>
@@ -545,11 +546,12 @@ void TextEditor::updateMenuLabels() {
     };
 
     m_submenu_project = {
-        formatMenuItem("New &Project...",         ACT_NEW_PROJECT),
-        formatMenuItem("&Open Project...",        ACT_OPEN_PROJECT),
-        formatMenuItem("&Close Project",          ACT_CLOSE_PROJECT),
-        " -------------- ",
-        formatMenuItem("Add &File to Project...", ACT_ADD_FILE)
+        formatMenuItem("New &Project...",           ACT_NEW_PROJECT),        // sel 1
+        formatMenuItem("&Open Project...",          ACT_OPEN_PROJECT),       // sel 2
+        formatMenuItem("Project &Properties...",    ACT_PROJECT_PROPERTIES), // sel 3
+        formatMenuItem("&Close Project",            ACT_CLOSE_PROJECT),      // sel 4
+        " -------------- ",                                                    // sel 5
+        formatMenuItem("Add &File to Project...",   ACT_ADD_FILE)            // sel 6
     };
 
     m_submenu_edit = {
@@ -1996,7 +1998,14 @@ void TextEditor::CreateNewProject()
         m_project.root         = root.string();
         m_project.build_system = bs_names[temp.build_system];
         m_project.cpp_standard = temp.cpp_standard;
-        if (temp.create_main) m_project.sources = {"main.cpp"};
+        m_project.compiler_settings.cpp_standard = temp.cpp_standard;
+        if (temp.create_main) {
+            ProjectTarget t;
+            t.name    = temp.name;
+            t.type    = "executable";
+            t.sources = {"main.cpp"};
+            m_project.targets.push_back(t);
+        }
         m_project.libraries    = temp.selected_libraries;
         m_project.save();
 
@@ -2037,13 +2046,15 @@ void TextEditor::OpenProject()
     }
     m_project = std::move(proj);
 
-    // Open every tracked source file
-    for (const auto& src : m_project.sources) {
-        std::string full = (fs::path(m_project.root) / src).string();
-        if (fs::exists(full)) {
-            m_bufferManager->addBuffer();
-            currentBuffer().filename = full;
-            read_file(currentBuffer());
+    // Open every tracked source file (from targets)
+    for (const auto& tgt : m_project.targets) {
+        for (const auto& src : tgt.sources) {
+            std::string full = (fs::path(m_project.root) / src).string();
+            if (fs::exists(full)) {
+                m_bufferManager->addBuffer();
+                currentBuffer().filename = full;
+                read_file(currentBuffer());
+            }
         }
     }
 
@@ -2287,18 +2298,31 @@ void TextEditor::AddFileToProject()
         try { rel = fs::relative(info.filepath, m_project.root).string(); }
         catch (...) { rel = info.filepath; }
 
-        // Add to project sources if not already tracked
+        // Ensure there is at least one target
+        if (m_project.targets.empty()) {
+            ProjectTarget t;
+            t.name = m_project.name;
+            t.type = "executable";
+            m_project.targets.push_back(t);
+        }
+
+        // Pick target (auto-select if only one)
+        int target_idx = pickTarget("add file");
+        if (target_idx < 0) return;
+
+        // Add to project target sources if not already tracked
         bool already = false;
-        for (const auto& s : m_project.sources)
+        for (const auto& s : m_project.targets[target_idx].sources)
             if (s == rel) { already = true; break; }
         if (!already) {
-            m_project.sources.push_back(rel);
+            m_project.targets[target_idx].sources.push_back(rel);
             m_project.save();
         }
 
         // Update the build file
         bool build_ok = false;
         std::string build_file;
+        std::string target_name = m_project.targets[target_idx].name;
         if (m_project.build_system == "cmake") {
             build_file = (fs::path(m_project.root) / "CMakeLists.txt").string();
             build_ok   = addFileToCMakeLists(build_file, info.filepath);
@@ -2309,6 +2333,7 @@ void TextEditor::AddFileToProject()
             build_file = (fs::path(m_project.root) / "meson.build").string();
             build_ok   = addFileToMesonBuild(m_project.root, rel);
         }
+        (void)target_name;
 
         // Reload the build file in the editor if it is currently open
         if (!build_file.empty()) {
@@ -2402,10 +2427,11 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
     std::vector<std::string> finalMenuItems = menuItems;
     std::vector<bool> item_disabled(menuItems.size(), false);
 
-    if (menu_id == 5) { // Project — disable Close/Add when no project is loaded
+    if (menu_id == 5) { // Project — disable certain items when no project is loaded
         bool no_project = m_project.name.empty();
-        if (no_project && item_disabled.size() > 2) item_disabled[2] = true; // Close Project
-        if (no_project && item_disabled.size() > 4) item_disabled[4] = true; // Add File
+        if (no_project && item_disabled.size() > 2) item_disabled[2] = true; // Project Properties
+        if (no_project && item_disabled.size() > 3) item_disabled[3] = true; // Close Project
+        if (no_project && item_disabled.size() > 5) item_disabled[5] = true; // Add File
     }
 
     if (menu_id == 6) { // Window menu
@@ -2527,8 +2553,9 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
             case 5: // Project
                 if (selection == 1) CreateNewProject();
                 else if (selection == 2) OpenProject();
-                else if (selection == 3) CloseProject();
-                else if (selection == 5) AddFileToProject();
+                else if (selection == 3) ProjectProperties();
+                else if (selection == 4) CloseProject();
+                else if (selection == 6) AddFileToProject();
                 break;
             case 6: // Window
                 if (selection == 1) {
@@ -3119,8 +3146,19 @@ void TextEditor::GoToLineDialog() {
 }
 
 void TextEditor::CompileOptionsDialog() {
-    if (currentBufferIdx() == -1) return;
-    CompileOptionsDialog::show(*m_renderer, *m_buildSystem, currentBuffer());
+    if (!m_project.name.empty()) {
+        // Project mode: settings belong to the project, preview shows cmake/make/meson command
+        CompileOptionsDialog::show(*m_renderer, *m_buildSystem,
+                                   m_project.compiler_settings, &m_project, "");
+        m_project.cpp_standard = m_project.compiler_settings.cpp_standard;  // keep legacy field in sync
+        m_project.save();
+    } else {
+        if (currentBufferIdx() == -1) return;
+        // Per-file mode: settings belong to the current buffer
+        CompileOptionsDialog::show(*m_renderer, *m_buildSystem,
+                                   currentBuffer().compiler_settings, nullptr,
+                                   currentBuffer().filename);
+    }
 }
 
 void TextEditor::AboutBox() {
@@ -3154,6 +3192,45 @@ void TextEditor::ToggleProjectPanel() {
     handleResize();
 }
 
+std::vector<PanelEntry> TextEditor::buildPanelEntries() const
+{
+    std::vector<PanelEntry> entries;
+
+    // Build file at the top
+    std::string build_name;
+    if      (m_project.build_system == "cmake") build_name = "CMakeLists.txt";
+    else if (m_project.build_system == "make")  build_name = "Makefile";
+    else if (m_project.build_system == "meson") build_name = "meson.build";
+    if (!build_name.empty()) {
+        PanelEntry e;
+        e.kind    = PanelEntry::BUILD_FILE;
+        e.display = build_name;
+        entries.push_back(std::move(e));
+    }
+
+    // One TARGET_HEADER + SOURCE_FILE entries per target
+    for (int ti = 0; ti < (int)m_project.targets.size(); ++ti) {
+        const auto& tgt = m_project.targets[ti];
+        PanelEntry hdr;
+        hdr.kind       = PanelEntry::TARGET_HEADER;
+        hdr.target_idx = ti;
+        std::string abbr = (tgt.type == "executable")     ? "exe" :
+                           (tgt.type == "static_library")  ? "lib" : "dll";
+        hdr.display = tgt.name + " [" + abbr + "]";
+        entries.push_back(std::move(hdr));
+
+        for (int si = 0; si < (int)tgt.sources.size(); ++si) {
+            PanelEntry src;
+            src.kind       = PanelEntry::SOURCE_FILE;
+            src.target_idx = ti;
+            src.source_idx = si;
+            src.display    = tgt.sources[si];
+            entries.push_back(std::move(src));
+        }
+    }
+    return entries;
+}
+
 void TextEditor::drawProjectPanel() {
     namespace fs = std::filesystem;
 
@@ -3170,16 +3247,9 @@ void TextEditor::drawProjectPanel() {
                                  Renderer::CP_DIALOG_TITLE,
                                  title_flags);
 
-    // Build display list: build file first, then sources
-    std::vector<std::string> panel_list;
-    std::string build_name;
-    if      (m_project.build_system == "cmake") build_name = "CMakeLists.txt";
-    else if (m_project.build_system == "make")  build_name = "Makefile";
-    else if (m_project.build_system == "meson") build_name = "meson.build";
-    if (!build_name.empty()) panel_list.push_back(build_name);
-    for (const auto& s : m_project.sources) panel_list.push_back(s);
+    auto entries = buildPanelEntries();
 
-    if (panel_list.empty()) {
+    if (entries.empty()) {
         std::string msg = "No files";
         int mx = (PANEL_W - (int)msg.length()) / 2;
         m_renderer->drawText(mx, panel_y + 1, msg, Renderer::CP_DEFAULT_TEXT);
@@ -3188,28 +3258,54 @@ void TextEditor::drawProjectPanel() {
 
     for (int i = 0; i < visible_count; ++i) {
         int idx = m_project_panel_scroll + i;
-        if (idx >= (int)panel_list.size()) break;
+        if (idx >= (int)entries.size()) break;
 
-        int row_y      = panel_y + 1 + i;
+        int  row_y     = panel_y + 1 + i;
         bool is_cursor = m_project_panel_focused && (idx == m_project_panel_cursor);
+        const PanelEntry& e = entries[idx];
 
-        std::string display = fs::path(panel_list[idx]).filename().string();
+        std::string display;
+        int pair = is_cursor ? Renderer::CP_HIGHLIGHT : Renderer::CP_DEFAULT_TEXT;
+        int attr = A_NORMAL;
+
+        if (e.kind == PanelEntry::TARGET_HEADER) {
+            display = "- " + e.display;
+            if (!is_cursor) {
+                pair = Renderer::CP_DIALOG_TITLE;
+                attr = A_BOLD;
+            } else {
+                attr = A_BOLD;
+            }
+        } else if (e.kind == PanelEntry::SOURCE_FILE) {
+            display = "  " + fs::path(e.display).filename().string();
+            if (is_cursor) attr = A_BOLD;
+        } else {
+            display = fs::path(e.display).filename().string();
+            if (is_cursor) attr = A_BOLD;
+        }
+
         if ((int)display.length() > inner_w)
             display = display.substr(0, inner_w);
         display += std::string(inner_w - (int)display.length(), ' ');
 
-        int pair = is_cursor ? Renderer::CP_HIGHLIGHT : Renderer::CP_DEFAULT_TEXT;
-        int attr = is_cursor ? A_BOLD : A_NORMAL;
         m_renderer->drawText(1, row_y, display, pair, attr);
     }
 
     // Scroll indicator
-    if ((int)panel_list.size() > visible_count) {
+    if ((int)entries.size() > visible_count) {
         std::string ind = std::to_string(m_project_panel_cursor + 1) + "/" +
-                          std::to_string((int)panel_list.size());
+                          std::to_string((int)entries.size());
         if ((int)ind.length() > inner_w) ind = ind.substr(0, inner_w);
         m_renderer->drawText(PANEL_W - 1 - (int)ind.length(),
                              panel_y + panel_h - 1, ind,
+                             Renderer::CP_STATUS_BAR);
+    }
+
+    // Footer hint on bottom border
+    if (m_project_panel_focused) {
+        const std::string hint = " M=Move Del=Remove ";
+        m_renderer->drawText((PANEL_W - (int)hint.length()) / 2,
+                             panel_y + panel_h - 1, hint,
                              Renderer::CP_STATUS_BAR);
     }
 
@@ -3230,16 +3326,8 @@ void TextEditor::handleProjectPanelKey(wint_t ch) {
         return;
     }
 
-    // Build same list as drawProjectPanel so counts stay in sync
-    std::vector<std::string> panel_list;
-    std::string build_name;
-    if      (m_project.build_system == "cmake") build_name = "CMakeLists.txt";
-    else if (m_project.build_system == "make")  build_name = "Makefile";
-    else if (m_project.build_system == "meson") build_name = "meson.build";
-    if (!build_name.empty()) panel_list.push_back(build_name);
-    for (const auto& s : m_project.sources) panel_list.push_back(s);
-
-    int count         = (int)panel_list.size();
+    auto entries = buildPanelEntries();
+    int count         = (int)entries.size();
     int panel_h       = m_text_area_end_y - m_text_area_start_y + 3;
     int visible_count = panel_h - 2;
 
@@ -3265,34 +3353,117 @@ void TextEditor::handleProjectPanelKey(wint_t ch) {
             openProjectPanelFile(m_project_panel_cursor);
         break;
     case KEY_DC: {
-        // The build file (first entry) cannot be removed from the project
-        int src_offset = build_name.empty() ? 0 : 1;
-        if (m_project_panel_cursor < src_offset) {
+        if (m_project_panel_cursor >= count) break;
+        const PanelEntry& e = entries[m_project_panel_cursor];
+
+        if (e.kind == PanelEntry::BUILD_FILE) {
             msgwin("The build file cannot be removed from the project.");
             break;
         }
-        int src_idx = m_project_panel_cursor - src_offset;
-        if (src_idx >= (int)m_project.sources.size()) break;
 
-        const std::string& rel = m_project.sources[src_idx];
-        if (msgwin_yesno("Remove '" + std::filesystem::path(rel).filename().string() + "' from project?",
-                         "The file will not be deleted from disk.") != 1)
+        if (e.kind == PanelEntry::TARGET_HEADER) {
+            const auto& tgt = m_project.targets[e.target_idx];
+            if (msgwin_yesno("Remove target '" + tgt.name + "' and all its sources?",
+                             "Sources will not be deleted from disk.") != 1)
+                break;
+            m_project.targets.erase(m_project.targets.begin() + e.target_idx);
+            m_project.save();
+            regenerateBuildFile();
+            // Reload build file buffer if open
+            std::string build_file_name =
+                m_project.build_system == "cmake" ? "CMakeLists.txt" :
+                m_project.build_system == "make"  ? "Makefile" : "meson.build";
+            std::string bfp = (std::filesystem::path(m_project.root) / build_file_name).string();
+            for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
+                if (m_bufferManager->getBuffer(i).filename == bfp) {
+                    read_file(m_bufferManager->getBuffer(i)); break;
+                }
+            }
+            int new_count = (int)buildPanelEntries().size();
+            if (m_project_panel_cursor >= new_count && m_project_panel_cursor > 0)
+                m_project_panel_cursor--;
+            if (m_project_panel_scroll > m_project_panel_cursor)
+                m_project_panel_scroll = m_project_panel_cursor;
             break;
+        }
 
-        // Update the build file (best effort)
-        if (m_project.build_system == "cmake")
-            removeFileFromCMakeLists(
-                (std::filesystem::path(m_project.root) / "CMakeLists.txt").string(), rel);
-        else if (m_project.build_system == "make")
-            removeFileFromMakefile(m_project.root, rel);
-        else if (m_project.build_system == "meson")
-            removeFileFromMesonBuild(m_project.root, rel);
+        // SOURCE_FILE
+        {
+            int ti  = e.target_idx;
+            int si  = e.source_idx;
+            if (ti < 0 || ti >= (int)m_project.targets.size()) break;
+            if (si < 0 || si >= (int)m_project.targets[ti].sources.size()) break;
 
-        m_project.sources.erase(m_project.sources.begin() + src_idx);
+            const std::string& rel = m_project.targets[ti].sources[si];
+            if (msgwin_yesno("Remove '" + std::filesystem::path(rel).filename().string() + "' from project?",
+                             "The file will not be deleted from disk.") != 1)
+                break;
+
+            // Update the build file on disk (best effort)
+            std::string build_file_path;
+            if (m_project.build_system == "cmake") {
+                build_file_path = (std::filesystem::path(m_project.root) / "CMakeLists.txt").string();
+                removeFileFromCMakeLists(build_file_path, rel);
+            } else if (m_project.build_system == "make") {
+                build_file_path = (std::filesystem::path(m_project.root) / "Makefile").string();
+                removeFileFromMakefile(m_project.root, rel);
+            } else if (m_project.build_system == "meson") {
+                build_file_path = (std::filesystem::path(m_project.root) / "meson.build").string();
+                removeFileFromMesonBuild(m_project.root, rel);
+            }
+
+            // Reload the build file in any open buffer
+            if (!build_file_path.empty()) {
+                for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
+                    EditorBuffer& buf = m_bufferManager->getBuffer(i);
+                    if (buf.filename == build_file_path) { read_file(buf); break; }
+                }
+            }
+
+            m_project.targets[ti].sources.erase(m_project.targets[ti].sources.begin() + si);
+            m_project.save();
+
+            // Clamp cursor
+            int new_count = (int)buildPanelEntries().size();
+            if (m_project_panel_cursor >= new_count && m_project_panel_cursor > 0)
+                m_project_panel_cursor--;
+            if (m_project_panel_scroll > m_project_panel_cursor)
+                m_project_panel_scroll = m_project_panel_cursor;
+        }
+        break;
+    }
+    case 'm': case 'M': {
+        if (m_project_panel_cursor >= count) break;
+        const PanelEntry& e = entries[m_project_panel_cursor];
+        if (e.kind != PanelEntry::SOURCE_FILE) break;
+        int from_ti = e.target_idx;
+        int from_si = e.source_idx;
+        if (from_ti < 0 || from_si < 0) break;
+        if (from_ti >= (int)m_project.targets.size()) break;
+        if (from_si >= (int)m_project.targets[from_ti].sources.size()) break;
+
+        int to_ti = pickTarget("move to", from_ti);
+        if (to_ti < 0) break;
+
+        const std::string rel = m_project.targets[from_ti].sources[from_si];
+        m_project.targets[from_ti].sources.erase(
+            m_project.targets[from_ti].sources.begin() + from_si);
+        m_project.targets[to_ti].sources.push_back(rel);
         m_project.save();
+        regenerateBuildFile();
 
-        // Clamp cursor to the new list size
-        int new_count = (int)m_project.sources.size() + src_offset;
+        // Reload build file buffer if open
+        std::string build_file_name =
+            m_project.build_system == "cmake" ? "CMakeLists.txt" :
+            m_project.build_system == "make"  ? "Makefile" : "meson.build";
+        std::string bfp = (std::filesystem::path(m_project.root) / build_file_name).string();
+        for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
+            if (m_bufferManager->getBuffer(i).filename == bfp) {
+                read_file(m_bufferManager->getBuffer(i)); break;
+            }
+        }
+
+        int new_count = (int)buildPanelEntries().size();
         if (m_project_panel_cursor >= new_count && m_project_panel_cursor > 0)
             m_project_panel_cursor--;
         if (m_project_panel_scroll > m_project_panel_cursor)
@@ -3314,17 +3485,22 @@ void TextEditor::handleProjectPanelKey(wint_t ch) {
 void TextEditor::openProjectPanelFile(int index) {
     namespace fs = std::filesystem;
 
-    // Build the same list used by drawProjectPanel / handleProjectPanelKey
-    std::vector<std::string> panel_list;
-    std::string build_name;
-    if      (m_project.build_system == "cmake") build_name = "CMakeLists.txt";
-    else if (m_project.build_system == "make")  build_name = "Makefile";
-    else if (m_project.build_system == "meson") build_name = "meson.build";
-    if (!build_name.empty()) panel_list.push_back(build_name);
-    for (const auto& s : m_project.sources) panel_list.push_back(s);
+    auto entries = buildPanelEntries();
+    if (index < 0 || index >= (int)entries.size()) return;
+    const PanelEntry& e = entries[index];
 
-    if (index < 0 || index >= (int)panel_list.size()) return;
-    std::string full = (fs::path(m_project.root) / panel_list[index]).string();
+    // TARGET_HEADER entries don't open a file — just ignore
+    if (e.kind == PanelEntry::TARGET_HEADER) return;
+
+    std::string rel;
+    if (e.kind == PanelEntry::BUILD_FILE) {
+        rel = e.display;
+    } else {
+        // SOURCE_FILE: use the relative path stored in the entry
+        rel = e.display;
+    }
+
+    std::string full = (fs::path(m_project.root) / rel).string();
 
     for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
         if (m_bufferManager->getBuffer(i).filename == full) {
@@ -3346,4 +3522,163 @@ void TextEditor::openProjectPanelFile(int index) {
     m_project_panel_focused = false;
     m_renderer->showCursor();
     handleResize();
+}
+
+int TextEditor::pickTarget(const std::string& action_label, int exclude_idx)
+{
+    return PickTargetDialog::show(*m_renderer, m_project.targets,
+                                  "Select Target", exclude_idx);
+}
+
+void TextEditor::regenerateBuildFile()
+{
+    namespace fs = std::filesystem;
+    if (m_project.root.empty()) return;
+
+    const std::string& root = m_project.root;
+    std::string std_num = m_project.compiler_settings.cpp_standard;
+    if (std_num.rfind("c++", 0) == 0) std_num = std_num.substr(3);
+
+    if (m_project.build_system == "cmake") {
+        std::ofstream f(root + "/CMakeLists.txt");
+        if (!f) return;
+        f << "cmake_minimum_required(VERSION 3.10)\n"
+          << "project(" << m_project.name << ")\n\n"
+          << "set(CMAKE_CXX_STANDARD " << std_num << ")\n"
+          << "set(CMAKE_CXX_STANDARD_REQUIRED ON)\n\n";
+
+        if (!m_project.libraries.empty()) {
+            f << "find_package(PkgConfig REQUIRED)\n";
+            for (const auto& lib : m_project.libraries)
+                f << lib.cmake_find_package_hint << "\n";
+            f << "\n";
+        }
+
+        for (const auto& tgt : m_project.targets) {
+            if (tgt.type == "executable") {
+                f << "add_executable(" << tgt.name;
+            } else if (tgt.type == "static_library") {
+                f << "add_library(" << tgt.name << " STATIC";
+            } else {
+                f << "add_library(" << tgt.name << " SHARED";
+            }
+            for (const auto& src : tgt.sources)
+                f << "\n    " << src;
+            f << ")\n";
+
+            // Include dirs and compiler flags per library
+            for (const auto& lib : m_project.libraries) {
+                if (!lib.include_directories.empty()) {
+                    f << "target_include_directories(" << tgt.name << " PRIVATE";
+                    for (const auto& d : lib.include_directories) f << " " << d;
+                    f << ")\n";
+                }
+                if (!lib.compiler_flags.empty()) {
+                    f << "target_compile_options(" << tgt.name << " PRIVATE";
+                    for (const auto& fl : lib.compiler_flags) f << " " << fl;
+                    f << ")\n";
+                }
+                if (!lib.link_directories.empty()) {
+                    f << "target_link_directories(" << tgt.name << " PRIVATE";
+                    for (const auto& d : lib.link_directories) f << " " << d;
+                    f << ")\n";
+                }
+            }
+            // Consolidated link line: project-target deps first, then system libs
+            {
+                std::vector<std::string> all_links(tgt.link_targets);
+                for (const auto& lib : m_project.libraries)
+                    for (const auto& l : lib.link_libraries)
+                        all_links.push_back(l);
+                if (!all_links.empty()) {
+                    f << "target_link_libraries(" << tgt.name << " PRIVATE";
+                    for (const auto& l : all_links) f << " " << l;
+                    f << ")\n";
+                }
+            }
+            f << "\n";
+        }
+
+    } else if (m_project.build_system == "make") {
+        std::ofstream f(root + "/Makefile");
+        if (!f) return;
+        f << "CXX = g++\n"
+          << "CXXFLAGS = -std=" << m_project.compiler_settings.cpp_standard << " -Wall -Wextra\n\n"
+          << "all:";
+        for (const auto& t : m_project.targets) f << " " << t.name;
+        f << "\n\n";
+        for (const auto& t : m_project.targets) {
+            std::string objs;
+            for (const auto& s : t.sources) {
+                auto stem = fs::path(s).stem().string();
+                objs += stem + ".o ";
+            }
+            f << t.name << ": " << objs << "\n"
+              << "\t$(CXX) $(CXXFLAGS) -o $@ $^\n\n";
+            for (const auto& s : t.sources) {
+                auto stem = fs::path(s).stem().string();
+                f << stem << ".o: " << s << "\n"
+                  << "\t$(CXX) $(CXXFLAGS) -c $<\n\n";
+            }
+        }
+        f << "clean:\n\trm -f *.o";
+        for (const auto& t : m_project.targets) f << " " << t.name;
+        f << "\n.PHONY: all clean\n";
+
+    } else if (m_project.build_system == "meson") {
+        std::ofstream f(root + "/meson.build");
+        if (!f) return;
+        f << "project('" << m_project.name << "', 'cpp',\n"
+          << "  default_options: ['cpp_std=" << m_project.compiler_settings.cpp_standard << "'])\n\n";
+        for (const auto& t : m_project.targets) {
+            std::string fn = (t.type == "executable")    ? "executable" :
+                             (t.type == "static_library") ? "static_library" : "shared_library";
+            f << fn << "('" << t.name << "',\n  sources: [";
+            bool first = true;
+            for (const auto& s : t.sources) {
+                if (!first) f << ", ";
+                f << "'" << s << "'";
+                first = false;
+            }
+            f << "])\n\n";
+        }
+    }
+}
+
+void TextEditor::ProjectProperties()
+{
+    if (m_project.name.empty()) return;
+
+    // Ensure library cache is populated (same wait logic as CreateNewProject)
+    if (!m_libs_cached) {
+        if (m_lib_future.valid()) {
+            int w = m_renderer->getWidth(), h = m_renderer->getHeight();
+            const std::string wait_msg = " Waiting for library scan... ";
+            m_renderer->drawText((w - (int)wait_msg.size()) / 2, h - 1,
+                                 wait_msg, Renderer::CP_STATUS_BAR_HIGHLIGHT);
+            m_renderer->refresh();
+            m_cached_libs = m_lib_future.get();
+        }
+        m_libs_cached = true;
+    }
+
+    GediProject proj_copy = m_project;
+    std::vector<LibraryInfo> all_libs = m_cached_libs;
+
+    if (ProjectPropertiesDialog::show(*m_renderer, proj_copy, all_libs)) {
+        m_project = proj_copy;
+        m_project.save();
+        regenerateBuildFile();
+
+        // Reload build file buffer if open
+        std::string build_file_name =
+            m_project.build_system == "cmake" ? "CMakeLists.txt" :
+            m_project.build_system == "make"  ? "Makefile" : "meson.build";
+        std::string bfp = (std::filesystem::path(m_project.root) / build_file_name).string();
+        for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
+            if (m_bufferManager->getBuffer(i).filename == bfp) {
+                read_file(m_bufferManager->getBuffer(i)); break;
+            }
+        }
+    }
 }

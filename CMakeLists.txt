@@ -50,6 +50,9 @@ if(CURSES_FOUND AND CLANG_FOUND)
         NewProjectDialog.cpp
         AddFileDialog.cpp
         GediProject.cpp
+        ProjectPropertiesDialog.cpp
+        TargetDialog.cpp
+        PickTargetDialog.cpp
         utils.cpp
         DialogBase.cpp
 
@@ -73,6 +76,9 @@ if(CURSES_FOUND AND CLANG_FOUND)
         NavigationGraph.h
         GediProject.h
         NewProjectDialog.h
+        ProjectPropertiesDialog.h
+        TargetDialog.h
+        PickTargetDialog.h
         QuestionDialog.h
         Renderer.h
         ReplaceDialog.h

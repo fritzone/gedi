@@ -42,6 +42,12 @@ public:
     std::string guessCompileCommand(const std::string& filename);
     std::string get_full_compile_command(const std::string& base_command, const CompilerSettings& settings);
 
+    // Convert CompilerSettings to a flat flags string (e.g. "-g -O0 -Wall -Wextra")
+    static std::string settingsToFlags(const CompilerSettings& s);
+
+    // Human-readable build command preview used by the Build Options dialog
+    static std::string buildProjectPreview(const GediProject& project, const CompilerSettings& settings);
+
 private:
     Config m_config;
     std::map<std::string, std::string> m_compile_command_cache;

@@ -57,6 +57,7 @@ void KeyBindings::loadDefaults() {
     addBinding(ACT_TOGGLE_COMMENT, CTRL('/'), "Ctrl+/");
     addBinding(ACT_TOGGLE_PROJECT_PANEL, KEY_ALT('0'), "Alt+0");
     addBinding(ACT_CLOSE_PROJECT, -1, "");
+    addBinding(ACT_PROJECT_PROPERTIES, -1, "");
 }
 
 int KeyBindings::getKey(EditorAction action) const {

@@ -28,8 +28,17 @@
 #include "NewProjectDialog.h"
 #include "AddFileDialog.h"
 #include "GediProject.h"
+#include "ProjectPropertiesDialog.h"
 
 enum MenuAction { CLOSE_MENU, ITEM_SELECTED, NAVIGATE_LEFT, NAVIGATE_RIGHT, RESIZE_OCCURRED };
+
+// Flat entry in the project panel list
+struct PanelEntry {
+    enum Kind { BUILD_FILE, TARGET_HEADER, SOURCE_FILE } kind;
+    std::string display;
+    int target_idx = -1;  // index into GediProject::targets
+    int source_idx = -1;  // index into ProjectTarget::sources
+};
 
 struct ViewState {
     int line_num;
@@ -170,6 +179,10 @@ private:
     void openProjectPanelFile(int index);
     void CloseProject();
     void openFileAtLine(const std::string& abs_path, int line, int col);
+    void ProjectProperties();
+    void regenerateBuildFile();
+    int  pickTarget(const std::string& action_label, int exclude_idx = -1);
+    std::vector<PanelEntry> buildPanelEntries() const;
 
     // Project panel state
     bool m_project_panel_open    = false;
