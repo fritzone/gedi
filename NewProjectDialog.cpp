@@ -165,14 +165,14 @@ void NewProjectDialog::rebuildFilter()
 // ═══════════════════════════════════════════════════════════════════════════════
 
 NewProjectDialog::NewProjectDialog(Renderer& renderer, ProjectTemplate& t)
-    : DialogBase("New CMake Project", W, H)
+    : DialogBase("New Project", W, H)
     , renderer_    (renderer)
     , m_template   (t)
     , name_cursor_ ((int)t.name.size())
     , name_scroll_ (0)
     , path_cursor_ ((int)t.path.size())
     , path_scroll_ (0)
-    , type_cursor_ (t.type)
+    , bs_cursor_   (t.build_system)
     , standards_   ({"c++11", "c++14", "c++17", "c++20", "c++23", "c++26"})
     , std_idx_     (0)
 {
@@ -188,21 +188,11 @@ NewProjectDialog::NewProjectDialog(Renderer& renderer, ProjectTemplate& t)
 
 // ── Static factory ────────────────────────────────────────────────────────────
 
-bool NewProjectDialog::show(Renderer& renderer, ProjectTemplate& out_template)
+bool NewProjectDialog::show(Renderer& renderer, ProjectTemplate& out_template,
+                            const std::vector<LibraryInfo>& libs)
 {
-    // Show loading indicator — librarian.py may take a few seconds
-    {
-        const std::string msg = " Loading libraries... ";
-        int cx = (renderer.getWidth()  - (int)msg.size()) / 2;
-        int cy =  renderer.getHeight() / 2;
-        renderer.drawText(cx, cy, msg, Renderer::CP_DIALOG_TITLE);
-        renderer.refresh();
-    }
-
-    auto libs = loadLibraries();
-
     NewProjectDialog dlg(renderer, out_template);
-    dlg.m_libraries    = std::move(libs);
+    dlg.m_libraries    = libs;
     dlg.m_lib_selected.assign(dlg.m_libraries.size(), false);
     dlg.rebuildFilter();
 
@@ -328,7 +318,9 @@ void NewProjectDialog::onDraw(Renderer& renderer, int startx, int starty)
 
     // ── Path field ────────────────────────────────────────────────────────────
     {
-        const int fy = starty + PATH_BOX_Y + 1;
+        const int  fy          = starty + PATH_BOX_Y + 1;
+        const bool grp_focused = (getFocusedGroup() == GRP_PATH);
+        const int  inner_focus = groups()[GRP_PATH].inner_focus;
         adjustScroll(path_cursor_, FIELD_W_PATH, path_scroll_);
 
         renderer.drawText(inner_x + 2, fy, "Path:", Renderer::CP_DIALOG);
@@ -339,24 +331,33 @@ void NewProjectDialog::onDraw(Renderer& renderer, int startx, int starty)
             std::string disp = m_template.path.substr(path_scroll_, FIELD_W_PATH);
             renderer.drawText(inner_x + FIELD_X, fy, disp, Renderer::CP_LIST_BOX);
         }
+
+        // Checkbox row — below the Browse button shadow row
+        const int fy3      = starty + PATH_BOX_Y + 3;
+        const bool chk_focused = grp_focused && (inner_focus == 1);
+        renderer.drawText(inner_x + 2, fy3,
+                          std::string(m_template.create_project_dir ? "[X]" : "[ ]")
+                              + " Create project directory",
+                          chk_focused ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
     }
 
     // ── Configuration ─────────────────────────────────────────────────────────
     {
-        const int fy   = starty + CFG_BOX_Y + 1;
-        bool grp_focused = (getFocusedGroup() == GRP_CFG);
-        int  inner_focus = groups()[GRP_CFG].inner_focus;
+        const int fy         = starty + CFG_BOX_Y + 1;
+        bool      grp_focused = (getFocusedGroup() == GRP_CFG);
+        int       inner_focus = groups()[GRP_CFG].inner_focus;
 
-        // Row 1: radio buttons (Executable / Library)
-        const char* type_labels[] = {"Executable", "Library"};
-        int rx = inner_x + 2;
-        for (int i = 0; i < 2; ++i) {
-            bool is_selected = (m_template.type == i);
-            bool is_cursor   = grp_focused && (inner_focus == 0) && (type_cursor_ == i);
+        // Row 1: Build system radios
+        renderer.drawText(inner_x + 2, fy, "Build system:", Renderer::CP_DIALOG);
+        const char* bs_labels[] = {"CMake", "Make", "Meson"};
+        int rx = inner_x + 16;
+        for (int i = 0; i < 3; ++i) {
+            bool is_selected = (m_template.build_system == i);
+            bool is_cursor   = grp_focused && (inner_focus == 0) && (bs_cursor_ == i);
             std::string mark = is_selected ? "(•)" : "( )";
-            renderer.drawText(rx, fy, mark + " " + type_labels[i],
+            renderer.drawText(rx, fy, mark + " " + bs_labels[i],
                               is_cursor ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
-            rx += (int)mark.size() + 1 + (int)strlen(type_labels[i]) + 2;
+            rx += 4 + (int)strlen(bs_labels[i]) + 1;  // mark(3) + space + label + gap
         }
 
         // Row 2: C++ Standard combo
@@ -364,6 +365,18 @@ void NewProjectDialog::onDraw(Renderer& renderer, int startx, int starty)
         renderer.drawText(inner_x + 2, fy2, "C++ Standard:", Renderer::CP_DIALOG);
         cfg_combo_.draw(renderer, startx, starty,
                         grp_focused && (inner_focus == 1));
+
+        // Row 3: Checkboxes
+        const int fy3 = starty + CFG_BOX_Y + 3;
+        const bool git_focused  = grp_focused && (inner_focus == 2) && (cfg_chk_cursor_ == 0);
+        const bool main_focused = grp_focused && (inner_focus == 2) && (cfg_chk_cursor_ == 1);
+
+        renderer.drawText(inner_x + 2, fy3,
+                          std::string(m_template.init_git   ? "[X]" : "[ ]") + " Initialize git",
+                          git_focused  ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
+        renderer.drawText(inner_x + 22, fy3,
+                          std::string(m_template.create_main ? "[X]" : "[ ]") + " Create main.cpp",
+                          main_focused ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
     }
 
     // ── Library list ──────────────────────────────────────────────────────────
@@ -432,10 +445,13 @@ bool NewProjectDialog::onPlaceCursor(Renderer& renderer, int sx, int sy)
     }
 
     if (grp == GRP_PATH) {
-        renderer.showCursor();
-        move(sy + PATH_BOX_Y + 1,
-             sx + 2 + FIELD_X + (path_cursor_ - path_scroll_));
-        return true;
+        if (groups()[GRP_PATH].inner_focus == 0) {
+            renderer.showCursor();
+            move(sy + PATH_BOX_Y + 1,
+                 sx + 2 + FIELD_X + (path_cursor_ - path_scroll_));
+            return true;
+        }
+        return false;  // checkbox row: highlight only, no text cursor
     }
 
     if (grp == GRP_LIB) {
@@ -477,20 +493,32 @@ HandleResult NewProjectDialog::onKey(wint_t ch)
 
     // ── Path field ────────────────────────────────────────────────────────────
     if (grp == GRP_PATH) {
-        if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
-            eraseUtf8Before(m_template.path, path_cursor_);
-        } else if (ch == KEY_DC) {
-            eraseUtf8At(m_template.path, path_cursor_);
-        } else if (ch == KEY_LEFT) {
-            path_cursor_ = utf8StepLeft(m_template.path, path_cursor_);
-        } else if (ch == KEY_RIGHT) {
-            path_cursor_ = utf8StepRight(m_template.path, path_cursor_);
-        } else if (ch == KEY_HOME) {
-            path_cursor_ = 0;
-        } else if (ch == KEY_END) {
-            path_cursor_ = (int)m_template.path.size();
-        } else if (ch > 31 && ch < KEY_MIN) {
-            insertUtf8At(m_template.path, path_cursor_, ch);
+        auto& g = groups()[GRP_PATH];
+
+        if (ch == KEY_UP || ch == KEY_DOWN) {
+            g.inner_focus = (g.inner_focus == 0) ? 1 : 0;
+            return HandleResult::CONTINUE;
+        }
+
+        if (g.inner_focus == 0) {
+            if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
+                eraseUtf8Before(m_template.path, path_cursor_);
+            } else if (ch == KEY_DC) {
+                eraseUtf8At(m_template.path, path_cursor_);
+            } else if (ch == KEY_LEFT) {
+                path_cursor_ = utf8StepLeft(m_template.path, path_cursor_);
+            } else if (ch == KEY_RIGHT) {
+                path_cursor_ = utf8StepRight(m_template.path, path_cursor_);
+            } else if (ch == KEY_HOME) {
+                path_cursor_ = 0;
+            } else if (ch == KEY_END) {
+                path_cursor_ = (int)m_template.path.size();
+            } else if (ch > 31 && ch < KEY_MIN) {
+                insertUtf8At(m_template.path, path_cursor_, ch);
+            }
+        } else {
+            if (ch == ' ')
+                m_template.create_project_dir = !m_template.create_project_dir;
         }
         return HandleResult::CONTINUE;
     }
@@ -500,19 +528,26 @@ HandleResult NewProjectDialog::onKey(wint_t ch)
         auto& g = groups()[GRP_CFG];
 
         if (ch == KEY_UP || ch == KEY_DOWN) {
-            g.inner_focus = (g.inner_focus == 0) ? 1 : 0;
+            if (ch == KEY_DOWN) g.inner_focus = (g.inner_focus + 1) % 3;
+            else                g.inner_focus = (g.inner_focus == 0) ? 2 : g.inner_focus - 1;
             return HandleResult::CONTINUE;
         }
 
         if (g.inner_focus == 0) {
-            if (ch == KEY_LEFT  && type_cursor_ > 0)
-            { --type_cursor_; m_template.type = type_cursor_; return HandleResult::CONTINUE; }
-            if (ch == KEY_RIGHT && type_cursor_ < 1)
-            { ++type_cursor_; m_template.type = type_cursor_; return HandleResult::CONTINUE; }
-            if (ch == ' ' || ch == KEY_ENTER || ch == 10 || ch == 13)
-            { m_template.type = type_cursor_; return HandleResult::CONTINUE; }
-        } else {
+            if (ch == KEY_LEFT  && bs_cursor_ > 0)
+            { --bs_cursor_; m_template.build_system = bs_cursor_; return HandleResult::CONTINUE; }
+            if (ch == KEY_RIGHT && bs_cursor_ < 2)
+            { ++bs_cursor_; m_template.build_system = bs_cursor_; return HandleResult::CONTINUE; }
+        } else if (g.inner_focus == 1) {
             cfg_combo_.handleKey(ch);
+        } else {
+            if (ch == KEY_LEFT  && cfg_chk_cursor_ > 0) { --cfg_chk_cursor_; return HandleResult::CONTINUE; }
+            if (ch == KEY_RIGHT && cfg_chk_cursor_ < 1) { ++cfg_chk_cursor_; return HandleResult::CONTINUE; }
+            if (ch == ' ') {
+                if (cfg_chk_cursor_ == 0) m_template.init_git    = !m_template.init_git;
+                else                       m_template.create_main = !m_template.create_main;
+                return HandleResult::CONTINUE;
+            }
         }
     }
 

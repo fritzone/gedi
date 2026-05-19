@@ -11,14 +11,18 @@
 struct ProjectTemplate {
     std::string name;
     std::string path;
-    int         type         = 0;   // 0: Executable, 1: Library
-    std::string cpp_standard = "c++17";
+    int         build_system       = 0;     // 0: CMake, 1: Make, 2: Meson
+    std::string cpp_standard       = "c++17";
+    bool        init_git           = false;
+    bool        create_main        = true;
+    bool        create_project_dir = true;
     std::vector<LibraryInfo> selected_libraries;
 };
 
 class NewProjectDialog : private DialogBase {
 public:
-    static bool show(Renderer& renderer, ProjectTemplate& out_template);
+    static bool show(Renderer& renderer, ProjectTemplate& out_template,
+                     const std::vector<LibraryInfo>& libs);
     static std::vector<LibraryInfo> loadLibraries();
 
 private:
@@ -35,17 +39,17 @@ private:
     static constexpr int H            = 18;
     static constexpr int FIELD_X      = 16;   // left edge of fields (from inner_x = startx+2)
     static constexpr int FIELD_W_NAME = 42;   // name field width
-    static constexpr int FIELD_W_PATH = 27;   // path field width (shorter; Browse fits beside)
+    static constexpr int FIELD_W_PATH = 34;   // path field width
     static constexpr int NAME_BOX_Y   = 1;
     static constexpr int NAME_BOX_H   = 3;
     static constexpr int PATH_BOX_Y   = 5;
-    static constexpr int PATH_BOX_H   = 4;   // taller: Browse shadow fits inside the box
+    static constexpr int PATH_BOX_H   = 5;   // Browse row + shadow row + checkbox row
     static constexpr int CFG_BOX_Y    = 10;
     static constexpr int CFG_BOX_H    = 5;   // two content rows: radio + C++ Standard
     static constexpr int BTN_Y        = H - 3;  // = 15
 
     // Browse button inside the Location box
-    static constexpr int BROWSE_BTN_X = 2 + FIELD_X + FIELD_W_PATH + 1; // = 46
+    static constexpr int BROWSE_BTN_X = 2 + FIELD_X + FIELD_W_PATH + 1; // = 54
     static constexpr int BROWSE_BTN_Y = PATH_BOX_Y + 1;                  // = 6
 
     // Library panel (right side)
@@ -81,7 +85,8 @@ private:
     int path_scroll_ = 0;
 
     // ── Config group state (managed manually) ─────────────────────────────────
-    int      type_cursor_;
+    int      bs_cursor_;         // build-system radio cursor
+    int      cfg_chk_cursor_ = 0; // checkbox row cursor: 0=init_git, 1=create_main
     ComboBox cfg_combo_;
     std::vector<std::string> standards_;
     int                      std_idx_;

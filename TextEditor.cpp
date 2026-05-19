@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <thread>
+#include <chrono>
 #include <iostream>
 #include <termios.h>
 #include <unistd.h>
@@ -142,6 +143,9 @@ void TextEditor::run(int argc, char* argv[]) {
         }
     }
 
+    // Scan available libraries in the background so New Project opens instantly
+    m_lib_future = std::async(std::launch::async, &NewProjectDialog::loadLibraries);
+
     main_loop();
 }
 
@@ -259,10 +263,21 @@ void TextEditor::drawMainUI() {
         std::string filename_part = " " + currentBuffer().filename + " ";
         filename_part = get_full_path(filename_part);
         std::string indicator_part = "* ";
-
         std::string bufferNr = "[" + std::to_string(currentBuffer().bufferNr) + "]";
 
-        int total_len = filename_part.length() + (currentBuffer().changed ? indicator_part.length() : 0);
+        // Show project badge when the file lives inside the open project's root
+        std::string proj_badge;
+        if (!m_project.name.empty() && !m_project.root.empty() &&
+            !currentBuffer().is_new_file) {
+            auto rel = std::filesystem::path(currentBuffer().filename)
+                           .lexically_relative(m_project.root);
+            if (!rel.empty() && rel.native().substr(0, 2) != "..")
+                proj_badge = " · " + m_project.name;   // " · ProjectName"
+        }
+
+        int total_len = (currentBuffer().changed ? (int)indicator_part.length() : 0)
+                      + (int)filename_part.length()
+                      + (int)proj_badge.length();
         int title_x = box_x + (box_w - total_len) / 2;
 
         int current_x = title_x;
@@ -271,8 +286,11 @@ void TextEditor::drawMainUI() {
             current_x += indicator_part.length();
         }
         m_renderer->drawText(current_x, box_y, filename_part, Renderer::CP_HIGHLIGHT);
-        m_renderer->drawText(box_w - 4, box_y, bufferNr, Renderer::CP_CHANGED_INDICATOR);
+        current_x += filename_part.length();
+        if (!proj_badge.empty())
+            m_renderer->drawText(current_x, box_y, proj_badge, Renderer::CP_DIALOG_TITLE, A_BOLD);
 
+        m_renderer->drawText(box_w - 4, box_y, bufferNr, Renderer::CP_CHANGED_INDICATOR);
     }
 }
 
@@ -406,6 +424,15 @@ void TextEditor::drawStatusBar() {
         m_renderer->drawText(44, h - 1, "Exit", Renderer::CP_STATUS_BAR);
     }
 
+    // Show library scan progress in the centre of the status bar
+    if (!m_libs_cached && m_lib_future.valid() &&
+        m_lib_future.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+        const std::string lib_msg = " Scanning libraries... ";
+        int mx = (w - (int)lib_msg.size()) / 2;
+        if (mx > 50)
+            m_renderer->drawText(mx, h - 1, lib_msg, Renderer::CP_STATUS_BAR_HIGHLIGHT);
+    }
+
     if (currentBufferIdx() != -1) {
         EditorBuffer& buffer = currentBuffer();
         char status_buf[120];
@@ -469,6 +496,7 @@ void TextEditor::drawEditorState(int active_menu_id) {
     m_renderer->clear();
     drawMainUI();
     drawTextArea();
+    if (m_project_panel_open) drawProjectPanel();
     drawMenuBar(active_menu_id);
     drawStatusBar();
     drawScrollbars();
@@ -485,6 +513,7 @@ int TextEditor::msgwin_yesno(const std::string& question, const std::string& inf
 void TextEditor::handleResize() {
     clearok(stdscr, TRUE); clear();
     m_renderer->updateDimensions();
+    m_text_area_start_x = m_project_panel_open ? PANEL_W : 1;
     m_text_area_end_x = m_renderer->getWidth() - 3;
     m_text_area_end_y = m_renderer->getHeight() - 4;
     if (m_text_area_end_x <= m_text_area_start_x) { m_text_area_end_x = m_text_area_start_x + 1; }
@@ -516,7 +545,9 @@ void TextEditor::updateMenuLabels() {
     };
 
     m_submenu_project = {
-        formatMenuItem("New &Project...", ACT_NEW_PROJECT),
+        formatMenuItem("New &Project...",         ACT_NEW_PROJECT),
+        formatMenuItem("&Open Project...",        ACT_OPEN_PROJECT),
+        formatMenuItem("&Close Project",          ACT_CLOSE_PROJECT),
         " -------------- ",
         formatMenuItem("Add &File to Project...", ACT_ADD_FILE)
     };
@@ -582,7 +613,9 @@ void TextEditor::main_loop() {
 
         update_cursor_and_scroll();
         drawEditorState();
-        if (currentBufferIdx() != -1) {
+        if (m_project_panel_focused) {
+            m_renderer->hideCursor();
+        } else if (currentBufferIdx() != -1) {
             if (m_search_mode) {
                 m_renderer->setCursor(1 + strlen("Search: ") + m_search_term.length(), m_renderer->getHeight() - 1);
             } else if (!m_compile_output_visible) {
@@ -598,7 +631,9 @@ void TextEditor::main_loop() {
         if (ch == KEY_RESIZE) { handleResize(); continue; }
 
         if (ch != ERR) {
-            if (m_compile_output_visible) {
+            if (m_project_panel_focused && !m_compile_output_visible) {
+                handleProjectPanelKey(ch);
+            } else if (m_compile_output_visible) {
                 switch (ch) {
                 case KEY_UP: {
                     int new_pos = m_compile_output_cursor_pos;
@@ -641,14 +676,18 @@ void TextEditor::main_loop() {
                     if (m_compile_output_cursor_pos < (int)m_compile_output_lines.size()) {
                         const auto& msg = m_compile_output_lines[m_compile_output_cursor_pos];
                         if (msg.line != -1) {
-                            currentBuffer().current_line_num = msg.line;
-                            currentBuffer().cursor_col = msg.col;
-                            // Recalculate pointers
-                            currentBuffer().current_line = currentBuffer().document_head;
-                            for(int i = 1; i < msg.line; ++i) {
-                                if (currentBuffer().current_line->next) currentBuffer().current_line = currentBuffer().current_line->next;
+                            if (!msg.filename.empty()) {
+                                openFileAtLine(msg.filename, msg.line, std::max(1, msg.col));
+                            } else if (currentBufferIdx() != -1) {
+                                currentBuffer().current_line_num = msg.line;
+                                currentBuffer().cursor_col = std::max(1, msg.col);
+                                currentBuffer().current_line = currentBuffer().document_head;
+                                for (int i = 1; i < msg.line; ++i) {
+                                    if (currentBuffer().current_line->next)
+                                        currentBuffer().current_line = currentBuffer().current_line->next;
+                                }
+                                update_cursor_and_scroll();
                             }
-                            update_cursor_and_scroll();
                         }
                     }
                     m_compile_output_visible = false;
@@ -754,7 +793,6 @@ void TextEditor::HandleAltKey(wint_t key) {
     case '7': if (m_bufferManager->bufferCount() >= 7) SwitchToBuffer(6); break;
     case '8': if (m_bufferManager->bufferCount() >= 8) SwitchToBuffer(7); break;
     case '9': if (m_bufferManager->bufferCount() >= 9) SwitchToBuffer(8); break;
-    case '0': if (m_bufferManager->bufferCount() >= 10) SwitchToBuffer(9); break;
     }
 }
 
@@ -1242,38 +1280,76 @@ void TextEditor::GoToDefinition() {
     // drawStatusBar() will be called in the next loop iteration, restoring the original state
 }
 
+// Word character for C++ navigation: identifiers are [A-Za-z0-9_]
+static bool isWordChar(unsigned char c) { return std::isalnum(c) || c == '_'; }
+
 void TextEditor::GoToNextWord() {
     if (currentBufferIdx() == -1) return;
     EditorBuffer& buffer = currentBuffer();
-    const std::string& line_text = buffer.current_line->text;
-    int pos = buffer.cursor_col - 1;
 
-    if (pos >= (int)line_text.length()) {
+    // If at end of line, jump to start of next line
+    const std::string* text = &buffer.current_line->text;
+    int pos = buffer.cursor_col - 1;
+    int len = (int)text->length();
+
+    if (pos >= len) {
         if (buffer.current_line->next) {
-            buffer.cursor_screen_y++; buffer.current_line = buffer.current_line->next; buffer.current_line_num++; buffer.cursor_col = 1;
+            buffer.current_line = buffer.current_line->next;
+            buffer.current_line_num++;
+            buffer.cursor_screen_y++;
+            buffer.cursor_col = 1;
         }
         return;
     }
-    while (pos < (int)line_text.length() && !isspace(line_text[pos])) { pos++; }
-    while (pos < (int)line_text.length() && isspace(line_text[pos])) { pos++; }
+
+    unsigned char c = (unsigned char)(*text)[pos];
+    if (isWordChar(c)) {
+        // Skip identifier chars
+        while (pos < len && isWordChar((unsigned char)(*text)[pos])) pos++;
+    } else if (!std::isspace(c)) {
+        // Skip a run of punctuation
+        while (pos < len && !isWordChar((unsigned char)(*text)[pos]) &&
+               !std::isspace((unsigned char)(*text)[pos])) pos++;
+    }
+    // Skip trailing whitespace so cursor lands on the next token
+    while (pos < len && std::isspace((unsigned char)(*text)[pos])) pos++;
+
     buffer.cursor_col = pos + 1;
 }
 
 void TextEditor::GoToPreviousWord() {
     if (currentBufferIdx() == -1) return;
     EditorBuffer& buffer = currentBuffer();
-    int pos = buffer.cursor_col - 2;
+
+    // If at start of line, jump to end of previous line
+    int pos = buffer.cursor_col - 2;   // 0-based index of char left of cursor
     if (pos < 0) {
         if (buffer.current_line->prev) {
-            buffer.cursor_screen_y--; buffer.current_line = buffer.current_line->prev; buffer.current_line_num--;
-            buffer.cursor_col = buffer.current_line->text.length() + 1;
+            buffer.current_line = buffer.current_line->prev;
+            buffer.current_line_num--;
+            buffer.cursor_screen_y--;
+            buffer.cursor_col = (int)buffer.current_line->text.length() + 1;
         }
         return;
     }
-    const std::string& line_text = buffer.current_line->text;
-    while (pos >= 0 && isspace(line_text[pos])) { pos--; }
-    while (pos >= 0 && !isspace(line_text[pos])) { pos--; }
-    buffer.cursor_col = pos + 2;
+
+    const std::string& text = buffer.current_line->text;
+
+    // Skip whitespace to the left
+    while (pos >= 0 && std::isspace((unsigned char)text[pos])) pos--;
+
+    if (pos < 0) { buffer.cursor_col = 1; return; }
+
+    if (isWordChar((unsigned char)text[pos])) {
+        // Skip identifier chars backward
+        while (pos >= 0 && isWordChar((unsigned char)text[pos])) pos--;
+    } else {
+        // Skip punctuation run backward
+        while (pos >= 0 && !isWordChar((unsigned char)text[pos]) &&
+               !std::isspace((unsigned char)text[pos])) pos--;
+    }
+
+    buffer.cursor_col = pos + 2;   // +1 for 0→1 based, +1 to step past the separator
 }
 
 void TextEditor::GoToNextParagraph() {
@@ -1372,9 +1448,10 @@ void TextEditor::process_key(wint_t ch) {
         EditorAction action = m_keyBindings->getAction(ch);
         if (action != ACT_UNKNOWN) {
             switch (action) {
-                case ACT_NEW: DoNew(); return;
-                case ACT_NEW_PROJECT: CreateNewProject(); return;
-                case ACT_OPEN: selectfile(); return;
+                case ACT_NEW:          DoNew(); return;
+                case ACT_NEW_PROJECT:  CreateNewProject(); return;
+                case ACT_OPEN_PROJECT: OpenProject(); return;
+                case ACT_OPEN:         selectfile(); return;
                 case ACT_SAVE: if (currentBuffer().is_new_file) SaveFileBrowser(); else write_file(currentBuffer()); return;
                 case ACT_SAVE_AS: SaveFileBrowser(); return;
                 case ACT_EXIT: TryExit(); return;
@@ -1398,6 +1475,8 @@ void TextEditor::process_key(wint_t ch) {
                 case ACT_ABOUT: AboutBox(); return;
                 case ACT_TOGGLE_COMMENT: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } handleToggleComment(); return;
                 case ACT_DELETE: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } DeleteSelection(); return;
+                case ACT_TOGGLE_PROJECT_PANEL: ToggleProjectPanel(); return;
+                case ACT_CLOSE_PROJECT:        CloseProject(); return;
                 default: break;
             }
         }
@@ -1489,11 +1568,12 @@ void TextEditor::process_key(wint_t ch) {
     switch(ch) {
     case KEY_SR: case KEY_SF: case KEY_SLEFT: case KEY_SRIGHT: case KEY_SHOME: case KEY_SEND:
     case KEY_SPREVIOUS: case KEY_SNEXT:
-    case KEY_SHIFT_CTRL_LEFT: case KEY_SHIFT_CTRL_RIGHT: case KEY_SHIFT_CTRL_UP: case KEY_SHIFT_CTRL_DOWN:
+    case KEY_DC:  // Del handles its own selection deletion below
         should_delete_selection = false; break;
     case KEY_UP: case KEY_DOWN: case KEY_LEFT: case KEY_RIGHT: case KEY_HOME: case KEY_END:
     case KEY_PPAGE: case KEY_NPAGE:
     case KEY_CTRL_LEFT: case KEY_CTRL_RIGHT: case KEY_CTRL_UP: case KEY_CTRL_DOWN:
+    case KEY_SHIFT_CTRL_LEFT: case KEY_SHIFT_CTRL_RIGHT: case KEY_SHIFT_CTRL_UP: case KEY_SHIFT_CTRL_DOWN:
         ClearSelection(); should_delete_selection = false; break;
     }
     if(should_delete_selection) DeleteSelection();
@@ -1526,10 +1606,10 @@ void TextEditor::process_key(wint_t ch) {
     case KEY_SEND: if (!buffer.selecting) { buffer.selecting = true; buffer.selection_anchor_line = buffer.current_line; buffer.selection_anchor_col = buffer.cursor_col; buffer.selection_anchor_linenum = buffer.current_line_num; } buffer.cursor_col = buffer.current_line->text.length() + 1; UpdateSelection(); break;
     case KEY_SPREVIOUS: if (!buffer.selecting) { buffer.selecting = true; buffer.selection_anchor_line = buffer.current_line; buffer.selection_anchor_col = buffer.cursor_col; buffer.selection_anchor_linenum = buffer.current_line_num; } { int h = m_text_area_end_y - m_text_area_start_y + 1; for(int i=0;i<h && buffer.current_line->prev; ++i) {buffer.cursor_screen_y--; buffer.current_line=buffer.current_line->prev; buffer.current_line_num--;} } UpdateSelection(); break;
     case KEY_SNEXT: if (!buffer.selecting) { buffer.selecting = true; buffer.selection_anchor_line = buffer.current_line; buffer.selection_anchor_col = buffer.cursor_col; buffer.selection_anchor_linenum = buffer.current_line_num; } { int h = m_text_area_end_y - m_text_area_start_y + 1; for(int i=0;i<h && buffer.current_line->next; ++i) {buffer.cursor_screen_y++; buffer.current_line=buffer.current_line->next; buffer.current_line_num++;} } UpdateSelection(); break;
-    case KEY_SHIFT_CTRL_LEFT: if (!buffer.selecting) { buffer.selecting = true; buffer.selection_anchor_line = buffer.current_line; buffer.selection_anchor_col = buffer.cursor_col; buffer.selection_anchor_linenum = buffer.current_line_num; } GoToPreviousWord(); UpdateSelection(); break;
-    case KEY_SHIFT_CTRL_RIGHT: if (!buffer.selecting) { buffer.selecting = true; buffer.selection_anchor_line = buffer.current_line; buffer.selection_anchor_col = buffer.cursor_col; buffer.selection_anchor_linenum = buffer.current_line_num; } GoToNextWord(); UpdateSelection(); break;
-    case KEY_SHIFT_CTRL_UP: if (!buffer.selecting) { buffer.selecting = true; buffer.selection_anchor_line = buffer.current_line; buffer.selection_anchor_col = buffer.cursor_col; buffer.selection_anchor_linenum = buffer.current_line_num; } GoToPreviousParagraph(); UpdateSelection(); break;
-    case KEY_SHIFT_CTRL_DOWN: if (!buffer.selecting) { buffer.selecting = true; buffer.selection_anchor_line = buffer.current_line; buffer.selection_anchor_col = buffer.cursor_col; buffer.selection_anchor_linenum = buffer.current_line_num; } GoToNextParagraph(); UpdateSelection(); break;
+    case KEY_SHIFT_CTRL_LEFT:  GoToPreviousWord(); break;
+    case KEY_SHIFT_CTRL_RIGHT: GoToNextWord(); break;
+    case KEY_SHIFT_CTRL_UP:    GoToPreviousParagraph(); break;
+    case KEY_SHIFT_CTRL_DOWN:  GoToNextParagraph(); break;
     case 9: { // Tab key
         const std::string& line_text = buffer.current_line->text;
         int cursor_idx = buffer.cursor_col - 1;
@@ -1608,8 +1688,11 @@ void TextEditor::process_key(wint_t ch) {
         }
         break;
     case KEY_DC:
-        if (buffer.cursor_col <= (int)buffer.current_line->text.length()) { buffer.current_line->text.erase(buffer.cursor_col - 1, 1); buffer.changed = true; }
-        else if (buffer.current_line->next) {
+        if (buffer.selecting) {
+            DeleteSelection();
+        } else if (buffer.cursor_col <= (int)buffer.current_line->text.length()) {
+            buffer.current_line->text.erase(buffer.cursor_col - 1, 1); buffer.changed = true;
+        } else if (buffer.current_line->next) {
             Line* to_delete = buffer.current_line->next; buffer.current_line->text += to_delete->text;
             buffer.current_line->next = to_delete->next; if(to_delete->next) to_delete->next->prev = buffer.current_line;
             delete to_delete; buffer.changed = true;
@@ -1716,16 +1799,29 @@ static bool addFileToCMakeLists(const std::string& cmake_path, const std::string
 
 void TextEditor::CreateNewProject()
 {
+    // Ensure library cache is populated, waiting if the background scan is still running
+    if (!m_libs_cached) {
+        if (m_lib_future.valid()) {
+            int w = m_renderer->getWidth(), h = m_renderer->getHeight();
+            const std::string wait_msg = " Waiting for library scan... ";
+            m_renderer->drawText((w - (int)wait_msg.size()) / 2, h - 1,
+                                 wait_msg, Renderer::CP_STATUS_BAR_HIGHLIGHT);
+            m_renderer->refresh();
+            m_cached_libs = m_lib_future.get();
+        }
+        m_libs_cached = true;
+    }
+
     ProjectTemplate temp;
-    temp.name = "MyNewProject";
+    temp.name         = "MyNewProject";
+    temp.build_system = 0;        // CMake
+    temp.cpp_standard = "c++17";
 
     char cwd_buf[1024];
     if (getcwd(cwd_buf, sizeof(cwd_buf)))
         temp.path = cwd_buf;
-    temp.type         = 0;        // Executable
-    temp.cpp_standard = "c++17";
 
-    if (!NewProjectDialog::show(*m_renderer, temp))
+    if (!NewProjectDialog::show(*m_renderer, temp, m_cached_libs))
         return;   // user cancelled
 
     std::filesystem::path root(temp.path);
@@ -1733,32 +1829,45 @@ void TextEditor::CreateNewProject()
 
     try {
         // ── Directory ──────────────────────────────────────────────────────────
-        if (std::filesystem::exists(root)) {
-            if (msgwin_yesno("Directory already exists. Overwrite contents?",
-                             root.string()) != 1)
-                return;
+        if (temp.create_project_dir) {
+            if (std::filesystem::exists(root)) {
+                if (msgwin_yesno("Directory already exists. Overwrite contents?",
+                                 root.string()) != 1)
+                    return;
+            } else {
+                std::filesystem::create_directories(root);
+            }
         } else {
-            std::filesystem::create_directories(root);
+            if (!std::filesystem::exists(temp.path)) {
+                msgwin("Directory does not exist: " + temp.path);
+                return;
+            }
+
+            root = temp.path;
         }
 
-        // ── CMakeLists.txt ────────────────────────────────────────────────────
-        std::filesystem::path cmakeFile = root / "CMakeLists.txt";
-        {
-            // Strip "c++" prefix: "c++17" → "17"
+        // ── Source file (main.cpp, optional) ──────────────────────────────────
+        const std::filesystem::path srcFile = root / "main.cpp";
+        if (temp.create_main) {
+            std::ofstream s(srcFile);
+            s << "#include <iostream>\n\n"
+              << "int main() {\n"
+              << "    std::cout << \"Hello, " << temp.name << "!\" << std::endl;\n"
+              << "    return 0;\n"
+              << "}\n";
+        }
+
+        // ── Build file ────────────────────────────────────────────────────────
+        std::filesystem::path buildFile;
+
+        if (temp.build_system == 0) {
+            // ── CMakeLists.txt ────────────────────────────────────────────────
+            buildFile = root / "CMakeLists.txt";
+
             std::string std_num = temp.cpp_standard;
             if (std_num.substr(0, 3) == "c++") std_num = std_num.substr(3);
 
-            // Derive a CMake-safe variable name from a library short_name
-            auto cmake_varname = [](const std::string& s) -> std::string {
-                std::string v;
-                for (unsigned char c : s)
-                    v += std::isalnum(static_cast<int>(c))
-                         ? static_cast<char>(std::toupper(static_cast<int>(c)))
-                         : '_';
-                return v;
-            };
-
-            std::ofstream cm(cmakeFile);
+            std::ofstream cm(buildFile);
             cm << "cmake_minimum_required(VERSION 3.10)\n"
                << "project(" << temp.name << ")\n\n"
                << "set(CMAKE_CXX_STANDARD " << std_num << ")\n"
@@ -1771,14 +1880,9 @@ void TextEditor::CreateNewProject()
                 cm << "\n";
             }
 
-            if (temp.type == 0)
-                cm << "add_executable(" << temp.name << " main.cpp)\n";
-            else
-                cm << "add_library(" << temp.name << " STATIC library.cpp)\n";
+            cm << "add_executable(" << temp.name << " main.cpp)\n";
 
             for (const auto& lib : temp.selected_libraries) {
-                const std::string var = cmake_varname(lib.short_name);
-
                 if (!lib.include_directories.empty()) {
                     cm << "target_include_directories(" << temp.name << " PRIVATE";
                     for (const auto& d : lib.include_directories) cm << " " << d;
@@ -1800,34 +1904,111 @@ void TextEditor::CreateNewProject()
                     cm << ")\n";
                 }
             }
-        }
 
-        // ── Source file ───────────────────────────────────────────────────────
-        std::filesystem::path srcFile;
-        if (temp.type == 0) {
-            srcFile = root / "main.cpp";
-            std::ofstream s(srcFile);
-            s << "#include <iostream>\n\n"
-              << "int main() {\n"
-              << "    std::cout << \"Hello, " << temp.name << "!\" << std::endl;\n"
-              << "    return 0;\n"
-              << "}\n";
+        } else if (temp.build_system == 1) {
+            // ── Makefile ──────────────────────────────────────────────────────
+            buildFile = root / "Makefile";
+
+            std::string cxxflags = "-std=" + temp.cpp_standard + " -Wall -Wextra";
+            std::string ldflags;
+            for (const auto& lib : temp.selected_libraries) {
+                for (const auto& d : lib.include_directories)
+                    cxxflags += " -I" + d;
+                for (const auto& f : lib.compiler_flags)
+                    cxxflags += " " + f;
+                for (const auto& d : lib.link_directories)
+                    ldflags += " -L" + d;
+                for (const auto& l : lib.link_libraries)
+                    ldflags += " -l" + l;
+            }
+
+            std::ofstream mk(buildFile);
+            mk << "CXX      = g++\n"
+               << "CXXFLAGS = " << cxxflags << "\n"
+               << "LDFLAGS  =" << ldflags << "\n"
+               << "TARGET   = " << temp.name << "\n"
+               << "SRCS     = main.cpp\n"
+               << "OBJS     = $(SRCS:.cpp=.o)\n\n"
+               << "all: $(TARGET)\n\n"
+               << "$(TARGET): $(OBJS)\n"
+               << "\t$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)\n\n"
+               << "%.o: %.cpp\n"
+               << "\t$(CXX) $(CXXFLAGS) -c $<\n\n"
+               << "clean:\n"
+               << "\trm -f $(OBJS) $(TARGET)\n\n"
+               << ".PHONY: all clean\n";
+
         } else {
-            srcFile = root / "library.cpp";
-            std::ofstream s(srcFile);
-            s << "#include <iostream>\n\n"
-              << "void hello() {\n"
-              << "    std::cout << \"Hello from library!\" << std::endl;\n"
-              << "}\n";
+            // ── meson.build ───────────────────────────────────────────────────
+            buildFile = root / "meson.build";
+
+            std::ofstream mb(buildFile);
+            mb << "project('" << temp.name << "', 'cpp',\n"
+               << "  default_options: ['cpp_std=" << temp.cpp_standard << "'])\n\n";
+
+            if (!temp.selected_libraries.empty()) {
+                for (const auto& lib : temp.selected_libraries) {
+                    std::string dep_name = lib.short_name;
+                    for (auto& c : dep_name) c = (char)std::tolower((unsigned char)c);
+                    mb << "dep_" << dep_name << " = dependency('" << dep_name << "')\n";
+                }
+                mb << "\n";
+            }
+
+            mb << "executable('" << temp.name << "',\n"
+               << "  sources: ['main.cpp']";
+
+            if (!temp.selected_libraries.empty()) {
+                mb << ",\n  dependencies: [";
+                bool first = true;
+                for (const auto& lib : temp.selected_libraries) {
+                    std::string dep_name = lib.short_name;
+                    for (auto& c : dep_name) c = (char)std::tolower((unsigned char)c);
+                    if (!first) mb << ", ";
+                    mb << "dep_" << dep_name;
+                    first = false;
+                }
+                mb << "]";
+            }
+            mb << ")\n";
         }
 
-        // ── Open both files in the editor ─────────────────────────────────────
-        m_bufferManager->addBuffer();
-        currentBuffer().filename = srcFile.string();
-        read_file(currentBuffer());
+        // ── Git init (optional) ───────────────────────────────────────────────
+        if (temp.init_git) {
+            std::string cmd = "git -C \"" + root.string() + "\" init -q 2>/dev/null";
+            std::system(cmd.c_str());
+
+            std::ofstream gi(root / ".gitignore");
+            if (temp.build_system == 0) {
+                gi << "build/\n.cache/\nCMakeFiles/\nCMakeCache.txt\n"
+                      "cmake_install.cmake\ncompile_commands.json\n*.cmake\n";
+            } else if (temp.build_system == 1) {
+                gi << "*.o\n" << temp.name << "\n";
+            } else {
+                gi << "builddir/\n.ninja_deps\n.ninja_log\nbuild.ninja\n";
+            }
+        }
+
+        // ── .gproj project file ───────────────────────────────────────────────
+        const char* bs_names[] = {"cmake", "make", "meson"};
+        m_project              = GediProject{};
+        m_project.name         = temp.name;
+        m_project.root         = root.string();
+        m_project.build_system = bs_names[temp.build_system];
+        m_project.cpp_standard = temp.cpp_standard;
+        if (temp.create_main) m_project.sources = {"main.cpp"};
+        m_project.libraries    = temp.selected_libraries;
+        m_project.save();
+
+        // ── Open source + build file in the editor ────────────────────────────
+        if (temp.create_main) {
+            m_bufferManager->addBuffer();
+            currentBuffer().filename = srcFile.string();
+            read_file(currentBuffer());
+        }
 
         m_bufferManager->addBuffer();
-        currentBuffer().filename = cmakeFile.string();
+        currentBuffer().filename = buildFile.string();
         read_file(currentBuffer());
 
         handleResize();
@@ -1837,32 +2018,236 @@ void TextEditor::CreateNewProject()
     }
 }
 
+void TextEditor::OpenProject()
+{
+    namespace fs = std::filesystem;
+
+    std::string path = FileBrowser::open(*m_renderer);
+    if (path.empty()) return;
+
+    if (path.size() < 6 || path.substr(path.size() - 6) != ".gproj") {
+        msgwin("Please select a .gproj project file.");
+        return;
+    }
+
+    GediProject proj;
+    if (!GediProject::load(path, proj)) {
+        msgwin("Failed to load project file.");
+        return;
+    }
+    m_project = std::move(proj);
+
+    // Open every tracked source file
+    for (const auto& src : m_project.sources) {
+        std::string full = (fs::path(m_project.root) / src).string();
+        if (fs::exists(full)) {
+            m_bufferManager->addBuffer();
+            currentBuffer().filename = full;
+            read_file(currentBuffer());
+        }
+    }
+
+    // Open the build file
+    std::string build_filename;
+    if      (m_project.build_system == "cmake") build_filename = "CMakeLists.txt";
+    else if (m_project.build_system == "make")  build_filename = "Makefile";
+    else if (m_project.build_system == "meson") build_filename = "meson.build";
+
+    if (!build_filename.empty()) {
+        std::string bf = (fs::path(m_project.root) / build_filename).string();
+        if (fs::exists(bf)) {
+            m_bufferManager->addBuffer();
+            currentBuffer().filename = bf;
+            read_file(currentBuffer());
+        }
+    }
+
+    handleResize();
+}
+
+static bool addFileToMakefile(const std::string& project_root, const std::string& rel_path)
+{
+    std::string makefile_path = (std::filesystem::path(project_root) / "Makefile").string();
+    std::ifstream fin(makefile_path);
+    if (!fin) return false;
+    std::string content((std::istreambuf_iterator<char>(fin)), {});
+    fin.close();
+
+    // Locate the SRCS line
+    size_t pos = content.find("SRCS");
+    if (pos == std::string::npos) return false;
+    size_t line_end = content.find('\n', pos);
+    if (line_end == std::string::npos) line_end = content.size();
+
+    // Already listed?
+    if (content.substr(pos, line_end - pos).find(rel_path) != std::string::npos)
+        return true;
+
+    content.insert(line_end, " " + rel_path);
+
+    std::ofstream fout(makefile_path);
+    if (!fout) return false;
+    fout << content;
+    return true;
+}
+
+static bool addFileToMesonBuild(const std::string& project_root, const std::string& rel_path)
+{
+    std::string meson_path = (std::filesystem::path(project_root) / "meson.build").string();
+    std::ifstream fin(meson_path);
+    if (!fin) return false;
+    std::string content((std::istreambuf_iterator<char>(fin)), {});
+    fin.close();
+
+    // Find the opening [ of the sources list
+    size_t pos = content.find("sources:");
+    if (pos == std::string::npos) return false;
+    size_t open_br  = content.find('[', pos);
+    size_t close_br = content.find(']', open_br);
+    if (open_br == std::string::npos || close_br == std::string::npos) return false;
+
+    std::string sources_section = content.substr(open_br, close_br - open_br);
+    if (sources_section.find("'" + rel_path + "'") != std::string::npos ||
+        sources_section.find("\"" + rel_path + "\"") != std::string::npos)
+        return true;   // already listed
+
+    content.insert(close_br, ", '" + rel_path + "'");
+
+    std::ofstream fout(meson_path);
+    if (!fout) return false;
+    fout << content;
+    return true;
+}
+
+static bool removeFileFromCMakeLists(const std::string& cmake_path, const std::string& rel_path)
+{
+    std::ifstream fin(cmake_path);
+    if (!fin) return false;
+    std::string content((std::istreambuf_iterator<char>(fin)), {});
+    fin.close();
+
+    size_t pos = content.find(rel_path);
+    if (pos == std::string::npos) return false;
+
+    // If the filename occupies its own line (only whitespace before it), remove the whole line
+    size_t line_start = content.rfind('\n', pos);
+    line_start = (line_start == std::string::npos) ? 0 : line_start + 1;
+    size_t line_end = content.find('\n', pos);
+    if (line_end == std::string::npos) line_end = content.size();
+
+    std::string before_on_line = content.substr(line_start, pos - line_start);
+    bool only_ws = before_on_line.find_first_not_of(" \t") == std::string::npos;
+    std::string after_on_line = content.substr(pos + rel_path.size(),
+                                                line_end - pos - rel_path.size());
+    bool rest_ws = after_on_line.find_first_not_of(" \t") == std::string::npos;
+
+    if (only_ws && rest_ws) {
+        content.erase(line_start, line_end - line_start + (line_end < content.size() ? 1 : 0));
+    } else {
+        // Inline: remove " rel_path" (prefer eating the leading space)
+        size_t sp = content.rfind(' ', pos);
+        if (sp != std::string::npos && sp == pos - 1)
+            content.erase(sp, rel_path.size() + 1);
+        else
+            content.erase(pos, rel_path.size());
+    }
+
+    std::ofstream fout(cmake_path);
+    if (!fout) return false;
+    fout << content;
+    return true;
+}
+
+static bool removeFileFromMakefile(const std::string& project_root, const std::string& rel_path)
+{
+    std::string makefile_path = (std::filesystem::path(project_root) / "Makefile").string();
+    std::ifstream fin(makefile_path);
+    if (!fin) return false;
+    std::string content((std::istreambuf_iterator<char>(fin)), {});
+    fin.close();
+
+    // Try " rel_path" (with leading space, most common)
+    size_t pos = content.find(" " + rel_path);
+    if (pos != std::string::npos) {
+        content.erase(pos, rel_path.size() + 1);
+    } else {
+        pos = content.find(rel_path);
+        if (pos == std::string::npos) return false;
+        content.erase(pos, rel_path.size());
+    }
+
+    std::ofstream fout(makefile_path);
+    if (!fout) return false;
+    fout << content;
+    return true;
+}
+
+static bool removeFileFromMesonBuild(const std::string& project_root, const std::string& rel_path)
+{
+    std::string meson_path = (std::filesystem::path(project_root) / "meson.build").string();
+    std::ifstream fin(meson_path);
+    if (!fin) return false;
+    std::string content((std::istreambuf_iterator<char>(fin)), {});
+    fin.close();
+
+    // Try ", 'rel_path'" (not the first entry)
+    std::string p1 = ", '" + rel_path + "'";
+    size_t pos = content.find(p1);
+    if (pos != std::string::npos) {
+        content.erase(pos, p1.size());
+    } else {
+        // Try "'rel_path', " (first entry)
+        std::string p2 = "'" + rel_path + "', ";
+        pos = content.find(p2);
+        if (pos != std::string::npos) {
+            content.erase(pos, p2.size());
+        } else {
+            // Last entry alone
+            std::string p3 = "'" + rel_path + "'";
+            pos = content.find(p3);
+            if (pos == std::string::npos) return false;
+            content.erase(pos, p3.size());
+        }
+    }
+
+    std::ofstream fout(meson_path);
+    if (!fout) return false;
+    fout << content;
+    return true;
+}
+
+void TextEditor::CloseProject()
+{
+    if (m_project.name.empty()) return;
+
+    if (msgwin_yesno("Close project '" + m_project.name + "'?",
+                     "Open files will remain in the editor.") != 1)
+        return;
+
+    m_project = GediProject{};
+
+    if (m_project_panel_open) {
+        m_project_panel_open    = false;
+        m_project_panel_focused = false;
+        m_renderer->showCursor();
+        handleResize();
+    }
+}
+
 void TextEditor::AddFileToProject()
 {
     namespace fs = std::filesystem;
 
-    // Find the project's CMakeLists.txt by searching upward from the current file
-    std::string start;
-    if (!currentBuffer().is_new_file && !currentBuffer().filename.empty())
-        start = fs::path(currentBuffer().filename).parent_path().string();
-    else {
-        char buf[1024];
-        if (getcwd(buf, sizeof(buf))) start = buf;
-    }
-
-    std::string cmake_path = findCMakeLists(start);
-    if (cmake_path.empty()) {
-        msgwin("No CMakeLists.txt found. Open a project file first.");
+    if (m_project.name.empty()) {
+        msgwin("No project loaded. Create or open a project first.");
         return;
     }
 
-    std::string project_dir = fs::path(cmake_path).parent_path().string();
-
     AddFileInfo info;
-    info.is_new    = true;
-    info.filepath  = project_dir + "/newfile.cpp";
+    info.is_new   = true;
+    info.filepath = m_project.root + "/newfile.cpp";
 
-    if (!AddFileDialog::show(*m_renderer, project_dir, info))
+    if (!AddFileDialog::show(*m_renderer, m_project.root, info))
         return;
 
     if (info.filepath.empty()) return;
@@ -1874,7 +2259,6 @@ void TextEditor::AddFileToProject()
                                  info.filepath) != 1)
                     return;
             } else {
-                // Create the file with a minimal template
                 std::ofstream f(info.filepath);
                 if (!f) { msgwin("Cannot create: " + info.filepath); return; }
 
@@ -1890,7 +2274,6 @@ void TextEditor::AddFileToProject()
                 } else if (ext == ".cpp" || ext == ".cc" || ext == ".cxx") {
                     f << "#include <iostream>\n\n";
                 }
-                // Other extensions: leave empty
             }
         } else {
             if (!fs::exists(info.filepath)) {
@@ -1899,25 +2282,49 @@ void TextEditor::AddFileToProject()
             }
         }
 
-        // Update CMakeLists.txt
-        bool updated = addFileToCMakeLists(cmake_path, info.filepath);
+        // Compute path relative to project root
+        std::string rel;
+        try { rel = fs::relative(info.filepath, m_project.root).string(); }
+        catch (...) { rel = info.filepath; }
 
-        // Open the file in the editor
+        // Add to project sources if not already tracked
+        bool already = false;
+        for (const auto& s : m_project.sources)
+            if (s == rel) { already = true; break; }
+        if (!already) {
+            m_project.sources.push_back(rel);
+            m_project.save();
+        }
+
+        // Update the build file
+        bool build_ok = false;
+        std::string build_file;
+        if (m_project.build_system == "cmake") {
+            build_file = (fs::path(m_project.root) / "CMakeLists.txt").string();
+            build_ok   = addFileToCMakeLists(build_file, info.filepath);
+        } else if (m_project.build_system == "make") {
+            build_file = (fs::path(m_project.root) / "Makefile").string();
+            build_ok   = addFileToMakefile(m_project.root, rel);
+        } else if (m_project.build_system == "meson") {
+            build_file = (fs::path(m_project.root) / "meson.build").string();
+            build_ok   = addFileToMesonBuild(m_project.root, rel);
+        }
+
+        // Reload the build file in the editor if it is currently open
+        if (!build_file.empty()) {
+            for (int i = 0; i < (int)m_bufferManager->bufferCount(); ++i) {
+                auto& buf = m_bufferManager->getBuffer(i);
+                if (buf.filename == build_file) { read_file(buf); break; }
+            }
+        }
+
+        // Open the new file in the editor
         m_bufferManager->addBuffer();
         currentBuffer().filename = info.filepath;
         read_file(currentBuffer());
 
-        // Reload CMakeLists.txt in the editor if it's currently open
-        for (int i = 0; i < (int)m_bufferManager->bufferCount(); ++i) {
-            auto& buf = m_bufferManager->getBuffer(i);
-            if (buf.filename == cmake_path) {
-                read_file(buf);
-                break;
-            }
-        }
-
-        if (!updated)
-            msgwin("File opened, but CMakeLists.txt could not be updated automatically.");
+        if (!build_ok)
+            msgwin("File added to project, but build file could not be updated automatically.");
 
         handleResize();
 
@@ -1995,14 +2402,10 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
     std::vector<std::string> finalMenuItems = menuItems;
     std::vector<bool> item_disabled(menuItems.size(), false);
 
-    if (menu_id == 5) { // Project — disable "Add File" when no CMakeLists.txt found
-        std::string start;
-        auto& buf = currentBuffer();
-        if (!buf.is_new_file && !buf.filename.empty())
-            start = std::filesystem::path(buf.filename).parent_path().string();
-        else { char cwd[1024]; if (getcwd(cwd, sizeof(cwd))) start = cwd; }
-        if (findCMakeLists(start).empty() && item_disabled.size() > 2)
-            item_disabled[2] = true;
+    if (menu_id == 5) { // Project — disable Close/Add when no project is loaded
+        bool no_project = m_project.name.empty();
+        if (no_project && item_disabled.size() > 2) item_disabled[2] = true; // Close Project
+        if (no_project && item_disabled.size() > 4) item_disabled[4] = true; // Add File
     }
 
     if (menu_id == 6) { // Window menu
@@ -2123,7 +2526,9 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
                 break;
             case 5: // Project
                 if (selection == 1) CreateNewProject();
-                else if (selection == 3) AddFileToProject();
+                else if (selection == 2) OpenProject();
+                else if (selection == 3) CloseProject();
+                else if (selection == 5) AddFileToProject();
                 break;
             case 6: // Window
                 if (selection == 1) {
@@ -2207,6 +2612,33 @@ void TextEditor::CloseWindow() {
 
 void TextEditor::SwitchToBuffer(int index) {
     m_bufferManager->setCurrentBufferIndex(index);
+}
+
+void TextEditor::openFileAtLine(const std::string& abs_path, int line, int col) {
+    bool found = false;
+    for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
+        if (m_bufferManager->getBuffer(i).filename == abs_path) {
+            SwitchToBuffer(static_cast<int>(i));
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        m_bufferManager->addBuffer();
+        currentBuffer().filename = abs_path;
+        read_file(currentBuffer());
+    }
+    if (line > 0) {
+        int target = std::min(line, currentBuffer().total_lines);
+        currentBuffer().current_line_num = target;
+        currentBuffer().cursor_col = std::max(1, col);
+        currentBuffer().current_line = currentBuffer().document_head;
+        for (int i = 1; i < target; ++i) {
+            if (currentBuffer().current_line->next)
+                currentBuffer().current_line = currentBuffer().current_line->next;
+        }
+        update_cursor_and_scroll();
+    }
 }
 
 void TextEditor::ActivateSearch() {
@@ -2314,38 +2746,55 @@ CompilationResult TextEditor::runCompilationProcess() {
     CompilationResult result;
     result.success = false;
 
-    if (currentBufferIdx() == -1) {
+    if (currentBufferIdx() == -1 && m_project.name.empty()) {
         msgwin("No file to compile.");
         return result;
     }
 
-    EditorBuffer& buffer = currentBuffer();
-    if (buffer.changed) {
-        write_file(buffer);
+    // Save all open buffers that have unsaved changes
+    for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
+        EditorBuffer& buf = m_bufferManager->getBuffer(i);
+        if (buf.changed && !buf.is_new_file && !buf.filename.empty())
+            write_file(buf);
     }
-    m_pre_compile_view_state.line_num = buffer.current_line_num;
-    m_pre_compile_view_state.col = buffer.cursor_col;
-    m_pre_compile_view_state.first_visible_line_num = 0;
 
-    result = m_buildSystem->runCompilationProcess(buffer);
+    // Record view state for ESC restore
+    if (currentBufferIdx() != -1) {
+        EditorBuffer& buffer = currentBuffer();
+        m_pre_compile_view_state.line_num = buffer.current_line_num;
+        m_pre_compile_view_state.col      = buffer.cursor_col;
+        m_pre_compile_view_state.first_visible_line_num = 0;
+    }
 
-    // Parse output for UI
-    m_compile_output_lines.clear();
-
-    // Use BuildSystem to parse for the UI error window
-    std::string full_output;
-    for(const auto& line : result.output_lines) full_output += line + "\n";
-    
-    std::vector<std::string> dummy;
-    m_compile_output_lines = m_buildSystem->parseCompilerOutput(full_output, dummy);
-
-    if (result.success) {
-        m_compile_output_lines.push_back({"--- Compilation Successful ---", CompileMessage::CMSG_NONE});
+    std::string base_dir;
+    if (!m_project.name.empty()) {
+        result   = m_buildSystem->runProjectBuild(m_project);
+        base_dir = m_project.root;
     } else {
-        m_compile_output_lines.push_back({"--- Compilation Failed ---", CompileMessage::CMSG_NONE});
+        EditorBuffer& buffer = currentBuffer();
+        result   = m_buildSystem->runCompilationProcess(buffer);
+        auto sep = buffer.filename.rfind('/');
+        if (sep != std::string::npos) base_dir = buffer.filename.substr(0, sep);
     }
 
+    // Parse raw output into navigable CompileMessage list
+    m_compile_output_lines.clear();
+    std::string full_output;
+    for (const auto& ln : result.output_lines) full_output += ln + "\n";
+
+    std::vector<std::string> dummy;
+    m_compile_output_lines = m_buildSystem->parseCompilerOutput(full_output, dummy, base_dir);
+
+    // Position cursor on the first error (or warning)
     m_compile_output_cursor_pos = 0;
+    for (int i = 0; i < (int)m_compile_output_lines.size(); ++i) {
+        auto t = m_compile_output_lines[i].type;
+        if (t == CompileMessage::CMSG_ERROR || t == CompileMessage::CMSG_WARNING) {
+            m_compile_output_cursor_pos = i;
+            break;
+        }
+    }
+
     return result;
 }
 
@@ -2374,11 +2823,22 @@ void TextEditor::compileAndRun() {
 
     // 5. Proceed based on the result
     if (result.success) {
+        const std::string& exe = result.executable_name;
+        if (exe.empty() || !std::filesystem::exists(exe)) {
+            msgwin("Build succeeded.\nExecutable not found at:\n" +
+                   (exe.empty() ? "(unknown)" : exe) +
+                   "\n\nRun the program manually from a terminal.");
+            m_compile_output_visible = true;
+            m_renderer->hideCursor();
+            return;
+        }
+
         def_prog_mode();
         endwin();
 
         std::string temp_output_file = "tedit_run_output.tmp";
-        std::string run_cmd = "./" + result.executable_name + " > " + temp_output_file + " 2>&1";
+        std::string run_cmd = (exe[0] == '/') ? "\"" + exe + "\"" : ("./" + exe);
+        run_cmd += " > " + temp_output_file + " 2>&1";
         system(run_cmd.c_str());
 
         std::ifstream run_output_stream(temp_output_file);
@@ -2430,7 +2890,11 @@ void TextEditor::drawCompileOutputWindow() {
     int startx = m_text_area_start_x - 1;
 
     // --- Draw UI Elements ---
-    m_renderer->drawBox(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::BoxStyle::DOUBLE);
+    std::string bld_title = m_project.name.empty()
+        ? " Compiler Output "
+        : " Build: " + m_project.name + " ";
+    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::BoxStyle::DOUBLE,
+                                 bld_title, Renderer::CP_DIALOG_TITLE, A_BOLD);
 
     // Draw the background
     wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
@@ -2671,4 +3135,215 @@ void TextEditor::loadHelpFile() {
 
 void TextEditor::showHelpDialog() {
     HelpDialog::show(*m_renderer, *m_helpProvider, m_help_history);
+}
+
+void TextEditor::ToggleProjectPanel() {
+    if (!m_project_panel_open && m_project.name.empty()) {
+        msgwin("No project loaded.");
+        return;
+    }
+    m_project_panel_open = !m_project_panel_open;
+    if (m_project_panel_open) {
+        m_project_panel_focused = true;
+        m_project_panel_cursor = 0;
+        m_project_panel_scroll = 0;
+    } else {
+        m_project_panel_focused = false;
+        m_renderer->showCursor();
+    }
+    handleResize();
+}
+
+void TextEditor::drawProjectPanel() {
+    namespace fs = std::filesystem;
+
+    int panel_y      = m_text_area_start_y - 1;
+    int panel_h      = m_text_area_end_y - m_text_area_start_y + 3;
+    int inner_w      = PANEL_W - 2;
+    int visible_count = panel_h - 2;
+
+    int title_flags = m_project_panel_focused ? A_BOLD : A_NORMAL;
+    m_renderer->drawBoxWithTitle(0, panel_y, PANEL_W, panel_h,
+                                 Renderer::CP_DIALOG_TITLE,
+                                 Renderer::BoxStyle::DOUBLE,
+                                 m_project.name,
+                                 Renderer::CP_DIALOG_TITLE,
+                                 title_flags);
+
+    // Build display list: build file first, then sources
+    std::vector<std::string> panel_list;
+    std::string build_name;
+    if      (m_project.build_system == "cmake") build_name = "CMakeLists.txt";
+    else if (m_project.build_system == "make")  build_name = "Makefile";
+    else if (m_project.build_system == "meson") build_name = "meson.build";
+    if (!build_name.empty()) panel_list.push_back(build_name);
+    for (const auto& s : m_project.sources) panel_list.push_back(s);
+
+    if (panel_list.empty()) {
+        std::string msg = "No files";
+        int mx = (PANEL_W - (int)msg.length()) / 2;
+        m_renderer->drawText(mx, panel_y + 1, msg, Renderer::CP_DEFAULT_TEXT);
+        return;
+    }
+
+    for (int i = 0; i < visible_count; ++i) {
+        int idx = m_project_panel_scroll + i;
+        if (idx >= (int)panel_list.size()) break;
+
+        int row_y      = panel_y + 1 + i;
+        bool is_cursor = m_project_panel_focused && (idx == m_project_panel_cursor);
+
+        std::string display = fs::path(panel_list[idx]).filename().string();
+        if ((int)display.length() > inner_w)
+            display = display.substr(0, inner_w);
+        display += std::string(inner_w - (int)display.length(), ' ');
+
+        int pair = is_cursor ? Renderer::CP_HIGHLIGHT : Renderer::CP_DEFAULT_TEXT;
+        int attr = is_cursor ? A_BOLD : A_NORMAL;
+        m_renderer->drawText(1, row_y, display, pair, attr);
+    }
+
+    // Scroll indicator
+    if ((int)panel_list.size() > visible_count) {
+        std::string ind = std::to_string(m_project_panel_cursor + 1) + "/" +
+                          std::to_string((int)panel_list.size());
+        if ((int)ind.length() > inner_w) ind = ind.substr(0, inner_w);
+        m_renderer->drawText(PANEL_W - 1 - (int)ind.length(),
+                             panel_y + panel_h - 1, ind,
+                             Renderer::CP_STATUS_BAR);
+    }
+
+    // Junction connectors where panel's right border meets editor box's left border
+    cchar_t top_conn, bot_conn;
+    setcchar(&top_conn, L"╦", WA_NORMAL, Renderer::CP_DIALOG_TITLE, NULL);
+    setcchar(&bot_conn, L"╩", WA_NORMAL, Renderer::CP_DIALOG_TITLE, NULL);
+    mvwadd_wch(stdscr, panel_y,                 PANEL_W - 1, &top_conn);
+    mvwadd_wch(stdscr, panel_y + panel_h - 1,   PANEL_W - 1, &bot_conn);
+}
+
+void TextEditor::handleProjectPanelKey(wint_t ch) {
+    if (ch == KEY_RESIZE) { handleResize(); return; }
+
+    EditorAction action = m_keyBindings->getAction(ch);
+    if (action == ACT_TOGGLE_PROJECT_PANEL) {
+        ToggleProjectPanel();
+        return;
+    }
+
+    // Build same list as drawProjectPanel so counts stay in sync
+    std::vector<std::string> panel_list;
+    std::string build_name;
+    if      (m_project.build_system == "cmake") build_name = "CMakeLists.txt";
+    else if (m_project.build_system == "make")  build_name = "Makefile";
+    else if (m_project.build_system == "meson") build_name = "meson.build";
+    if (!build_name.empty()) panel_list.push_back(build_name);
+    for (const auto& s : m_project.sources) panel_list.push_back(s);
+
+    int count         = (int)panel_list.size();
+    int panel_h       = m_text_area_end_y - m_text_area_start_y + 3;
+    int visible_count = panel_h - 2;
+
+    switch (ch) {
+    case KEY_UP:
+        if (m_project_panel_cursor > 0) {
+            m_project_panel_cursor--;
+            if (m_project_panel_cursor < m_project_panel_scroll)
+                m_project_panel_scroll = m_project_panel_cursor;
+        }
+        break;
+    case KEY_DOWN:
+        if (m_project_panel_cursor < count - 1) {
+            m_project_panel_cursor++;
+            if (m_project_panel_cursor >= m_project_panel_scroll + visible_count)
+                m_project_panel_scroll = m_project_panel_cursor - visible_count + 1;
+        }
+        break;
+    case KEY_ENTER:
+    case 10:
+    case 13:
+        if (m_project_panel_cursor < count)
+            openProjectPanelFile(m_project_panel_cursor);
+        break;
+    case KEY_DC: {
+        // The build file (first entry) cannot be removed from the project
+        int src_offset = build_name.empty() ? 0 : 1;
+        if (m_project_panel_cursor < src_offset) {
+            msgwin("The build file cannot be removed from the project.");
+            break;
+        }
+        int src_idx = m_project_panel_cursor - src_offset;
+        if (src_idx >= (int)m_project.sources.size()) break;
+
+        const std::string& rel = m_project.sources[src_idx];
+        if (msgwin_yesno("Remove '" + std::filesystem::path(rel).filename().string() + "' from project?",
+                         "The file will not be deleted from disk.") != 1)
+            break;
+
+        // Update the build file (best effort)
+        if (m_project.build_system == "cmake")
+            removeFileFromCMakeLists(
+                (std::filesystem::path(m_project.root) / "CMakeLists.txt").string(), rel);
+        else if (m_project.build_system == "make")
+            removeFileFromMakefile(m_project.root, rel);
+        else if (m_project.build_system == "meson")
+            removeFileFromMesonBuild(m_project.root, rel);
+
+        m_project.sources.erase(m_project.sources.begin() + src_idx);
+        m_project.save();
+
+        // Clamp cursor to the new list size
+        int new_count = (int)m_project.sources.size() + src_offset;
+        if (m_project_panel_cursor >= new_count && m_project_panel_cursor > 0)
+            m_project_panel_cursor--;
+        if (m_project_panel_scroll > m_project_panel_cursor)
+            m_project_panel_scroll = m_project_panel_cursor;
+        break;
+    }
+    case '\t':
+        m_project_panel_focused = false;
+        m_renderer->showCursor();
+        break;
+    case 27:
+        ToggleProjectPanel();
+        break;
+    default:
+        break;
+    }
+}
+
+void TextEditor::openProjectPanelFile(int index) {
+    namespace fs = std::filesystem;
+
+    // Build the same list used by drawProjectPanel / handleProjectPanelKey
+    std::vector<std::string> panel_list;
+    std::string build_name;
+    if      (m_project.build_system == "cmake") build_name = "CMakeLists.txt";
+    else if (m_project.build_system == "make")  build_name = "Makefile";
+    else if (m_project.build_system == "meson") build_name = "meson.build";
+    if (!build_name.empty()) panel_list.push_back(build_name);
+    for (const auto& s : m_project.sources) panel_list.push_back(s);
+
+    if (index < 0 || index >= (int)panel_list.size()) return;
+    std::string full = (fs::path(m_project.root) / panel_list[index]).string();
+
+    for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
+        if (m_bufferManager->getBuffer(i).filename == full) {
+            SwitchToBuffer((int)i);
+            m_project_panel_open    = false;
+            m_project_panel_focused = false;
+            m_renderer->showCursor();
+            handleResize();
+            return;
+        }
+    }
+
+    if (fs::exists(full)) {
+        DoNew();
+        currentBuffer().filename = full;
+        read_file(currentBuffer());
+    }
+    m_project_panel_open    = false;
+    m_project_panel_focused = false;
+    m_renderer->showCursor();
+    handleResize();
 }

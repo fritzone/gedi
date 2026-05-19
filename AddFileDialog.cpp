@@ -3,8 +3,6 @@
 #include <ncurses.h>
 #include <algorithm>
 
-// ── UTF-8 helpers ─────────────────────────────────────────────────────────────
-
 static void insertUtf8At(std::string& buf, int& pos, wint_t ch)
 {
     std::string enc;

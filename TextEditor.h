@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <future>
 
 #include "SyntaxHighlighter.h"
 #include "FileBrowser.h"
@@ -26,6 +27,7 @@
 #include "KeyBindings.h"
 #include "NewProjectDialog.h"
 #include "AddFileDialog.h"
+#include "GediProject.h"
 
 enum MenuAction { CLOSE_MENU, ITEM_SELECTED, NAVIGATE_LEFT, NAVIGATE_RIGHT, RESIZE_OCCURRED };
 
@@ -37,6 +39,8 @@ struct ViewState {
 
 class TextEditor final {
 private:
+    static constexpr int PANEL_W = 30;  // project panel width including borders
+
     bool main_loop_running = true;
 
     // --- Multi-buffer state ---
@@ -138,6 +142,7 @@ private:
     void ActivateMenuBar(int initial_menu_id);
     MenuAction CallSubMenu(const std::vector<std::string>& menuItems, int x, int y, int menu_id);
     void CreateNewProject();
+    void OpenProject();
     void AddFileToProject();
     void DoNew();
     void selectfile();
@@ -159,7 +164,27 @@ private:
     void loadHelpFile();
     void showHelpDialog();
     void NotImplemented() { msgwin("Not Implemented yet."); }
+    void ToggleProjectPanel();
+    void drawProjectPanel();
+    void handleProjectPanelKey(wint_t ch);
+    void openProjectPanelFile(int index);
+    void CloseProject();
+    void openFileAtLine(const std::string& abs_path, int line, int col);
 
+    // Project panel state
+    bool m_project_panel_open    = false;
+    bool m_project_panel_focused = false;
+    int  m_project_panel_cursor  = 0;
+    int  m_project_panel_scroll  = 0;
+
+    // Background library scan state
+    std::future<std::vector<LibraryInfo>> m_lib_future;
+    std::vector<LibraryInfo>              m_cached_libs;
+    bool                                  m_libs_cached = false;
+
+    // Currently open project (name.empty() means no project is loaded)
+    GediProject m_project;
 };
+
 
 #endif // TEXTEDITOR_H

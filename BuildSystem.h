@@ -5,10 +5,10 @@
 #include <vector>
 #include <map>
 #include "EditorBuffer.h"
-#include "ConfigManager.h" // For Config
+#include "ConfigManager.h"
 #include "CompilerSettings.h"
+#include "GediProject.h"
 
-// A struct to hold the results of a compilation
 struct CompilationResult {
     std::vector<std::string> output_lines;
     std::string executable_name;
@@ -16,23 +16,24 @@ struct CompilationResult {
     std::string full_command;
 };
 
-// A struct to hold parsed compiler message information
 struct CompileMessage {
-
     enum CompileMessageType { CMSG_NONE, CMSG_ERROR, CMSG_WARNING, CMSG_NOTE };
-
     std::string full_text;
+    std::string filename;   // absolute path to source file, empty if unknown
     CompileMessageType type = CMSG_NONE;
     int line = -1;
-    int col = -1;
+    int col  = -1;
 };
 
 class BuildSystem {
 public:
     BuildSystem(const Config& config);
-    
+
     CompilationResult runCompilationProcess(EditorBuffer& buffer);
-    std::vector<CompileMessage> parseCompilerOutput(const std::string& full_output_str, std::vector<std::string>& output_lines_out);
+    CompilationResult runProjectBuild(const GediProject& project);
+    std::vector<CompileMessage> parseCompilerOutput(const std::string& full_output_str,
+                                                    std::vector<std::string>& output_lines_out,
+                                                    const std::string& base_dir = "");
 
     void setConfig(const Config& config) { m_config = config; }
     void invalidateCache(const std::string& filename) { m_compile_command_cache.erase(filename); }

@@ -11,12 +11,13 @@ const int KEY_ALT_OFFSET = 10000;
 #define KEY_ALT(c) (KEY_ALT_OFFSET + (c))
 
 enum EditorAction {
-    ACT_NEW, ACT_NEW_PROJECT, ACT_ADD_FILE, ACT_OPEN, ACT_SAVE, ACT_SAVE_AS, ACT_EXIT,
+    ACT_NEW, ACT_NEW_PROJECT, ACT_OPEN_PROJECT, ACT_ADD_FILE, ACT_OPEN, ACT_SAVE, ACT_SAVE_AS, ACT_EXIT,
     ACT_UNDO, ACT_REDO, ACT_CUT, ACT_COPY, ACT_PASTE, ACT_DELETE,
     ACT_FIND, ACT_REPLACE, ACT_GOTO_LINE, ACT_GO_TO_DEFINITION,
     ACT_COMPILE, ACT_RUN, ACT_COMPILE_OPTIONS, ACT_TOGGLE_OUTPUT,
     ACT_NEXT_BUFFER, ACT_PREV_BUFFER, ACT_CLOSE_BUFFER,
     ACT_SETTINGS, ACT_HELP, ACT_ABOUT, ACT_TOGGLE_COMMENT,
+    ACT_TOGGLE_PROJECT_PANEL, ACT_CLOSE_PROJECT,
     ACT_UNKNOWN
 };
 
@@ -34,7 +35,8 @@ class KeyBindings {
 
     static constexpr std::array action_map{
         ActionMapping{ACT_NEW, "new"},
-        ActionMapping{ACT_NEW_PROJECT, "new_project"},
+        ActionMapping{ACT_NEW_PROJECT,  "new_project"},
+        ActionMapping{ACT_OPEN_PROJECT, "open_project"},
         ActionMapping{ACT_OPEN, "open"},
         ActionMapping{ACT_SAVE, "save"},
         ActionMapping{ACT_SAVE_AS, "save_as"},
@@ -59,7 +61,9 @@ class KeyBindings {
         ActionMapping{ACT_HELP, "help"},
         ActionMapping{ACT_ABOUT, "about"},
         ActionMapping{ACT_TOGGLE_COMMENT, "toggle_comment"},
-        ActionMapping{ACT_GO_TO_DEFINITION, "go_to_definition"}
+        ActionMapping{ACT_GO_TO_DEFINITION, "go_to_definition"},
+        ActionMapping{ACT_TOGGLE_PROJECT_PANEL, "toggle_project_panel"},
+        ActionMapping{ACT_CLOSE_PROJECT,        "close_project"}
     };
 
 public:

@@ -195,11 +195,6 @@ void FileBrowser::drawInputField(Renderer& renderer,
 
     renderer.drawText(x + 1, y, std::string(field_w, ' '), Renderer::CP_LIST_BOX);
     renderer.drawText(x + 1, y, full_label + val,         Renderer::CP_LIST_BOX);
-
-    if (focused) {
-        renderer.showCursor();
-        renderer.setCursor(x + 1 + (int)full_label.size() + (int)val.size(), y);
-    }
 }
 
 void FileBrowser::drawButtons(Renderer& renderer,
@@ -354,7 +349,18 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
                     can_text, focus == F_CANCEL,
                     pressed);
 
-        if (focus != F_INPUT) renderer.hideCursor();
+        // Set cursor position after all drawing so button writes don't misplace it
+        if (focus == F_INPUT && has_input) {
+            std::string full_label = " " + input_label + " ";
+            int field_w = (w - 2) - 2;
+            std::string val = filename_buf;
+            if ((int)(full_label.size() + val.size()) > field_w)
+                val = val.substr(val.size() - (field_w - full_label.size()));
+            renderer.showCursor();
+            renderer.setCursor(startx + 2 + (int)full_label.size() + (int)val.size(), input_y);
+        } else {
+            renderer.hideCursor();
+        }
         renderer.refresh();
 
         // ── Press animation then exit ─────────────────────────────────────────
@@ -452,7 +458,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
                     enter_dir(sel.name);
                 } else if (!dirs_only) {
                     filename_buf = sel.name;
-                    focus = F_INPUT;
+                    if (tryAccept()) pressed = true;
                 }
             }
             break;

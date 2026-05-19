@@ -21,8 +21,9 @@ void KeyBindings::loadDefaults() {
     m_keyToAction.clear();
 
     addBinding(ACT_NEW, CTRL('N'), "Ctrl+N");
-    addBinding(ACT_NEW_PROJECT, -1, "");
-    
+    addBinding(ACT_NEW_PROJECT,  -1, "");
+    addBinding(ACT_OPEN_PROJECT, -1, "");
+
     // Multiple bindings for Open
     addBinding(ACT_OPEN, CTRL('O'), "Ctrl+O");
     addBinding(ACT_OPEN, KEY_F(3), "F3");
@@ -38,7 +39,7 @@ void KeyBindings::loadDefaults() {
     addBinding(ACT_CUT, CTRL('X'), "Ctrl+X");
     addBinding(ACT_COPY, CTRL('C'), "Ctrl+C");
     addBinding(ACT_PASTE, CTRL('V'), "Ctrl+V");
-    addBinding(ACT_DELETE, KEY_DC, "Del");
+    addBinding(ACT_DELETE, -1, "");
     addBinding(ACT_FIND, CTRL('F'), "Ctrl+F");
     addBinding(ACT_REPLACE, CTRL('R'), "Ctrl+R");
     addBinding(ACT_GOTO_LINE, -1, "");
@@ -46,7 +47,7 @@ void KeyBindings::loadDefaults() {
     addBinding(ACT_COMPILE, KEY_ALT(KEY_F(9)), "Alt+F9"); 
     addBinding(ACT_RUN, CTRL(KEY_F(9)), "Ctrl+F9"); 
     addBinding(ACT_COMPILE_OPTIONS, -1, "");
-    addBinding(ACT_TOGGLE_OUTPUT, KEY_ALT(KEY_F(5)), "Alt+F5");
+    addBinding(ACT_TOGGLE_OUTPUT, KEY_F(5), "F5");
     addBinding(ACT_NEXT_BUFFER, KEY_F(6), "F6");
     addBinding(ACT_PREV_BUFFER, KEY_F(18), "Shift+F6"); 
     addBinding(ACT_CLOSE_BUFFER, KEY_ALT(KEY_F(3)), "Alt+F3");
@@ -54,6 +55,8 @@ void KeyBindings::loadDefaults() {
     addBinding(ACT_HELP, KEY_F(1), "F1");
     addBinding(ACT_ABOUT, -1, "");
     addBinding(ACT_TOGGLE_COMMENT, CTRL('/'), "Ctrl+/");
+    addBinding(ACT_TOGGLE_PROJECT_PANEL, KEY_ALT('0'), "Alt+0");
+    addBinding(ACT_CLOSE_PROJECT, -1, "");
 }
 
 int KeyBindings::getKey(EditorAction action) const {

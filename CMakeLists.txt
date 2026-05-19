@@ -49,6 +49,7 @@ if(CURSES_FOUND AND CLANG_FOUND)
         HelpDialog.cpp
         NewProjectDialog.cpp
         AddFileDialog.cpp
+        GediProject.cpp
         utils.cpp
         DialogBase.cpp
 
@@ -70,6 +71,7 @@ if(CURSES_FOUND AND CLANG_FOUND)
         KeyBindings.h
         MessageDialog.h
         NavigationGraph.h
+        GediProject.h
         NewProjectDialog.h
         QuestionDialog.h
         Renderer.h
