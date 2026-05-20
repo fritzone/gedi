@@ -34,7 +34,14 @@
 #define KEY_CTRL_W 23
 
 void TextEditor::OpenFileBrowser() {
-    std::string filename = FileBrowser::open(*m_renderer);
+    static const std::vector<FilterEntry> kFilters = {
+        {"C/C++ Files (*.cpp *.c *.h *.hpp *.cc)", "*.cpp;*.c;*.h;*.hpp;*.hxx;*.cc;*.cxx"},
+        {"Source Files (*.cpp *.c *.cc)",           "*.cpp;*.c;*.cc;*.cxx"},
+        {"Header Files (*.h *.hpp)",                "*.h;*.hpp;*.hxx"},
+        {"Text Files (*.txt)",                      "*.txt"},
+        {"All Files (*)",                           ""},
+    };
+    std::string filename = FileBrowser::open(*m_renderer, "Open File", kFilters);
     if (!filename.empty()) {
         for(size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
             if (m_bufferManager->getBuffer(i).filename == filename) {
@@ -53,7 +60,13 @@ void TextEditor::OpenFileBrowser() {
 void TextEditor::SaveFileBrowser() {
     if (currentBufferIdx() == -1) return;
     EditorBuffer& buffer = currentBuffer();
-    std::string filename = FileBrowser::save(*m_renderer, buffer.filename);
+    static const std::vector<FilterEntry> kFilters = {
+        {"C/C++ Files (*.cpp *.c *.h *.hpp *.cc)", "*.cpp;*.c;*.h;*.hpp;*.hxx;*.cc;*.cxx"},
+        {"Source Files (*.cpp *.c *.cc)",           "*.cpp;*.c;*.cc;*.cxx"},
+        {"Header Files (*.h *.hpp)",                "*.h;*.hpp;*.hxx"},
+        {"All Files (*)",                           ""},
+    };
+    std::string filename = FileBrowser::save(*m_renderer, buffer.filename, kFilters);
     if (!filename.empty()) {
         buffer.filename = filename;
         write_file(buffer);
@@ -569,8 +582,8 @@ void TextEditor::updateMenuLabels() {
 
     m_submenu_search = {
         formatMenuItem("&Find...", ACT_FIND),
-        " Find &Next",
-        " Find Pre&vious",
+        formatMenuItem("Find &Next", ACT_FIND_NEXT),
+        formatMenuItem("Find Pre&vious", ACT_FIND_PREV),
         formatMenuItem("&Replace...", ACT_REPLACE),
         " -------------- ",
         formatMenuItem("&Go To Line...", ACT_GOTO_LINE)
@@ -2031,7 +2044,10 @@ void TextEditor::OpenProject()
 {
     namespace fs = std::filesystem;
 
-    std::string path = FileBrowser::open(*m_renderer);
+    std::string path = FileBrowser::open(*m_renderer, "Open Project", {
+        {"Project Files (*.gproj)", "*.gproj"},
+        {"All Files (*)",           ""},
+    });
     if (path.empty()) return;
 
     if (path.size() < 6 || path.substr(path.size() - 6) != ".gproj") {
@@ -2440,15 +2456,14 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
             std::string hotkey_num = (i < 9) ? std::to_string(i + 1) : "0";
             std::string filename_to_display = get_filename_from_path(get_full_path(m_bufferManager->getBuffer(i).filename));
             std::string text_part = " &" + hotkey_num + " " + filename_to_display;
-            std::string hotkey_part = "Alt+" + hotkey_num;
+            std::string hotkey_part = "Alt+" + hotkey_num + " ";
             const int total_width = 28;
             if (text_part.length() + hotkey_part.length() + 1 > total_width) {
                 int available_len = total_width - hotkey_part.length() - 1 - 3;
                 if (available_len < 5) available_len = 5;
                 text_part = text_part.substr(0, available_len) + "...";
             }
-            int padding = total_width - text_part.length() - hotkey_part.length();
-            if (padding < 1) padding = 1;
+            int padding = total_width - text_part.length() - hotkey_part.length() + 2;
             std::string item = text_part + std::string(padding, ' ') + hotkey_part;
             finalMenuItems.push_back(item);
         }
@@ -2486,13 +2501,16 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
                 wattroff(stdscr, COLOR_PAIR(Renderer::CP_MENU_ITEM));
                 continue;
             }
+
             m_renderer->drawText(x + 1, y + 1 + i, std::string(w - 2, ' '), Renderer::CP_MENU_ITEM);
             bool is_selected = (i + 1) == selection;
             bool is_disabled = (i < item_disabled.size() && item_disabled[i]);
             int text_color = is_disabled ? Renderer::CP_DIALOG
                            : (is_selected ? Renderer::CP_MENU_SELECTED : Renderer::CP_MENU_ITEM);
+
             m_renderer->drawStyledText(x + 2, y + 1 + i, finalMenuItems[i], text_color);
         }
+
         m_renderer->refresh();
         ch = m_renderer->getChar();
         switch (ch) {

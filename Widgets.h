@@ -171,13 +171,17 @@ struct ComboBox {
     void draw(Renderer& renderer, int startx, int starty, bool focused) const {
         if (items.empty()) return;
         std::string text = items[selected_idx];
-        int inner_w = w - 4;
+        // Suffix: " ▼ ]" (4 display cols) when multiple items, "   ]" otherwise.
+        // ▼ is U+25BC encoded as \xe2\x96\xbc (3 bytes, 1 display col).
+        const std::string suffix = (items.size() > 1) ? " \xe2\x96\xbc ]" : "   ]";
+        int inner_w = w - 6;   // "[ "(2) + content + suffix(4 display cols)
+        if (inner_w < 1) inner_w = 1;
         if ((int)text.length() > inner_w) text = text.substr(0, inner_w);
         int color = focused ? Renderer::CP_MENU_SELECTED : Renderer::CP_LIST_BOX;
-        renderer.drawText(startx + x,         starty + y, "[ ",  Renderer::CP_DIALOG);
+        renderer.drawText(startx + x,         starty + y, "[ ", Renderer::CP_DIALOG);
         renderer.drawText(startx + x + 2,     starty + y,
-                          text + std::string(inner_w - text.length(), ' '), color);
-        renderer.drawText(startx + x + w - 2, starty + y, " ]",  Renderer::CP_DIALOG);
+                          text + std::string(inner_w - (int)text.length(), ' '), color);
+        renderer.drawText(startx + x + w - 4, starty + y, suffix, Renderer::CP_DIALOG);
     }
 
     bool handleKey(wint_t ch) {

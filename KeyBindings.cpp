@@ -50,7 +50,7 @@ void KeyBindings::loadDefaults() {
     addBinding(ACT_TOGGLE_OUTPUT, KEY_F(5), "F5");
     addBinding(ACT_NEXT_BUFFER, KEY_F(6), "F6");
     addBinding(ACT_PREV_BUFFER, KEY_F(18), "Shift+F6"); 
-    addBinding(ACT_CLOSE_BUFFER, KEY_ALT(KEY_F(3)), "Alt+F3");
+    addBinding(ACT_CLOSE_BUFFER, CTRL('W'), "Ctrl+W");
     addBinding(ACT_SETTINGS, -1, "");
     addBinding(ACT_HELP, KEY_F(1), "F1");
     addBinding(ACT_ABOUT, -1, "");
