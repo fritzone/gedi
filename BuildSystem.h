@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <mutex>
 #include "EditorBuffer.h"
 #include "ConfigManager.h"
 #include "CompilerSettings.h"
@@ -39,6 +40,9 @@ public:
     void invalidateCache(const std::string& filename) { m_compile_command_cache.erase(filename); }
 
     std::vector<std::string> getClangArguments(EditorBuffer& buffer);
+    // Thread-safe overload: call this from background threads.
+    std::vector<std::string> getClangArguments(const std::string& filename,
+                                               const CompilerSettings& settings);
     std::string guessCompileCommand(const std::string& filename);
     std::string get_full_compile_command(const std::string& base_command, const CompilerSettings& settings);
 
@@ -50,6 +54,7 @@ public:
 
 private:
     Config m_config;
+    std::mutex m_cache_mutex;
     std::map<std::string, std::string> m_compile_command_cache;
 };
 

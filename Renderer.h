@@ -24,6 +24,7 @@ public:
         CP_DIALOG_TITLE,
         CP_CHANGED_INDICATOR,
         CP_LIST_BOX,
+        CP_LIST_SELECTED,         // selected row inside a list/file-browser box
         CP_SYNTAX_KEYWORD,
         CP_SYNTAX_COMMENT,
         CP_SYNTAX_STRING,
@@ -41,7 +42,15 @@ public:
         CP_GUTTER_BG,
         CP_GUTTER_FG,
         CP_BUTTON_BG,
-        CP_BUTTON_SELECTED_BG
+        CP_BUTTON_SELECTED_BG,
+        // Semantic (libclang) syntax colors — C/C++ only
+        CP_SYNTAX_TYPE,           // struct / class / enum / typedef
+        CP_SYNTAX_FUNCTION,       // function and method names
+        CP_SYNTAX_PARAMETER,      // function parameters
+        CP_SYNTAX_FIELD,          // member fields
+        CP_SYNTAX_NAMESPACE,      // namespaces
+        CP_SYNTAX_ENUM_CONSTANT,  // enum constants
+        CP_SYNTAX_MACRO           // macro expansions
     };
 
     enum BoxStyle { SINGLE, DOUBLE };

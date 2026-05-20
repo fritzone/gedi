@@ -429,6 +429,8 @@ void NewProjectDialog::onDraw(Renderer& renderer, int startx, int starty)
             }
         }
     }
+
+    cfg_combo_.drawDropdown(renderer, startx, starty);
 }
 
 // ── onPlaceCursor ─────────────────────────────────────────────────────────────

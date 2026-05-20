@@ -32,6 +32,7 @@ if(CURSES_FOUND AND CLANG_FOUND)
         Renderer.cpp
         TextEditor.cpp
         SyntaxHighlighter.cpp
+        ClangHighlighter.cpp
         FileBrowser.cpp
         ConfigManager.cpp
         BuildSystem.cpp
@@ -56,6 +57,7 @@ if(CURSES_FOUND AND CLANG_FOUND)
         utils.cpp
         DialogBase.cpp
 
+        ClangHighlighter.h
         BufferManager.h
         BuildOutputDialog.h
         BuildSystem.h
@@ -91,6 +93,15 @@ if(CURSES_FOUND AND CLANG_FOUND)
     )
 
     target_link_libraries(${PROJECT_NAME} ${CURSES_LIBRARIES} ${CLANG_LIBRARY})
+
+    # Keep data files alongside the binary for running from the build directory
+    foreach(_data_file colors.json config.json help.hlp)
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_SOURCE_DIR}/${_data_file}
+                $<TARGET_FILE_DIR:${PROJECT_NAME}>/${_data_file}
+            COMMENT "Copying ${_data_file} to build directory")
+    endforeach()
 
 endif()
 

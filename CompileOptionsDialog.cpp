@@ -4,8 +4,6 @@
 #include <ncurses.h>
 #include <cstdio>
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-
 static std::vector<OptionList::Option> buildOptions(const CompilerSettings& s, int tab)
 {
     using O = OptionList::Option;
@@ -60,8 +58,6 @@ static std::vector<OptionList::Option> buildOptions(const CompilerSettings& s, i
     };
 }
 
-// ── Constructor ───────────────────────────────────────────────────────────────
-
 CompileOptionsDialog::CompileOptionsDialog(Renderer&          renderer,
                                            BuildSystem&       buildSystem,
                                            CompilerSettings&  settings,
@@ -83,8 +79,6 @@ CompileOptionsDialog::CompileOptionsDialog(Renderer&          renderer,
         if (standards_[i] == temp_.cpp_standard) { std_idx_ = i; break; }
 }
 
-// ── Static factory ────────────────────────────────────────────────────────────
-
 void CompileOptionsDialog::show(Renderer&          renderer,
                                 BuildSystem&       buildSystem,
                                 CompilerSettings&  settings,
@@ -94,8 +88,6 @@ void CompileOptionsDialog::show(Renderer&          renderer,
     CompileOptionsDialog dlg(renderer, buildSystem, settings, project, filename);
     dlg.run(renderer);
 }
-
-// ── onInit ────────────────────────────────────────────────────────────────────
 
 void CompileOptionsDialog::onInit()
 {
@@ -193,8 +185,6 @@ void CompileOptionsDialog::onInit()
     setGroupBtnFocus(0);
 }
 
-// ── onDraw ────────────────────────────────────────────────────────────────────
-
 void CompileOptionsDialog::onDraw(Renderer& renderer, int startx, int starty)
 {
     renderer.drawText(startx + 2, starty + COMBO_Y, "C++ Standard:", Renderer::CP_DIALOG);
@@ -242,8 +232,6 @@ void CompileOptionsDialog::onDraw(Renderer& renderer, int startx, int starty)
                           cmd_focused ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
     }
 }
-
-// ── onKey ─────────────────────────────────────────────────────────────────────
 
 HandleResult CompileOptionsDialog::onKey(wint_t ch)
 {

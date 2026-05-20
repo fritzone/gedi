@@ -4,7 +4,34 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <unordered_map>
+#include <memory>
+#include <mutex>
+#include <atomic>
+#include <cstdint>
 #include "CompilerSettings.h"
+
+// A single definition location extracted from a parsed TU.
+struct SymbolDef {
+    std::string file;   // absolute path
+    unsigned    line = 0;
+    unsigned    col  = 0;
+};
+
+// Per-buffer libclang semantic highlight cache.
+// The background ClangHighlighter thread writes colors and the definition map
+// into this struct; the rendering thread reads colors lock-free via the
+// shared_ptr snapshot; GoToDefinition reads the definition map under mutex.
+struct SemanticCache {
+    std::mutex                                           mutex;
+    std::shared_ptr<std::vector<std::vector<uint8_t>>>   colors; // [line0][col0] = CP_* (0 = regex fallback)
+    // Symbol name → all definition locations visible in this TU (non-system only).
+    // Populated by ClangHighlighter; read by GoToDefinition for instant lookup.
+    std::unordered_map<std::string, std::vector<SymbolDef>> definition_map;
+    std::atomic<bool>  dirty{true};
+    std::atomic<bool>  in_progress{false};
+    std::atomic<int>   version{0};
+};
 
 struct Line {
     std::string text;
@@ -65,6 +92,7 @@ public:
     std::vector<UndoRecord> undo_stack;
     std::vector<UndoRecord> redo_stack;
     CompilerSettings compiler_settings;
+    std::shared_ptr<SemanticCache> semantic_cache{std::make_shared<SemanticCache>()};
 
 };
 

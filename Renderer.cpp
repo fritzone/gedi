@@ -11,6 +11,9 @@ Renderer::Renderer() {
     set_escdelay(25);
     cbreak(); noecho();
     keypad(stdscr, TRUE); nodelay(stdscr, TRUE); curs_set(1);
+    // Pin Ctrl+Down (terminfo kDN5) to a stable key code used by ComboBox
+    const char* kdn5 = tigetstr("kDN5");
+    if (kdn5 && kdn5 != (char*)-1) define_key(kdn5, 525);
     start_color(); use_default_colors();
     getmaxyx(stdscr, m_height, m_width);
     struct termios term;
@@ -34,6 +37,7 @@ Renderer::Renderer() {
         {"dialog_button", CP_DIALOG_BUTTON}, {"selection", CP_SELECTION}, {"status_bar", CP_STATUS_BAR},
         {"status_bar_highlight", CP_STATUS_BAR_HIGHLIGHT}, {"shadow", CP_SHADOW}, {"dialog_title", CP_DIALOG_TITLE},
         {"changed_indicator", CP_CHANGED_INDICATOR}, {"list_box", CP_LIST_BOX},
+        {"list_selected", CP_LIST_SELECTED},
         {"keyword", CP_SYNTAX_KEYWORD}, {"comment", CP_SYNTAX_COMMENT},
         {"string", CP_SYNTAX_STRING}, {"number", CP_SYNTAX_NUMBER}, {"preprocessor", CP_SYNTAX_PREPROCESSOR},
         {"register_variable", CP_SYNTAX_REGISTER_VAR},
@@ -42,7 +46,12 @@ Renderer::Renderer() {
         {"button_bg", CP_BUTTON_BG}, {"button_text", CP_BUTTON_TEXT},
         {"button_hotkey", CP_BUTTON_HOTKEY}, {"button_selected_bg", CP_BUTTON_SELECTED_BG},
         {"button_selected_text", CP_BUTTON_SELECTED_TEXT}, {"button_selected_hotkey", CP_BUTTON_SELECTED_HOTKEY},
-        {"button_shadow", CP_BUTTON_SHADOW}
+        {"button_shadow", CP_BUTTON_SHADOW},
+        // Semantic syntax
+        {"type", CP_SYNTAX_TYPE}, {"function", CP_SYNTAX_FUNCTION},
+        {"parameter", CP_SYNTAX_PARAMETER}, {"field", CP_SYNTAX_FIELD},
+        {"namespace", CP_SYNTAX_NAMESPACE}, {"enum_constant", CP_SYNTAX_ENUM_CONSTANT},
+        {"macro", CP_SYNTAX_MACRO}
     };
 }
 
@@ -285,7 +294,8 @@ void Renderer::createDefaultColorsFile() {
         {"status_bar", {{"fg", "black"}, {"bg", "white"}}},
         {"status_bar_highlight", {{"fg", "red"}, {"bg", "white"}}},
         {"shadow", {{"fg", "white"}, {"bg", "black"}}},
-        {"changed_indicator", {{"fg", "green"}, {"bg", "blue"}, {"bold", true}}}
+        {"changed_indicator", {{"fg", "green"}, {"bg", "blue"}, {"bold", true}}},
+        {"list_selected", {{"fg", "black"}, {"bg", "cyan"}}}
     };
     j["syntax"] = {
         {"keyword", {{"fg", "white"}, {"bg", "blue"}, {"bold", true}}},
@@ -293,7 +303,14 @@ void Renderer::createDefaultColorsFile() {
         {"string", {{"fg", "red"}, {"bg", "blue"}}},
         {"number", {{"fg", "red"}, {"bg", "blue"}}},
         {"preprocessor", {{"fg", "cyan"}, {"bg", "blue"}}},
-        {"register_variable", {{"fg", "yellow"}, {"bg", "blue"}}}
+        {"register_variable", {{"fg", "yellow"}, {"bg", "blue"}}},
+        {"type", {{"fg", "white"}, {"bg", "blue"}, {"bold", true}}},
+        {"function", {{"fg", "brightyellow"}, {"bg", "blue"}}},
+        {"parameter", {{"fg", "brightcyan"}, {"bg", "blue"}}},
+        {"field", {{"fg", "brightmagenta"}, {"bg", "blue"}}},
+        {"namespace", {{"fg", "brightblue"}, {"bg", "blue"}}},
+        {"enum_constant", {{"fg", "brightred"}, {"bg", "blue"}}},
+        {"macro", {{"fg", "brightgreen"}, {"bg", "blue"}, {"bold", true}}}
     };
     std::ofstream o("/usr/share/gedi/colors.json");
     o << std::setw(4) << j << std::endl;

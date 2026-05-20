@@ -1,5 +1,6 @@
 #include "TextEditor.h"
 #include "SyntaxHighlighter.h"
+#include "ClangHighlighter.h"
 #include "FileBrowser.h"
 #include "PickTargetDialog.h"
 #include "utils.h"
@@ -85,9 +86,28 @@ void TextEditor::run(int argc, char* argv[]) {
     
     std::string configPath = "config.json";
     std::string colorsPath = "colors.json";
-    
-    if (!std::filesystem::exists(configPath)) configPath = "/usr/share/gedi/config.json";
-    if (!std::filesystem::exists(colorsPath)) colorsPath = "/usr/share/gedi/colors.json";
+
+    // Determine executable directory for relative path fallback
+    std::filesystem::path exe_dir;
+    {
+        std::error_code ec;
+        auto exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+        if (!ec) exe_dir = exe.parent_path();
+    }
+
+    if (!std::filesystem::exists(configPath) && !exe_dir.empty())
+        configPath = (exe_dir / "config.json").string();
+    if (!std::filesystem::exists(configPath) && !exe_dir.empty())
+        configPath = (exe_dir.parent_path() / "config.json").string();
+    if (!std::filesystem::exists(configPath))
+        configPath = "/usr/share/gedi/config.json";
+
+    if (!std::filesystem::exists(colorsPath) && !exe_dir.empty())
+        colorsPath = (exe_dir / "colors.json").string();
+    if (!std::filesystem::exists(colorsPath) && !exe_dir.empty())
+        colorsPath = (exe_dir.parent_path() / "colors.json").string();
+    if (!std::filesystem::exists(colorsPath))
+        colorsPath = "/usr/share/gedi/colors.json";
 
     m_configManager = std::make_unique<ConfigManager>(configPath, colorsPath);
     m_configManager->loadConfig(m_config);
@@ -202,6 +222,7 @@ void TextEditor::read_file(EditorBuffer& buffer) {
     }
 
     SyntaxHighlighter::setSyntaxType(buffer);
+    ClangHighlighter::requestHighlight(buffer, m_buildSystem.get());
 }
 
 void TextEditor::write_file(EditorBuffer& buffer) {
@@ -214,6 +235,9 @@ void TextEditor::write_file(EditorBuffer& buffer) {
 
     // Invalidate the compile command cache for this file, as its content has changed.
     m_buildSystem->invalidateCache(buffer.filename);
+
+    // Re-run semantic highlighting with the saved (definitive) content.
+    ClangHighlighter::requestHighlight(buffer, m_buildSystem.get());
 }
 
 void TextEditor::TryExit() {
@@ -332,6 +356,15 @@ void TextEditor::drawTextArea() {
         temp = temp->next;
     }
 
+    // Grab a lock-free snapshot of the semantic color table (may be nullptr).
+    // Only use it when the buffer is unmodified: any edit shifts line numbers and
+    // makes the cached per-line data stale/misaligned.
+    std::shared_ptr<std::vector<std::vector<uint8_t>>> sem_snap;
+    if (buffer.semantic_cache && !buffer.changed) {
+        std::unique_lock<std::mutex> lk(buffer.semantic_cache->mutex, std::try_to_lock);
+        if (lk.owns_lock()) sem_snap = buffer.semantic_cache->colors;
+    }
+
     for(int i = 0; i < text_area_height; ++i) {
         int current_screen_y = m_text_area_start_y + i;
 
@@ -378,6 +411,20 @@ void TextEditor::drawTextArea() {
                             if (token_idx < tokens.size()) {
                                 color = tokens[token_idx].colorId;
                                 flags = tokens[token_idx].flags;
+                            }
+                        }
+                        // Semantic override: if libclang assigned a color for this
+                        // character, it takes precedence over the regex token color.
+                        if (sem_snap) {
+                            unsigned li = static_cast<unsigned>(current_doc_line + i);
+                            unsigned ci = static_cast<unsigned>(char_idx);
+                            if (li < sem_snap->size() && ci < (*sem_snap)[li].size()) {
+                                uint8_t sc = (*sem_snap)[li][ci];
+                                if (sc != 0) {
+                                    color = sc;
+                                    flags = m_renderer->getStyleFlags(
+                                        static_cast<Renderer::ColorPairID>(sc));
+                                }
                             }
                         }
                     }
@@ -549,65 +596,65 @@ void TextEditor::updateMenuLabels() {
     m_menu_positions = { 1, 7, 13, 21, 28, 37, 45, 54 };
 
     m_submenu_file = {
-        formatMenuItem("&New", ACT_NEW),
-        formatMenuItem("&Open...", ACT_OPEN),
+        formatMenuItem("&New", EditorAction::ACT_NEW),
+        formatMenuItem("&Open...", EditorAction::ACT_OPEN),
         " -------------- ",
-        formatMenuItem("&Save", ACT_SAVE),
-        formatMenuItem("Save &As...", ACT_SAVE_AS),
+        formatMenuItem("&Save", EditorAction::ACT_SAVE),
+        formatMenuItem("Save &As...", EditorAction::ACT_SAVE_AS),
         " -------------- ",
-        formatMenuItem("E&xit", ACT_EXIT)
+        formatMenuItem("E&xit", EditorAction::ACT_EXIT)
     };
 
     m_submenu_project = {
-        formatMenuItem("New &Project...",           ACT_NEW_PROJECT),        // sel 1
-        formatMenuItem("&Open Project...",          ACT_OPEN_PROJECT),       // sel 2
-        formatMenuItem("Project &Properties...",    ACT_PROJECT_PROPERTIES), // sel 3
-        formatMenuItem("&Close Project",            ACT_CLOSE_PROJECT),      // sel 4
+        formatMenuItem("New &Project...",           EditorAction::ACT_NEW_PROJECT),        // sel 1
+        formatMenuItem("&Open Project...",          EditorAction::ACT_OPEN_PROJECT),       // sel 2
+        formatMenuItem("Project &Properties...",    EditorAction::ACT_PROJECT_PROPERTIES), // sel 3
+        formatMenuItem("&Close Project",            EditorAction::ACT_CLOSE_PROJECT),      // sel 4
         " -------------- ",                                                    // sel 5
-        formatMenuItem("Add &File to Project...",   ACT_ADD_FILE)            // sel 6
+        formatMenuItem("Add &File to Project...",   EditorAction::ACT_ADD_FILE)            // sel 6
     };
 
     m_submenu_edit = {
-        formatMenuItem("&Undo", ACT_UNDO),
-        formatMenuItem("&Redo", ACT_REDO),
+        formatMenuItem("&Undo", EditorAction::ACT_UNDO),
+        formatMenuItem("&Redo", EditorAction::ACT_REDO),
         " -------------- ",
-        formatMenuItem("Cu&t", ACT_CUT),
-        formatMenuItem("&Copy", ACT_COPY),
-        formatMenuItem("&Paste", ACT_PASTE),
-        formatMenuItem("&Delete", ACT_DELETE),
+        formatMenuItem("Cu&t", EditorAction::ACT_CUT),
+        formatMenuItem("&Copy", EditorAction::ACT_COPY),
+        formatMenuItem("&Paste", EditorAction::ACT_PASTE),
+        formatMenuItem("&Delete", EditorAction::ACT_DELETE),
         " -------------- ",
-        formatMenuItem("Comment Line", ACT_TOGGLE_COMMENT),
-        formatMenuItem("Uncomment Line", ACT_TOGGLE_COMMENT)
+        formatMenuItem("Comment Line", EditorAction::ACT_TOGGLE_COMMENT),
+        formatMenuItem("Uncomment Line", EditorAction::ACT_TOGGLE_COMMENT)
     };
 
     m_submenu_search = {
-        formatMenuItem("&Find...", ACT_FIND),
-        formatMenuItem("Find &Next", ACT_FIND_NEXT),
-        formatMenuItem("Find Pre&vious", ACT_FIND_PREV),
-        formatMenuItem("&Replace...", ACT_REPLACE),
+        formatMenuItem("&Find...", EditorAction::ACT_FIND),
+        formatMenuItem("Find &Next", EditorAction::ACT_FIND_NEXT),
+        formatMenuItem("Find Pre&vious", EditorAction::ACT_FIND_PREV),
+        formatMenuItem("&Replace...", EditorAction::ACT_REPLACE),
         " -------------- ",
-        formatMenuItem("&Go To Line...", ACT_GOTO_LINE)
+        formatMenuItem("&Go To Line...", EditorAction::ACT_GOTO_LINE)
     };
 
     m_submenu_build = {
-        formatMenuItem("&Run", ACT_RUN),
-        formatMenuItem("&Compile", ACT_COMPILE),
-        formatMenuItem("Compile &Options...", ACT_COMPILE_OPTIONS)
+        formatMenuItem("&Run", EditorAction::ACT_RUN),
+        formatMenuItem("&Compile", EditorAction::ACT_COMPILE),
+        formatMenuItem("Compile &Options...", EditorAction::ACT_COMPILE_OPTIONS)
     };
 
     m_submenu_window = {
-        formatMenuItem("&Output Screen", ACT_TOGGLE_OUTPUT),
+        formatMenuItem("&Output Screen", EditorAction::ACT_TOGGLE_OUTPUT),
         " -------------- ",
-        formatMenuItem("&Next Window", ACT_NEXT_BUFFER),
-        formatMenuItem("&Previous Window", ACT_PREV_BUFFER),
-        formatMenuItem("&Close Window", ACT_CLOSE_BUFFER)
+        formatMenuItem("&Next Window", EditorAction::ACT_NEXT_BUFFER),
+        formatMenuItem("&Previous Window", EditorAction::ACT_PREV_BUFFER),
+        formatMenuItem("&Close Window", EditorAction::ACT_CLOSE_BUFFER)
     };
 
-    m_submenu_options = { formatMenuItem("Editor &Settings...", ACT_SETTINGS) };
+    m_submenu_options = { formatMenuItem("Editor &Settings...", EditorAction::ACT_SETTINGS) };
 
     m_submenu_help = {
-        formatMenuItem("&View Help...", ACT_HELP),
-        formatMenuItem("&About...", ACT_ABOUT)
+        formatMenuItem("&View Help...", EditorAction::ACT_HELP),
+        formatMenuItem("&About...", EditorAction::ACT_ABOUT)
     };
 }
 
@@ -782,7 +829,7 @@ void TextEditor::HandleAltKey(wint_t key) {
     if (key >= 'a' && key <= 'z') lookup_key = toupper(key);
     
     EditorAction action = m_keyBindings->getAction(KEY_ALT(lookup_key));
-    if (action != ACT_UNKNOWN) {
+    if (action != EditorAction::ACT_UNKNOWN) {
         process_key(KEY_ALT(lookup_key)); // Dispatch via standard action mechanism
         return;
     }
@@ -1111,188 +1158,274 @@ void TextEditor::GoToDefinition() {
     if (currentBufferIdx() == -1) return;
     EditorBuffer& buffer = currentBuffer();
 
-    // 0. Extract symbol name for display
+    // 0. Extract symbol name for the status bar display
     std::string symbol_name;
     if (buffer.current_line) {
         int col = buffer.cursor_col - 1;
         const std::string& text = buffer.current_line->text;
         if (col < (int)text.length()) {
-            // Find start of identifier
             int start = col;
             while (start > 0 && (isalnum(text[start-1]) || text[start-1] == '_')) start--;
-            // Find end of identifier
             int end = col;
-            if (end < (int)text.length() && (isalnum(text[end]) || text[end] == '_')) {
+            if (end < (int)text.length() && (isalnum(text[end]) || text[end] == '_'))
                 while (end < (int)text.length() && (isalnum(text[end]) || text[end] == '_')) end++;
-            }
             if (end > start) symbol_name = text.substr(start, end - start);
         }
     }
 
-    auto show_status = [&](const std::string& msg, const std::string& bold_part, char spinner_char) {
-        int w = m_renderer->getWidth();
-        int h = m_renderer->getHeight();
-        m_renderer->drawText(0, h - 1, std::string(w, ' '), Renderer::CP_STATUS_BAR);
-        
-        std::string prefix = msg + " ";
-        m_renderer->drawText(1, h - 1, prefix, Renderer::CP_STATUS_BAR);
-        int current_x = 1 + prefix.length();
-        
-        m_renderer->drawText(current_x, h - 1, bold_part, Renderer::CP_STATUS_BAR, A_BOLD);
-        current_x += bold_part.length();
-        
-        std::string suffix = " " + std::string(1, spinner_char);
-        m_renderer->drawText(current_x, h - 1, suffix, Renderer::CP_STATUS_BAR);
-        
-        m_renderer->refresh();
-    };
-
-    const char spinner[] = {'|', '/', '-', '\\'};
-    int spinner_idx = 0;
-    
-    show_status("Looking for definition of", symbol_name, spinner[spinner_idx]);
-
-    // 1. Gather all open buffers as "unsaved files" for libclang
-    std::vector<CXUnsavedFile> unsavedFiles;
-    std::vector<std::string> bufferContents;
-    std::vector<std::string> bufferPaths; // Keep absolute paths alive
-    
-    for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
-        EditorBuffer& b = m_bufferManager->getBuffer(i);
-        std::string content;
-        for (Line* l = b.document_head; l != nullptr; l = l->next) {
-            content += l->text + "\n";
+    // ── Fast path: check pre-built definition indices of all open buffers ────────
+    // ClangHighlighter populates SemanticCache::definition_map for each buffer
+    // after every open/save. If the symbol has a unique definition across those
+    // maps, we can jump immediately without spawning a new clang parse.
+    if (!symbol_name.empty()) {
+        std::vector<SymbolDef> candidates;
+        for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
+            auto& b = m_bufferManager->getBuffer(i);
+            if (!b.semantic_cache) continue;
+            // Only trust the index when the buffer hasn't been edited since
+            // the last parse (line numbers would be stale otherwise).
+            if (b.changed) continue;
+            std::unique_lock<std::mutex> lk(b.semantic_cache->mutex, std::try_to_lock);
+            if (!lk.owns_lock()) continue;
+            auto it = b.semantic_cache->definition_map.find(symbol_name);
+            if (it == b.semantic_cache->definition_map.end()) continue;
+            for (const auto& d : it->second) candidates.push_back(d);
         }
-        bufferContents.push_back(std::move(content));
-        bufferPaths.push_back(get_full_path(b.filename));
-    }
 
-    for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
-        CXUnsavedFile uf;
-        uf.Filename = bufferPaths[i].c_str();
-        uf.Contents = bufferContents[i].c_str();
-        uf.Length = bufferContents[i].length();
-        unsavedFiles.push_back(uf);
-    }
+        // Deduplicate by (file, line) — the same header definition can appear
+        // in the index of multiple open buffers.
+        std::sort(candidates.begin(), candidates.end(),
+                  [](const SymbolDef& a, const SymbolDef& b) {
+                      return a.file != b.file ? a.file < b.file : a.line < b.line;
+                  });
+        candidates.erase(
+            std::unique(candidates.begin(), candidates.end(),
+                        [](const SymbolDef& a, const SymbolDef& b) {
+                            return a.file == b.file && a.line == b.line;
+                        }),
+            candidates.end());
 
-    // Update spinner
-    spinner_idx = (spinner_idx + 1) % 4;
-    show_status("Looking for definition of", symbol_name, spinner[spinner_idx]);
-
-    // 2. Prepare compiler arguments
-    std::vector<std::string> argsStr = m_buildSystem->getClangArguments(buffer);
-    std::vector<const char*> args;
-    for (const auto& s : argsStr) args.push_back(s.c_str());
-    
-    // 3. Parse current file (use absolute path)
-    std::string absoluteCurrentFile = get_full_path(buffer.filename);
-    CXIndex index = clang_createIndex(0, 0);
-    
-    // Update spinner
-    spinner_idx = (spinner_idx + 1) % 4;
-    show_status("Looking for definition of", symbol_name, spinner[spinner_idx]);
-
-    CXTranslationUnit tu = clang_parseTranslationUnit(
-        index, absoluteCurrentFile.c_str(), 
-        args.data(), args.size(),
-        unsavedFiles.data(), unsavedFiles.size(),
-        CXTranslationUnit_DetailedPreprocessingRecord
-    );
-
-    if (!tu) {
-        clang_disposeIndex(index);
-        msgwin("Failed to parse file for definition.");
-        return;
-    }
-
-    // Update spinner
-    spinner_idx = (spinner_idx + 1) % 4;
-    show_status("Looking for definition of", symbol_name, spinner[spinner_idx]);
-
-    // 4. Get cursor at current position
-    CXFile file = clang_getFile(tu, absoluteCurrentFile.c_str());
-    if (!file) {
-        clang_disposeTranslationUnit(tu);
-        clang_disposeIndex(index);
-        msgwin("Clang could not find current file in TU.");
-        return;
-    }
-    
-    CXSourceLocation loc = clang_getLocation(tu, file, buffer.current_line_num, buffer.cursor_col);
-    CXCursor cursor = clang_getCursor(tu, loc);
-
-    // If we're at a space or something that isn't an identifier/ref, try one char back
-    if (clang_Cursor_isNull(cursor) || clang_isInvalid(clang_getCursorKind(cursor)) || clang_getCursorKind(cursor) == CXCursor_NoDeclFound || clang_getCursorKind(cursor) == CXCursor_TranslationUnit) {
-        if (buffer.cursor_col > 1) {
-            loc = clang_getLocation(tu, file, buffer.current_line_num, buffer.cursor_col - 1);
-            cursor = clang_getCursor(tu, loc);
-        }
-    }
-
-    // 5. Find definition (try referenced then definition for better results)
-    CXCursor referenced = clang_getCursorReferenced(cursor);
-    CXCursor definition = clang_getCursorDefinition(referenced);
-    
-    // Fallbacks
-    if (clang_Cursor_isNull(definition) || clang_isInvalid(clang_getCursorKind(definition))) {
-        definition = referenced;
-    }
-    if (clang_Cursor_isNull(definition) || clang_isInvalid(clang_getCursorKind(definition))) {
-        definition = clang_getCursorDefinition(cursor);
-    }
-
-    if (!clang_Cursor_isNull(definition) && !clang_isInvalid(clang_getCursorKind(definition))) {
-        CXSourceLocation defLoc = clang_getCursorLocation(definition);
-        CXFile defFile;
-        unsigned line, col, offset;
-        clang_getSpellingLocation(defLoc, &defFile, &line, &col, &offset);
-
-        if (defFile) {
-            CXString fileNameStr = clang_getFileName(defFile);
-            std::string defFileName = clang_getCString(fileNameStr);
-            clang_disposeString(fileNameStr);
-
-            // Navigate to the definition
-            bool foundBuffer = false;
-            std::string fullDefPath = get_full_path(defFileName);
-            
+        if (candidates.size() == 1) {
+            // Unambiguous — navigate instantly, no re-parse needed.
+            const SymbolDef& hit = candidates.front();
+            std::string full_path = get_full_path(hit.file);
+            bool found_buf = false;
             for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
-                if (get_full_path(m_bufferManager->getBuffer(i).filename) == fullDefPath) {
+                if (get_full_path(m_bufferManager->getBuffer(i).filename) == full_path) {
                     SwitchToBuffer(i);
-                    foundBuffer = true;
+                    found_buf = true;
                     break;
                 }
             }
-
-            if (!foundBuffer) {
+            if (!found_buf) {
                 m_bufferManager->addBuffer();
-                currentBuffer().filename = defFileName;
+                currentBuffer().filename = hit.file;
                 read_file(currentBuffer());
             }
-
-            // Move cursor
-            EditorBuffer& newBuffer = currentBuffer();
-            newBuffer.current_line_num = line;
-            newBuffer.cursor_col = col;
-            
-            // Recalculate pointers
-            newBuffer.current_line = newBuffer.document_head;
-            for (int i = 1; i < (int)line; ++i) {
-                if (newBuffer.current_line->next) newBuffer.current_line = newBuffer.current_line->next;
+            EditorBuffer& nb = currentBuffer();
+            nb.current_line_num = hit.line;
+            nb.cursor_col       = hit.col;
+            nb.current_line     = nb.document_head;
+            for (unsigned i = 1; i < hit.line; ++i) {
+                if (nb.current_line->next) nb.current_line = nb.current_line->next;
                 else break;
             }
-            
             handleResize();
-        } else {
-            msgwin("Definition location not found.");
+            return;
         }
-    } else {
-        msgwin("Definition not found.");
+        // Zero or multiple matches → fall through to full clang parse below.
     }
 
-    clang_disposeTranslationUnit(tu);
-    clang_disposeIndex(index);
-    // drawStatusBar() will be called in the next loop iteration, restoring the original state
+    auto show_status = [&](const std::string& msg, const std::string& bold_part, char spin) {
+        int w = m_renderer->getWidth();
+        int h = m_renderer->getHeight();
+        m_renderer->drawText(0, h - 1, std::string(w, ' '), Renderer::CP_STATUS_BAR);
+        std::string prefix = msg + " ";
+        m_renderer->drawText(1, h - 1, prefix, Renderer::CP_STATUS_BAR);
+        int cx = 1 + (int)prefix.length();
+        m_renderer->drawText(cx, h - 1, bold_part, Renderer::CP_STATUS_BAR, A_BOLD);
+        cx += (int)bold_part.length();
+        m_renderer->drawText(cx, h - 1, std::string(" ") + spin + "  (Esc to cancel)",
+                             Renderer::CP_STATUS_BAR);
+        m_renderer->refresh();
+    };
+
+    // 1. Snapshot everything we need from the main thread before going async
+    std::string abs_path = get_full_path(buffer.filename);
+    CompilerSettings settings_snap = buffer.compiler_settings;
+    int target_line = buffer.current_line_num;
+    int target_col  = buffer.cursor_col;
+
+    std::string content;
+    content.reserve(static_cast<size_t>(buffer.total_lines) * 60);
+    for (Line* l = buffer.document_head; l != nullptr; l = l->next)
+        content += l->text + "\n";
+
+    // 2. Result shared between the background thread and the main thread
+    struct GtdResult {
+        std::atomic<bool> done{false};
+        bool found        = false;
+        std::string def_file;
+        unsigned    def_line = 0;
+        unsigned    def_col  = 0;
+        std::string error_msg;
+    };
+    auto result = std::make_shared<GtdResult>();
+
+    // 3. Launch background thread – all slow I/O happens here
+    BuildSystem* build = m_buildSystem.get();
+    std::thread([result, abs_path, content, settings_snap, target_line, target_col, build]() mutable {
+        // Fetch compiler flags (may run cguess.py via popen – that's fine in a thread)
+        std::vector<std::string> args_str =
+            build->getClangArguments(abs_path, settings_snap);
+        std::vector<const char*> args;
+        args.reserve(args_str.size());
+        for (const auto& s : args_str) args.push_back(s.c_str());
+
+        CXUnsavedFile uf;
+        uf.Filename = abs_path.c_str();
+        uf.Contents = content.c_str();
+        uf.Length   = content.size();
+
+        CXIndex index = clang_createIndex(0, 0);
+
+        CXTranslationUnit tu = clang_parseTranslationUnit(
+            index, abs_path.c_str(),
+            args.data(), static_cast<int>(args.size()),
+            &uf, 1,
+            CXTranslationUnit_DetailedPreprocessingRecord |
+            CXTranslationUnit_KeepGoing);
+
+        if (!tu) {
+            result->error_msg = "Failed to parse file.";
+            result->done.store(true);
+            clang_disposeIndex(index);
+            return;
+        }
+
+        CXFile file = clang_getFile(tu, abs_path.c_str());
+        if (!file) {
+            result->error_msg = "Clang could not locate the file in the TU.";
+            result->done.store(true);
+            clang_disposeTranslationUnit(tu);
+            clang_disposeIndex(index);
+            return;
+        }
+
+        // Try the cursor at the exact column, then one column back
+        auto try_get_cursor = [&](int col) {
+            CXSourceLocation loc = clang_getLocation(tu, file, target_line, col);
+            return clang_getCursor(tu, loc);
+        };
+
+        CXCursor cursor = try_get_cursor(target_col);
+        CXCursorKind ck = clang_getCursorKind(cursor);
+        if (clang_Cursor_isNull(cursor) || clang_isInvalid(ck) ||
+            ck == CXCursor_NoDeclFound || ck == CXCursor_TranslationUnit) {
+            if (target_col > 1)
+                cursor = try_get_cursor(target_col - 1);
+        }
+
+        // Resolve reference → definition, with fallbacks
+        CXCursor referenced = clang_getCursorReferenced(cursor);
+        CXCursor definition = clang_getCursorDefinition(referenced);
+
+        if (clang_Cursor_isNull(definition) || clang_isInvalid(clang_getCursorKind(definition)))
+            definition = referenced;
+        if (clang_Cursor_isNull(definition) || clang_isInvalid(clang_getCursorKind(definition)))
+            definition = clang_getCursorDefinition(cursor);
+
+        if (!clang_Cursor_isNull(definition) &&
+            !clang_isInvalid(clang_getCursorKind(definition))) {
+            CXSourceLocation defLoc = clang_getCursorLocation(definition);
+            CXFile defFile;
+            unsigned line, col, offset;
+            clang_getSpellingLocation(defLoc, &defFile, &line, &col, &offset);
+
+            if (defFile) {
+                CXString fn = clang_getFileName(defFile);
+                result->def_file = clang_getCString(fn);
+                clang_disposeString(fn);
+                result->def_line  = line;
+                result->def_col   = col;
+                result->found     = true;
+            } else {
+                result->error_msg = "Definition location not found.";
+            }
+        } else {
+            result->error_msg = "Definition not found.";
+        }
+
+        clang_disposeTranslationUnit(tu);
+        clang_disposeIndex(index);
+        result->done.store(true);
+    }).detach();
+
+    // 4. Spin on the main thread while the background thread works.
+    //    The main thread stays responsive: the spinner actually moves and
+    //    the user can press Esc to cancel.
+    const char spinner[] = {'|', '/', '-', '\\'};
+    int spin_idx = 0;
+    bool cancelled = false;
+
+    show_status("Looking for definition of", symbol_name, spinner[spin_idx]);
+
+    while (!result->done.load()) {
+        // Poll with a short timeout so the spinner is smooth
+        timeout(120);
+        wint_t ch = ERR;
+        wget_wch(stdscr, &ch);
+        timeout(-1);
+
+        if (ch == 27) { cancelled = true; break; }
+
+        spin_idx = (spin_idx + 1) % 4;
+        show_status("Looking for definition of", symbol_name, spinner[spin_idx]);
+    }
+
+    if (cancelled) {
+        // The background thread still runs to completion (we can't kill it),
+        // but its result is discarded. The shared_ptr keeps the Result alive
+        // until the thread finishes on its own.
+        return;
+    }
+
+    // 5. Act on the result — all back on the main thread
+    if (!result->error_msg.empty()) {
+        msgwin(result->error_msg);
+        return;
+    }
+
+    if (!result->found) {
+        msgwin("Definition not found.");
+        return;
+    }
+
+    std::string fullDefPath = get_full_path(result->def_file);
+    bool found_buffer = false;
+    for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
+        if (get_full_path(m_bufferManager->getBuffer(i).filename) == fullDefPath) {
+            SwitchToBuffer(i);
+            found_buffer = true;
+            break;
+        }
+    }
+    if (!found_buffer) {
+        m_bufferManager->addBuffer();
+        currentBuffer().filename = result->def_file;
+        read_file(currentBuffer());
+    }
+
+    EditorBuffer& newBuffer = currentBuffer();
+    newBuffer.current_line_num = result->def_line;
+    newBuffer.cursor_col       = result->def_col;
+    newBuffer.current_line     = newBuffer.document_head;
+    for (unsigned i = 1; i < result->def_line; ++i) {
+        if (newBuffer.current_line->next) newBuffer.current_line = newBuffer.current_line->next;
+        else break;
+    }
+
+    handleResize();
 }
 
 // Word character for C++ navigation: identifiers are [A-Za-z0-9_]
@@ -1461,37 +1594,37 @@ void TextEditor::handleSmartBlockClose(wint_t closing_char) {
 void TextEditor::process_key(wint_t ch) {
     if (currentBufferIdx() != -1) {
         EditorAction action = m_keyBindings->getAction(ch);
-        if (action != ACT_UNKNOWN) {
+        if (action != EditorAction::ACT_UNKNOWN) {
             switch (action) {
-                case ACT_NEW:          DoNew(); return;
-                case ACT_NEW_PROJECT:  CreateNewProject(); return;
-                case ACT_OPEN_PROJECT: OpenProject(); return;
-                case ACT_OPEN:         selectfile(); return;
-                case ACT_SAVE: if (currentBuffer().is_new_file) SaveFileBrowser(); else write_file(currentBuffer()); return;
-                case ACT_SAVE_AS: SaveFileBrowser(); return;
-                case ACT_EXIT: TryExit(); return;
-                case ACT_UNDO: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } HandleUndo(); return;
-                case ACT_REDO: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } HandleRedo(); return;
-                case ACT_CUT: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } HandleCut(); return;
-                case ACT_COPY: HandleCopy(); return;
-                case ACT_PASTE: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } HandlePaste(); return;
-                case ACT_FIND: ActivateSearch(); return;
-                case ACT_REPLACE: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } ActivateReplace(); return;
-                case ACT_GOTO_LINE: GoToLineDialog(); return;
-                case ACT_GO_TO_DEFINITION: GoToDefinition(); return;
-                case ACT_COMPILE: compileOnly(); return;
-                case ACT_RUN: compileAndRun(); return;
-                case ACT_TOGGLE_OUTPUT: ShowOutputScreen(); return;
-                case ACT_NEXT_BUFFER: NextWindow(); return;
-                case ACT_PREV_BUFFER: PreviousWindow(); return;
-                case ACT_CLOSE_BUFFER: CloseWindow(); return;
-                case ACT_SETTINGS: EditorSettingsDialog(); return;
-                case ACT_HELP: showHelpDialog(); return;
-                case ACT_ABOUT: AboutBox(); return;
-                case ACT_TOGGLE_COMMENT: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } handleToggleComment(); return;
-                case ACT_DELETE: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } DeleteSelection(); return;
-                case ACT_TOGGLE_PROJECT_PANEL: ToggleProjectPanel(); return;
-                case ACT_CLOSE_PROJECT:        CloseProject(); return;
+                case EditorAction::ACT_NEW:          DoNew(); return;
+                case EditorAction::ACT_NEW_PROJECT:  CreateNewProject(); return;
+                case EditorAction::ACT_OPEN_PROJECT: OpenProject(); return;
+                case EditorAction::ACT_OPEN:         selectfile(); return;
+                case EditorAction::ACT_SAVE: if (currentBuffer().is_new_file) SaveFileBrowser(); else write_file(currentBuffer()); return;
+                case EditorAction::ACT_SAVE_AS: SaveFileBrowser(); return;
+                case EditorAction::ACT_EXIT: TryExit(); return;
+                case EditorAction::ACT_UNDO: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } HandleUndo(); return;
+                case EditorAction::ACT_REDO: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } HandleRedo(); return;
+                case EditorAction::ACT_CUT: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } HandleCut(); return;
+                case EditorAction::ACT_COPY: HandleCopy(); return;
+                case EditorAction::ACT_PASTE: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } HandlePaste(); return;
+                case EditorAction::ACT_FIND: ActivateSearch(); return;
+                case EditorAction::ACT_REPLACE: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } ActivateReplace(); return;
+                case EditorAction::ACT_GOTO_LINE: GoToLineDialog(); return;
+                case EditorAction::ACT_GO_TO_DEFINITION: GoToDefinition(); return;
+                case EditorAction::ACT_COMPILE: compileOnly(); return;
+                case EditorAction::ACT_RUN: compileAndRun(); return;
+                case EditorAction::ACT_TOGGLE_OUTPUT: ShowOutputScreen(); return;
+                case EditorAction::ACT_NEXT_BUFFER: NextWindow(); return;
+                case EditorAction::ACT_PREV_BUFFER: PreviousWindow(); return;
+                case EditorAction::ACT_CLOSE_BUFFER: CloseWindow(); return;
+                case EditorAction::ACT_SETTINGS: EditorSettingsDialog(); return;
+                case EditorAction::ACT_HELP: showHelpDialog(); return;
+                case EditorAction::ACT_ABOUT: AboutBox(); return;
+                case EditorAction::ACT_TOGGLE_COMMENT: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } handleToggleComment(); return;
+                case EditorAction::ACT_DELETE: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } DeleteSelection(); return;
+                case EditorAction::ACT_TOGGLE_PROJECT_PANEL: ToggleProjectPanel(); return;
+                case EditorAction::ACT_CLOSE_PROJECT:        CloseProject(); return;
                 default: break;
             }
         }
@@ -3339,7 +3472,7 @@ void TextEditor::handleProjectPanelKey(wint_t ch) {
     if (ch == KEY_RESIZE) { handleResize(); return; }
 
     EditorAction action = m_keyBindings->getAction(ch);
-    if (action == ACT_TOGGLE_PROJECT_PANEL) {
+    if (action == EditorAction::ACT_TOGGLE_PROJECT_PANEL) {
         ToggleProjectPanel();
         return;
     }

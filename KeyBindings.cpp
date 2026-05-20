@@ -20,44 +20,44 @@ void KeyBindings::loadDefaults() {
     m_actionToKeys.clear();
     m_keyToAction.clear();
 
-    addBinding(ACT_NEW, CTRL('N'), "Ctrl+N");
-    addBinding(ACT_NEW_PROJECT,  -1, "");
-    addBinding(ACT_OPEN_PROJECT, -1, "");
+    addBinding(EditorAction::ACT_NEW, CTRL('N'), "Ctrl+N");
+    addBinding(EditorAction::ACT_NEW_PROJECT,  -1, "");
+    addBinding(EditorAction::ACT_OPEN_PROJECT, -1, "");
 
     // Multiple bindings for Open
-    addBinding(ACT_OPEN, CTRL('O'), "Ctrl+O");
-    addBinding(ACT_OPEN, KEY_F(3), "F3");
+    addBinding(EditorAction::ACT_OPEN, CTRL('O'), "Ctrl+O");
+    addBinding(EditorAction::ACT_OPEN, KEY_F(3), "F3");
     
     // Multiple bindings for Save
-    addBinding(ACT_SAVE, CTRL('S'), "Ctrl+S");
-    addBinding(ACT_SAVE, KEY_F(2), "F2");
+    addBinding(EditorAction::ACT_SAVE, CTRL('S'), "Ctrl+S");
+    addBinding(EditorAction::ACT_SAVE, KEY_F(2), "F2");
     
-    addBinding(ACT_SAVE_AS, -1, "");
-    addBinding(ACT_EXIT, KEY_ALT('X'), "Alt+X"); 
-    addBinding(ACT_UNDO, KEY_ALT(127), "Alt+BS"); 
-    addBinding(ACT_REDO, KEY_ALT('Y'), "Alt+Y");
-    addBinding(ACT_CUT, CTRL('X'), "Ctrl+X");
-    addBinding(ACT_COPY, CTRL('C'), "Ctrl+C");
-    addBinding(ACT_PASTE, CTRL('V'), "Ctrl+V");
-    addBinding(ACT_DELETE, -1, "");
-    addBinding(ACT_FIND, CTRL('F'), "Ctrl+F");
-    addBinding(ACT_REPLACE, CTRL('R'), "Ctrl+R");
-    addBinding(ACT_GOTO_LINE, -1, "");
-    addBinding(ACT_GO_TO_DEFINITION, KEY_F(12), "F12");
-    addBinding(ACT_COMPILE, KEY_ALT(KEY_F(9)), "Alt+F9"); 
-    addBinding(ACT_RUN, CTRL(KEY_F(9)), "Ctrl+F9"); 
-    addBinding(ACT_COMPILE_OPTIONS, -1, "");
-    addBinding(ACT_TOGGLE_OUTPUT, KEY_F(5), "F5");
-    addBinding(ACT_NEXT_BUFFER, KEY_F(6), "F6");
-    addBinding(ACT_PREV_BUFFER, KEY_F(18), "Shift+F6"); 
-    addBinding(ACT_CLOSE_BUFFER, CTRL('W'), "Ctrl+W");
-    addBinding(ACT_SETTINGS, -1, "");
-    addBinding(ACT_HELP, KEY_F(1), "F1");
-    addBinding(ACT_ABOUT, -1, "");
-    addBinding(ACT_TOGGLE_COMMENT, CTRL('/'), "Ctrl+/");
-    addBinding(ACT_TOGGLE_PROJECT_PANEL, KEY_ALT('0'), "Alt+0");
-    addBinding(ACT_CLOSE_PROJECT, -1, "");
-    addBinding(ACT_PROJECT_PROPERTIES, -1, "");
+    addBinding(EditorAction::ACT_SAVE_AS, -1, "");
+    addBinding(EditorAction::ACT_EXIT, KEY_ALT('X'), "Alt+X"); 
+    addBinding(EditorAction::ACT_UNDO, KEY_ALT(127), "Alt+BS"); 
+    addBinding(EditorAction::ACT_REDO, KEY_ALT('Y'), "Alt+Y");
+    addBinding(EditorAction::ACT_CUT, CTRL('X'), "Ctrl+X");
+    addBinding(EditorAction::ACT_COPY, CTRL('C'), "Ctrl+C");
+    addBinding(EditorAction::ACT_PASTE, CTRL('V'), "Ctrl+V");
+    addBinding(EditorAction::ACT_DELETE, -1, "");
+    addBinding(EditorAction::ACT_FIND, CTRL('F'), "Ctrl+F");
+    addBinding(EditorAction::ACT_REPLACE, CTRL('R'), "Ctrl+R");
+    addBinding(EditorAction::ACT_GOTO_LINE, -1, "");
+    addBinding(EditorAction::ACT_GO_TO_DEFINITION, KEY_F(12), "F12");
+    addBinding(EditorAction::ACT_COMPILE, KEY_ALT(KEY_F(9)), "Alt+F9"); 
+    addBinding(EditorAction::ACT_RUN, CTRL(KEY_F(9)), "Ctrl+F9"); 
+    addBinding(EditorAction::ACT_COMPILE_OPTIONS, -1, "");
+    addBinding(EditorAction::ACT_TOGGLE_OUTPUT, KEY_F(5), "F5");
+    addBinding(EditorAction::ACT_NEXT_BUFFER, KEY_F(6), "F6");
+    addBinding(EditorAction::ACT_PREV_BUFFER, KEY_F(18), "Shift+F6"); 
+    addBinding(EditorAction::ACT_CLOSE_BUFFER, CTRL('W'), "Ctrl+W");
+    addBinding(EditorAction::ACT_SETTINGS, -1, "");
+    addBinding(EditorAction::ACT_HELP, KEY_F(1), "F1");
+    addBinding(EditorAction::ACT_ABOUT, -1, "");
+    addBinding(EditorAction::ACT_TOGGLE_COMMENT, CTRL('/'), "Ctrl+/");
+    addBinding(EditorAction::ACT_TOGGLE_PROJECT_PANEL, KEY_ALT('0'), "Alt+0");
+    addBinding(EditorAction::ACT_CLOSE_PROJECT, -1, "");
+    addBinding(EditorAction::ACT_PROJECT_PROPERTIES, -1, "");
 }
 
 int KeyBindings::getKey(EditorAction action) const {
@@ -76,13 +76,13 @@ std::string KeyBindings::getLabel(EditorAction action) const {
 
 EditorAction KeyBindings::getAction(int key) const {
     if (m_keyToAction.count(key)) return m_keyToAction.at(key);
-    return ACT_UNKNOWN;
+    return EditorAction::ACT_UNKNOWN;
 }
 
 void KeyBindings::loadFromConfig(const std::map<std::string, std::string>& config_map) {
     for (auto const& [action_str, key_str] : config_map) {
         EditorAction act = stringToAction(action_str);
-        if (act == ACT_UNKNOWN) continue;
+        if (act == EditorAction::ACT_UNKNOWN) continue;
         
         int key = stringToKey(key_str);
         if (key != -1) {
@@ -105,7 +105,7 @@ EditorAction KeyBindings::stringToAction(std::string_view str) {
     auto it = std::find_if(action_map.begin(), action_map.end(),
                            [str](const auto& m) { return m.name == str; });
 
-    return (it != action_map.end()) ? it->action : ACT_UNKNOWN;
+    return (it != action_map.end()) ? it->action : EditorAction::ACT_UNKNOWN;
 }
 
 int KeyBindings::stringToKey(const std::string& str) {

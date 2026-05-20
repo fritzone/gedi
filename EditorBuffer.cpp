@@ -60,7 +60,8 @@ EditorBuffer::EditorBuffer(EditorBuffer &&other) noexcept :
     selection_anchor_col(other.selection_anchor_col), selection_anchor_linenum(other.selection_anchor_linenum),
     undo_stack(std::move(other.undo_stack)), redo_stack(std::move(other.redo_stack)),
     syntax_type(other.syntax_type), keywords(std::move(other.keywords)),
-    in_multiline_comment(other.in_multiline_comment)
+    in_multiline_comment(other.in_multiline_comment),
+    semantic_cache(std::move(other.semantic_cache))
 {
     other.document_head = nullptr;
 }
@@ -80,6 +81,7 @@ EditorBuffer &EditorBuffer::operator=(EditorBuffer &&other) noexcept {
     undo_stack = std::move(other.undo_stack); redo_stack = std::move(other.redo_stack);
     syntax_type = other.syntax_type; keywords = std::move(other.keywords);
     in_multiline_comment = other.in_multiline_comment;
+    semantic_cache = std::move(other.semantic_cache);
     other.document_head = nullptr;
     return *this;
 }

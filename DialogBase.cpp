@@ -69,8 +69,26 @@ DialogResult DialogBase::run(Renderer& renderer)
             wint_t next = renderer.getChar();
             timeout(-1);
             if (next == ERR) { result_.cancel(); break; }
-            hr = groups_.empty() ? dispatchAltKey(next)
-                                 : dispatchGroupAltKey(next);
+
+            if (next == '[') {
+                // CSI sequence — read until the final byte (0x40–0x7E)
+                std::string csi;
+                timeout(30);
+                wint_t c;
+                while ((c = renderer.getChar()) != ERR && csi.size() < 16) {
+                    csi += static_cast<char>(c);
+                    if (c >= 64 && c <= 126) break;
+                }
+                timeout(-1);
+                if (csi == "1;5B") {  // Ctrl+Down
+                    hr = groups_.empty() ? dispatchKey(525)
+                                         : dispatchGroupKey(525);
+                }
+                // other CSI sequences: ignore
+            } else {
+                hr = groups_.empty() ? dispatchAltKey(next)
+                                     : dispatchGroupAltKey(next);
+            }
         } else {
             hr = groups_.empty() ? dispatchKey(ch)
                                  : dispatchGroupKey(ch);

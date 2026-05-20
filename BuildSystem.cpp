@@ -50,8 +50,6 @@ CompilationResult BuildSystem::runCompilationProcess(EditorBuffer& buffer) {
     return result;
 }
 
-// ── settingsToFlags ───────────────────────────────────────────────────────────
-
 std::string BuildSystem::settingsToFlags(const CompilerSettings& s)
 {
     std::string f;
@@ -140,8 +138,6 @@ std::string BuildSystem::buildProjectPreview(const GediProject& project, const C
     }
     return "(unknown build system: " + project.build_system + ")";
 }
-
-// ── runProjectBuild ───────────────────────────────────────────────────────────
 
 CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
     CompilationResult result;
@@ -328,9 +324,13 @@ std::vector<std::string> BuildSystem::getClangArguments(EditorBuffer& buffer) {
 }
 
 std::string BuildSystem::guessCompileCommand(const std::string& filename) {
-    if (m_compile_command_cache.count(filename))
-        return m_compile_command_cache[filename];
+    {
+        std::lock_guard<std::mutex> lk(m_cache_mutex);
+        auto it = m_compile_command_cache.find(filename);
+        if (it != m_compile_command_cache.end()) return it->second;
+    }
 
+    // Slow path: run cguess outside the lock so other threads aren't blocked.
     std::string cguess_cmd = "python3 /usr/local/lib/python3/dist-packages/gedi/cguess.py \"" + filename + "\" 2>/dev/null";
     char buffer_arr[512];
     std::string full_cguess_output;
@@ -342,15 +342,48 @@ std::string BuildSystem::guessCompileCommand(const std::string& filename) {
         pclose(cguess_pipe);
     }
 
+    std::string result;
     std::size_t found = full_cguess_output.find("GUESS: ");
     if (found != std::string::npos) {
-        std::string base_compile_cmd = full_cguess_output.substr(found + 7);
-        if (!base_compile_cmd.empty() && base_compile_cmd.back() == '\n')
-            base_compile_cmd.pop_back();
-        m_compile_command_cache[filename] = base_compile_cmd;
-        return base_compile_cmd;
+        result = full_cguess_output.substr(found + 7);
+        if (!result.empty() && result.back() == '\n') result.pop_back();
     }
-    return "";
+
+    {
+        std::lock_guard<std::mutex> lk(m_cache_mutex);
+        m_compile_command_cache.emplace(filename, result);
+    }
+    return result;
+}
+
+std::vector<std::string> BuildSystem::getClangArguments(const std::string& filename,
+                                                        const CompilerSettings& settings) {
+    std::vector<std::string> args;
+    args.push_back("-xc++");
+    args.push_back("-std=" + (settings.cpp_standard.empty() ? "c++20" : settings.cpp_standard));
+    args.push_back("-I.");
+    args.push_back("-I/usr/include");
+    args.push_back("-I/usr/local/include");
+
+    if (!settings.optional_flags.empty()) {
+        std::stringstream ss(settings.optional_flags);
+        std::string flag;
+        while (ss >> flag) {
+            if (flag.rfind("-I", 0) == 0 || flag.rfind("-D", 0) == 0)
+                args.push_back(flag);
+        }
+    }
+
+    std::string base_cmd = guessCompileCommand(filename);
+    if (!base_cmd.empty()) {
+        std::stringstream ss(base_cmd);
+        std::string part;
+        while (ss >> part) {
+            if (part.rfind("-I", 0) == 0 || part.rfind("-D", 0) == 0)
+                args.push_back(part);
+        }
+    }
+    return args;
 }
 
 std::string BuildSystem::get_full_compile_command(const std::string& base_command, const CompilerSettings& settings) {

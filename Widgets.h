@@ -1,9 +1,13 @@
 #pragma once
 #include <ncurses.h>
 #include "Renderer.h"
+#include <algorithm>
 #include <string>
 #include <vector>
 #include <functional>
+
+// Ctrl+Down key code – pinned by Renderer::Renderer() via define_key(tigetstr("kDN5"), 525)
+static constexpr wint_t KEY_CTRL_DOWN = 525;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Widgets.h
@@ -153,11 +157,16 @@ struct RadioList {
 
 // ── ComboBox ──────────────────────────────────────────────────────────────────
 // Displays the selected item between [ ] brackets.
-// Left/Up — previous item.   Right/Down/Space — next item (Space wraps).
+// Left/Right — cycle items.   Ctrl+Down — open dropdown list.
+// In dropdown: Up/Down navigate; Enter confirms; Esc cancels.
 struct ComboBox {
     std::vector<std::string> items;
-    int  selected_idx = 0;
-    int  x, y, w;        // position and total width (including brackets)
+    int  selected_idx    = 0;
+    int  x, y, w;               // position and total width (including brackets)
+    bool dropdown_open   = false;
+    int  dropdown_cursor = 0;
+
+    static constexpr int MAX_DD_ROWS = 8;
 
     ComboBox() = default;
     ComboBox(const std::vector<std::string>& i, int sel, int x_, int y_, int w_)
@@ -184,15 +193,86 @@ struct ComboBox {
         renderer.drawText(startx + x + w - 4, starty + y, suffix, Renderer::CP_DIALOG);
     }
 
+    // Draws the open dropdown list floating below the combo.
+    // Call this AFTER all other dialog content so the popup renders on top.
+    void drawDropdown(Renderer& renderer, int startx, int starty) const {
+        if (!dropdown_open || items.empty()) return;
+
+        int sx = startx + x;
+        int sy = starty + y + 1;
+        int dw = w;
+        int visible = std::min((int)items.size(), MAX_DD_ROWS);
+        int dh      = visible + 2;
+
+        // Scroll window to keep dropdown_cursor visible
+        int top = std::max(0, dropdown_cursor - visible + 1);
+        top = std::min(top, std::max(0, (int)items.size() - visible));
+        if (dropdown_cursor < top) top = dropdown_cursor;
+
+        renderer.drawShadow(sx, sy, dw, dh);
+        renderer.drawBox(sx, sy, dw, dh, Renderer::CP_DIALOG, Renderer::SINGLE);
+
+        // Fill interior with list background
+        wattron(stdscr, COLOR_PAIR(Renderer::CP_LIST_BOX));
+        for (int i = 0; i < visible; ++i)
+            mvwaddstr(stdscr, sy + 1 + i, sx + 1,
+                      std::string(dw - 2, ' ').c_str());
+        wattroff(stdscr, COLOR_PAIR(Renderer::CP_LIST_BOX));
+
+        int inner_w = dw - 2;
+        for (int i = 0; i < visible; ++i) {
+            int idx = top + i;
+            if (idx >= (int)items.size()) break;
+            std::string text = " " + items[idx];
+            if ((int)text.size() > inner_w)      text = text.substr(0, inner_w);
+            else                                   text += std::string(inner_w - (int)text.size(), ' ');
+            bool is_cursor = (idx == dropdown_cursor);
+            renderer.drawText(sx + 1, sy + 1 + i, text,
+                              is_cursor ? Renderer::CP_LIST_SELECTED : Renderer::CP_LIST_BOX,
+                              (idx == selected_idx) ? A_BOLD : A_NORMAL);
+        }
+    }
+
     bool handleKey(wint_t ch) {
         if (items.empty()) return false;
+
+        if (dropdown_open) {
+            if (ch == KEY_UP) {
+                if (dropdown_cursor > 0) --dropdown_cursor;
+                return true;
+            }
+            if (ch == KEY_DOWN) {
+                if (dropdown_cursor < (int)items.size() - 1) ++dropdown_cursor;
+                return true;
+            }
+            if (ch == KEY_ENTER || ch == 10 || ch == 13) {
+                selected_idx  = dropdown_cursor;
+                dropdown_open = false;
+                return true;
+            }
+            if (ch == 27) {           // Esc — cancel
+                dropdown_open = false;
+                return true;
+            }
+            // Any other key: close without change, let it propagate
+            dropdown_open = false;
+            return false;
+        }
+
+        if (ch == KEY_CTRL_DOWN) {    // open dropdown
+            dropdown_open   = true;
+            dropdown_cursor = selected_idx;
+            return true;
+        }
+
+        // Left/Right/Space cycle (existing behaviour)
         if (ch == KEY_LEFT || ch == KEY_UP) {
             if (selected_idx > 0) { --selected_idx; return true; }
         } else if (ch == KEY_RIGHT || ch == KEY_DOWN) {
             if (selected_idx < (int)items.size() - 1) { ++selected_idx; return true; }
         } else if (ch == ' ') {
             selected_idx = (items.size() > 1)
-            ? (selected_idx + 1) % (int)items.size() : 0;
+                ? (selected_idx + 1) % (int)items.size() : 0;
             return true;
         }
         return false;
@@ -396,11 +476,24 @@ struct FocusGroup {
             ol.draw(renderer, startx, starty, focused);  // OptionList = one unit
         for (const auto& rl : radiolists)
             rl.draw(renderer, startx, starty, focused);
+
+        // Draw open combo dropdowns last so they float above all other widget content
+        for (const auto& combo : comboboxes)
+            combo.drawDropdown(renderer, startx, starty);
     }
 
     bool handleKey(wint_t ch) {
         // Text buffer group: typing/backspace handled by DialogBase directly
         if (text_buffer) return false;
+
+        // If any combo has its dropdown open, route everything there.
+        // Tab/Shift-Tab closes the dropdown (consuming the key) instead of moving focus.
+        for (auto& combo : comboboxes) {
+            if (combo.dropdown_open) {
+                if (ch == 9 || ch == KEY_BTAB) { combo.dropdown_open = false; return true; }
+                return combo.handleKey(ch);
+            }
+        }
 
         int count = innerCount();
         // Up/Down move inner focus only when there are multiple focusable items

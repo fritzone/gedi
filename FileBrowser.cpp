@@ -9,6 +9,7 @@
 #include <grp.h>
 #include <unistd.h>
 #include <algorithm>
+#include <chrono>
 #include <string>
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -59,6 +60,7 @@ std::vector<FileEntry> FileBrowser::readDirectory(const std::string& path)
     struct dirent* ent;
     while ((ent = readdir(dir)) != nullptr) {
         std::string name      = ent->d_name;
+        if (name == ".") continue;
         std::string full_path = path + "/" + name;
         struct stat st{};
         if (stat(full_path.c_str(), &st) != 0) continue;
@@ -81,13 +83,18 @@ std::vector<FileEntry> FileBrowser::readDirectory(const std::string& path)
 
 void FileBrowser::sortEntries(std::vector<FileEntry>& entries)
 {
+    // Assign a sort-key tier so the comparator is a clean strict weak ordering:
+    //   tier 0 = ".." (parent dir, always first)
+    //   tier 1 = subdirectories, alphabetical
+    //   tier 2 = files, alphabetical
+    auto tier = [](const FileEntry& e) -> int {
+        if (e.name == "..") return 0;
+        return e.is_directory ? 1 : 2;
+    };
     std::sort(entries.begin(), entries.end(),
-              [](const FileEntry& a, const FileEntry& b) {
-                  if (a.name == ".")  return true;
-                  if (b.name == ".")  return false;
-                  if (a.name == "..") return true;
-                  if (b.name == "..") return false;
-                  if (a.is_directory != b.is_directory) return a.is_directory;
+              [&](const FileEntry& a, const FileEntry& b) {
+                  int ta = tier(a), tb = tier(b);
+                  if (ta != tb) return ta < tb;
                   return a.name < b.name;
               });
 }
@@ -111,14 +118,31 @@ void FileBrowser::drawFrame(Renderer& renderer,
 
 void FileBrowser::drawPathHeader(Renderer& renderer,
                                  int x, int y, int w,
-                                 const std::string& path)
+                                 const std::string& path,
+                                 const std::string& type_search)
 {
-    int max_len = w - 4;
-    std::string label = " Path: " + path;
-    if ((int)label.size() > max_len)
-        label = " Path: ..." + path.substr(path.size() - (max_len - 10));
     renderer.drawText(x + 1, y + 1, std::string(w - 2, ' '), Renderer::CP_HIGHLIGHT);
+
+    // When a type-ahead search is active, reserve space on the right for it.
+    // "  /foo_" — 2 leading spaces + '/' + text + '_' cursor indicator
+    std::string search_indicator;
+    int search_cols = 0;
+    if (!type_search.empty()) {
+        search_indicator = "  /" + type_search + "\xe2\x96\x8c"; // "▌" block cursor
+        search_cols = 3 + (int)type_search.size() + 1;           // display cols (ASCII-only names)
+    }
+
+    int path_max = (w - 4) - search_cols;
+    std::string label = " Path: " + path;
+    if ((int)label.size() > path_max)
+        label = " Path: ..." + path.substr(path.size() - (path_max - 10));
+
     renderer.drawText(x + 2, y + 1, label, Renderer::CP_HIGHLIGHT, A_BOLD);
+
+    if (!search_indicator.empty()) {
+        int sx = x + w - 1 - search_cols;
+        renderer.drawText(sx, y + 1, search_indicator, Renderer::CP_MENU_SELECTED, A_BOLD);
+    }
 }
 
 void FileBrowser::drawFileList(Renderer& renderer,
@@ -150,7 +174,7 @@ void FileBrowser::drawFileList(Renderer& renderer,
         bool is_sel = focused && (idx == selection);
         int color, style;
         if (is_sel) {
-            color = Renderer::CP_MENU_SELECTED;
+            color = Renderer::CP_LIST_SELECTED;
             style = e.is_directory ? A_BOLD : A_NORMAL;
         } else if (e.is_directory) {
             color = Renderer::CP_DIALOG_TITLE;
@@ -238,7 +262,7 @@ void FileBrowser::drawFilterCombo(Renderer& renderer,
         label = label.substr(0, content_w - 3) + "...";
     label += std::string(content_w - (int)label.size(), ' ');
 
-    int color = focused ? Renderer::CP_MENU_SELECTED : Renderer::CP_LIST_BOX;
+    int color = focused ? Renderer::CP_LIST_SELECTED : Renderer::CP_LIST_BOX;
     renderer.drawText(x + 1,                        y, prefix, Renderer::CP_DIALOG);
     renderer.drawText(x + 1 + PREFIX_COLS,          y, label,  color);
     renderer.drawText(x + 1 + PREFIX_COLS + content_w, y, suffix, Renderer::CP_DIALOG);
@@ -341,6 +365,32 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
         }
     };
 
+    // ── Type-ahead search state ───────────────────────────────────────────────
+    std::string type_search;
+    auto type_search_clock = std::chrono::steady_clock::now();
+
+    // Find and select the first entry whose name starts with type_search (case-insensitive).
+    // Clamps top_of_list so the selected entry is visible.
+    auto applyTypeSearch = [&](const std::vector<FileEntry>& ents) {
+        if (type_search.empty()) return;
+        std::string lower_needle;
+        lower_needle.reserve(type_search.size());
+        for (unsigned char c : type_search) lower_needle += (char)std::tolower(c);
+        for (int i = 0; i < (int)ents.size(); ++i) {
+            std::string lower_name;
+            lower_name.reserve(ents[i].name.size());
+            for (unsigned char c : ents[i].name) lower_name += (char)std::tolower(c);
+            if (lower_name.rfind(lower_needle, 0) == 0) {
+                selection = i;
+                if (selection < top_of_list) top_of_list = selection;
+                if (selection >= top_of_list + visible_rows)
+                    top_of_list = selection - visible_rows + 1;
+                sync_filename(ents);
+                return;
+            }
+        }
+    };
+
     // Active glob pattern from current filter (empty = all files).
     auto activePattern = [&]() -> const std::string& {
         static const std::string empty;
@@ -376,6 +426,13 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
 
     // ── Main loop ─────────────────────────────────────────────────────────────
     while (true) {
+        // Auto-clear type-ahead search after 1.5 s of inactivity
+        if (!type_search.empty()) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - type_search_clock).count();
+            if (elapsed > 1500) type_search.clear();
+        }
+
         auto entries = readDirectory(current_path);
         sortEntries(entries);
 
@@ -407,7 +464,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
 
         // ── Draw ──────────────────────────────────────────────────────────────
         drawFrame     (renderer, startx, starty, w, h, title);
-        drawPathHeader(renderer, startx, starty, w, current_path);
+        drawPathHeader(renderer, startx, starty, w, current_path, type_search);
         drawFileList  (renderer, startx + 1, starty + 3, list_w, visible_rows,
                        entries, selection, top_of_list, focus == FB_LIST, dirs_only);
 
@@ -466,15 +523,18 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
         switch (ch) {
         // ── Tab / Shift-Tab ───────────────────────────────────────────────────
         case 9:
+            type_search.clear();
             focus = next_focus(focus, +1);
             break;
         case KEY_BTAB:
+            type_search.clear();
             focus = next_focus(focus, -1);
             break;
 
         // ── Arrow keys ────────────────────────────────────────────────────────
         case KEY_UP:
             if (focus == FB_LIST) {
+                type_search.clear();
                 if (selection > 0) {
                     --selection;
                     if (selection < top_of_list) top_of_list = selection;
@@ -491,6 +551,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
 
         case KEY_DOWN:
             if (focus == FB_LIST) {
+                type_search.clear();
                 if (selection < (int)entries.size() - 1) {
                     ++selection;
                     if (selection >= top_of_list + visible_rows) ++top_of_list;
@@ -524,6 +585,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
         // ── Page / Home / End ─────────────────────────────────────────────────
         case KEY_PPAGE:
             if (focus == FB_LIST && !entries.empty()) {
+                type_search.clear();
                 selection   = std::max(0, selection - visible_rows);
                 top_of_list = std::max(0, top_of_list - visible_rows);
                 if (selection < top_of_list) top_of_list = selection;
@@ -533,6 +595,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
 
         case KEY_NPAGE:
             if (focus == FB_LIST && !entries.empty()) {
+                type_search.clear();
                 selection = std::min((int)entries.size() - 1, selection + visible_rows);
                 if (selection >= top_of_list + visible_rows)
                     top_of_list = selection - visible_rows + 1;
@@ -542,6 +605,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
 
         case KEY_HOME:
             if (focus == FB_LIST && !entries.empty()) {
+                type_search.clear();
                 selection = 0; top_of_list = 0;
                 sync_filename(entries);
             }
@@ -549,6 +613,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
 
         case KEY_END:
             if (focus == FB_LIST && !entries.empty()) {
+                type_search.clear();
                 selection = (int)entries.size() - 1;
                 if (selection >= top_of_list + visible_rows)
                     top_of_list = selection - visible_rows + 1;
@@ -558,10 +623,15 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
 
         // ── Backspace ─────────────────────────────────────────────────────────
         case KEY_BACKSPACE: case 127: case 8:
-            if (focus == FB_INPUT && !filename_buf.empty())
+            if (focus == FB_LIST && !type_search.empty()) {
+                type_search.pop_back();
+                type_search_clock = std::chrono::steady_clock::now();
+                applyTypeSearch(entries);
+            } else if (focus == FB_INPUT && !filename_buf.empty()) {
                 filename_buf.pop_back();
-            else if (focus == FB_LIST)
+            } else if (focus == FB_LIST) {
                 enter_dir("..");
+            }
             break;
 
         // ── Enter ─────────────────────────────────────────────────────────────
@@ -587,10 +657,15 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
             }
             break;
 
-        // ── Printable: type into filename field ───────────────────────────────
+        // ── Printable: type-ahead in list; type into filename field otherwise ──
         default:
-            if (has_input && focus == FB_INPUT && ch > 31 && ch < KEY_MIN)
+            if (focus == FB_LIST && ch > 31 && ch < KEY_MIN) {
+                type_search += wchar_to_utf8(ch);
+                type_search_clock = std::chrono::steady_clock::now();
+                applyTypeSearch(entries);
+            } else if (has_input && focus == FB_INPUT && ch > 31 && ch < KEY_MIN) {
                 filename_buf += wchar_to_utf8(ch);
+            }
             break;
         }
     }

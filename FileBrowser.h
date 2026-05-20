@@ -65,7 +65,8 @@ private:
     static void drawFrame       (Renderer&, int x, int y, int w, int h,
                                  const std::string& title);
     static void drawPathHeader  (Renderer&, int x, int y, int w,
-                                 const std::string& path);
+                                 const std::string& path,
+                                 const std::string& type_search);
     static void drawFileList    (Renderer&, int x, int y, int w, int h,
                                  const std::vector<FileEntry>& entries,
                                  int selection, int top, bool focused,
