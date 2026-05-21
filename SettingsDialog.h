@@ -9,10 +9,10 @@ class ConfigManager;
 
 class SettingsDialog : private DialogBase {
 public:
-    static void show(Renderer& renderer, Config& config, ConfigManager& configManager, const std::vector<std::string>& themes);
+    static void show(Renderer& renderer, Config& config, ConfigManager& configManager);
 
 private:
-    SettingsDialog(Renderer& renderer, Config& config, ConfigManager& configManager, const std::vector<std::string>& themes);
+    SettingsDialog(Renderer& renderer, Config& config, ConfigManager& configManager);
 
     void onInit() override;
     void onDraw(Renderer& renderer, int startx, int starty) override;
@@ -21,7 +21,7 @@ private:
     Renderer& renderer_;
     Config& config_;
     ConfigManager& configManager_;
-    const std::vector<std::string>& themes_;
+    std::vector<std::string> themes_;
 
     bool temp_smart_indent_;
     int temp_indent_width_;

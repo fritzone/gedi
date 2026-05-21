@@ -355,6 +355,10 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
             filename_buf = ents[selection].name;
     };
 
+    // ── Type-ahead search state ───────────────────────────────────────────────
+    std::string type_search;
+    auto type_search_clock = std::chrono::steady_clock::now();
+
     auto enter_dir = [&](const std::string& name) {
         if (chdir(name.c_str()) == 0) {
             getcwd(cwd_buf, sizeof(cwd_buf));
@@ -362,12 +366,9 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
             selection    = 0;
             top_of_list  = 0;
             filename_buf.clear();
+            type_search.clear();
         }
     };
-
-    // ── Type-ahead search state ───────────────────────────────────────────────
-    std::string type_search;
-    auto type_search_clock = std::chrono::steady_clock::now();
 
     // Find and select the first entry whose name starts with type_search (case-insensitive).
     // Clamps top_of_list so the selected entry is visible.

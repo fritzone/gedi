@@ -1,6 +1,7 @@
 #include "SettingsDialog.h"
 #include "Config.h"
 #include "ConfigManager.h"
+#include <algorithm>
 
 static constexpr int W            = 60;
 static constexpr int H            = 25;
@@ -15,19 +16,23 @@ static constexpr int LIST_ROWS    = COLOR_BOX_H - 2;
 static constexpr int BTN_Y        = H - 3;
 
 SettingsDialog::SettingsDialog(Renderer& renderer, Config& config,
-                               ConfigManager& configManager,
-                               const std::vector<std::string>& themes)
+                               ConfigManager& configManager)
     : DialogBase("Editor Settings", W, H)
     , renderer_(renderer)
-    , config_(config), configManager_(configManager), themes_(themes)
+    , config_(config), configManager_(configManager)
     , temp_smart_indent_    (config.smart_indentation)
     , temp_indent_width_    (config.indentation_width)
     , m_temp_show_line_numbers(config.show_line_numbers)
     , m_temp_theme_selected  (0)
     , m_temp_theme_cursor    (0)
 {
-    for (int i = 0; i < (int)themes.size(); ++i) {
-        if (themes[i] == config.color_scheme_name) {
+    auto themes_json = configManager_.loadThemes();
+    for (auto const& [key, val] : themes_json.items())
+        themes_.push_back(key);
+    std::sort(themes_.begin(), themes_.end());
+
+    for (int i = 0; i < (int)themes_.size(); ++i) {
+        if (themes_[i] == config.color_scheme_name) {
             m_temp_theme_selected = m_temp_theme_cursor = i;
             break;
         }
@@ -35,10 +40,9 @@ SettingsDialog::SettingsDialog(Renderer& renderer, Config& config,
 }
 
 void SettingsDialog::show(Renderer& renderer, Config& config,
-                          ConfigManager& configManager,
-                          const std::vector<std::string>& themes)
+                          ConfigManager& configManager)
 {
-    SettingsDialog dlg(renderer, config, configManager, themes);
+    SettingsDialog dlg(renderer, config, configManager);
     dlg.run(renderer);
 }
 

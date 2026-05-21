@@ -15,9 +15,14 @@ Welcome to the gedi help system. This guide provides detailed information on all
 [[file_ops|File Operations]]
 [[editing|Editing and Selection]]
 [[navigation|Navigation and Search]]
+[[replace|Search and Replace]]
 [[building|Compiling and Running]]
 [[compiler_options|Compiler Options Dialog]]
 [[compiler_switches|Detailed Compiler Switches Index]]
+[[project_mgmt|Project Management]]
+[[project_panel|Project Panel]]
+[[goto_def|Go to Definition]]
+[[syntax_hl|Syntax Highlighting]]
 [[windows|Window Management]]
 [[options|Editor Settings]]
 [[hotkeys|Quick Hotkey Reference]]
@@ -64,14 +69,26 @@ Return to [[main|Main Menu]].
 [navigation]
 **## Navigation and Search ##**
 
+**Cursor Movement:**
 * **Ctrl+Left/Right**: Move by word.
 * **Home/End**: Jump to line start or end.
 * **Page Up/Down**: Scroll by full pages.
 
-**Search & Replace:**
-* **Ctrl+F**: Find next match.
-* **Ctrl+R**: Opens the **Replace** dialog.
-* **Go To Line**: Jump directly to a specific line number (**Alt+S -> G**).
+**Incremental Search:**
+* **Ctrl+F**: Opens the search bar at the bottom of the screen.
+    - Start typing to search in real time (triggers after 2 characters).
+    - Press **Enter** to find the next occurrence.
+    - Press **Escape** to close the search bar.
+
+**Find Next / Find Previous:**
+* Available in the **Search** menu (**Alt+S**) as **Find Next** and **Find Previous**.
+* These repeat the last search forward or backward without reopening the search bar.
+
+**Search and Replace:**
+* **Ctrl+R**: Opens the **Replace** dialog. See [[replace|Search and Replace]] for details.
+
+**Go To Line:**
+* Jump directly to a specific line number via **Alt+S -> G**.
 
 Return to [[main|Main Menu]].
 
@@ -428,6 +445,134 @@ Enables basic linker-level optimisations, such as removing redundant information
 
 Return to [[compiler_switches|Switches Index]].
 
+[replace]
+**## Search and Replace ##**
+
+Press **Ctrl+R** (or use **Search -> Replace** in the menu) to open the Replace dialog.
+
+The dialog has two fields:
+* **Search**: The text to find.
+* **Replace**: The text to substitute in its place.
+
+**Actions:**
+* **Replace**: Finds the next occurrence of the search term from the current cursor position and replaces it. Running Replace again moves to the next match.
+* **Replace All**: Replaces every occurrence in the entire file at once. A message will confirm how many substitutions were made.
+
+**Notes:**
+* The Replace dialog is not available on read-only buffers.
+* The search term is shared with the incremental search bar (**Ctrl+F**), so it persists between the two.
+
+Return to [[main|Main Menu]] or see [[navigation|Navigation and Search]].
+
+[project_mgmt]
+**## Project Management ##**
+
+Gedi has a built-in project system for managing multi-file C++ builds. Projects are stored in a `.gproj` file in the project's root directory.
+
+**Creating a Project:**
+* Open the **Project** menu and choose **New Project**.
+* A dialog will guide you through setting the project name, root directory, build system, C++ standard, compiler flags, and any linked libraries.
+* Gedi supports three build systems: **cmake**, **make**, and **meson**. After confirming, it generates the corresponding build file (`CMakeLists.txt`, `Makefile`, or `meson.build`) automatically.
+
+**Opening a Project:**
+* Choose **Project -> Open Project** and select the `.gproj` file.
+* The project's sources are then shown in the [[project_panel|Project Panel]].
+
+**Closing a Project:**
+* Choose **Project -> Close Project** to unload the current project.
+
+**Adding Files:**
+* Use **Project -> Add File to Project** to include the currently open file in a project target.
+* Gedi updates the build file on disk immediately.
+
+**Library Scanning:**
+* When creating or editing a project, Gedi scans the system for available development libraries and presents them in a searchable list so you can link them without manually specifying flags.
+
+Return to [[main|Main Menu]] or see [[project_panel|Project Panel]].
+
+[project_panel]
+**## Project Panel ##**
+
+The Project Panel is a side panel that displays your project's structure and lets you navigate its files quickly.
+
+**Toggling the Panel:**
+* Press **Alt+0** to show or hide the Project Panel.
+* The panel requires an open project; it will show a message if no project is loaded.
+
+**Panel Structure:**
+The panel shows three levels:
+1. **Build file** — the generated `CMakeLists.txt`, `Makefile`, or `meson.build`.
+2. **Targets** — each executable or library defined in the project.
+3. **Source files** — the `.cpp` and `.h` files belonging to each target.
+
+**Navigation:**
+* **Up/Down arrow keys**: Move the cursor through the list.
+* **Enter**: Open the highlighted file in the editor.
+* **Tab**: Move focus back to the editor without closing the panel.
+* **Escape**: Close the Project Panel.
+
+**Editing the Project:**
+* **Del**: Remove the selected item. Selecting a source file removes it from its target (with confirmation). Selecting a target removes it and all its sources (with confirmation). The build file cannot be removed.
+* **M**: Move the selected source file to a different target. A picker lets you choose the destination target.
+
+All changes are saved to the `.gproj` file and the build file on disk immediately.
+
+Return to [[main|Main Menu]] or see [[project_mgmt|Project Management]].
+
+[goto_def]
+**## Go to Definition ##**
+
+Press **F12** to jump to the definition of the symbol under the cursor.
+
+**How it works:**
+* Gedi uses **libclang** to parse the current file and resolve the symbol at the cursor position to its definition.
+* If the definition is in another file, that file is opened in a new buffer automatically and the cursor is placed on the correct line.
+
+**Spinner:**
+* Parsing a large file can take a moment. While working, the status bar displays a spinner and the name of the symbol being searched.
+* Press **Escape** to cancel a lookup that is taking too long.
+
+**Fast path:**
+* If the symbol was already resolved in a previous parse, Gedi can jump immediately without a full re-parse.
+
+**Notes:**
+* Go to Definition works best on C and C++ files that are part of a project with a properly configured include path.
+* It requires libclang to be installed on the system.
+
+Return to [[main|Main Menu]].
+
+[syntax_hl]
+**## Syntax Highlighting ##**
+
+Gedi automatically detects the language of a file from its name or extension and applies appropriate syntax highlighting.
+
+**Supported file types:**
+
+* **C / C++**: `.c`, `.h`, `.cpp`, `.hpp`, `.cxx`
+    - Keywords, preprocessor directives, string literals, numbers, comments, and libclang-powered semantic token coloring.
+
+* **CMake**: `CMakeLists.txt`
+    - CMake commands, variables, generator expressions, and quoted strings.
+
+* **Makefile**: `Makefile`, `GNUmakefile`
+    - Targets, variables, automatic variables, and recipe lines.
+
+* **Assembly**: `.s`, `.asm`
+    - Mnemonics, registers, directives, labels, and numeric literals.
+
+* **Linker Script**: `.ld`
+    - Section keywords, memory regions, symbols, and expressions.
+
+* **PRIMAL**: `.prim`
+    - Syntax for the PRIMAL domain-specific language.
+
+* **GLSL**: `.glsl`, `.vert`, `.frag`
+    - GLSL keywords, built-in variables, type names, and preprocessor directives.
+
+Files that do not match any of the above are displayed without highlighting.
+
+Return to [[main|Main Menu]].
+
 [windows]
 **## Window Management ##**
 
@@ -457,18 +602,26 @@ Return to [[main|Main Menu]].
 **## Quick Hotkey Reference ##**
 
 **File & Editor**
-Ctrl+N - New File        Ctrl+O - Open File
-Ctrl+S - Save File       Alt+X  - Exit IDE
-Alt+W  - Close Window    F6     - Next Window
+Ctrl+N - New File        F3     - Open File
+F2     - Save File       Alt+X  - Exit IDE
+Alt+F3 - Close Window    F6     - Next Window
+Shift+F6 - Prev Window
 
 **Editing**
-Ctrl+C - Copy            Ctrl+X - Cut
-Ctrl+V - Paste           Alt+BS - Undo
-Alt+Y  - Redo            Ctrl+/ - Toggle Comment
+Ctrl+INS  - Copy         Shift+DEL - Cut
+Shift+INS - Paste        Alt+BS    - Undo
+Alt+Y     - Redo         Ctrl+/    - Toggle Comment
+DEL       - Delete Fwd
 
-**Search & Build**
-Ctrl+F   - Find          Ctrl+R   - Replace
-Alt+S->G - Go To Line    F9       - Compile & Run
-Shift+F9 - Compile Only  F5       - Show Output
+**Search & Navigation**
+Ctrl+F   - Find (inline)  Ctrl+R   - Replace Dialog
+Alt+S->G - Go To Line     F12      - Go to Definition
+
+**Project**
+Alt+0    - Toggle Project Panel
+
+**Build & Run**
+Alt+F9   - Compile Only  Ctrl+F9  - Compile & Run
+Alt+F5   - Toggle Output
 
 Return to [[main|Main Menu]].

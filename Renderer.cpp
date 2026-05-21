@@ -3,6 +3,7 @@
 
 #include <ncurses.h>
 #include <termios.h>
+#include <csignal>
 
 #include <fstream>
 
@@ -10,6 +11,7 @@ Renderer::Renderer() {
     setlocale(LC_ALL, ""); initscr();
     set_escdelay(25);
     cbreak(); noecho();
+    signal(SIGINT, SIG_IGN);
     keypad(stdscr, TRUE); nodelay(stdscr, TRUE); curs_set(1);
     // Pin Ctrl+Down (terminfo kDN5) to a stable key code used by ComboBox
     const char* kdn5 = tigetstr("kDN5");

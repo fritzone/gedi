@@ -14,7 +14,7 @@ export DEB_LDFLAGS_SET=
 	dh $@ --parallel --buildsystem=cmake
 
 override_dh_auto_configure:
-	QT_SELECT=5 dh_auto_configure -- --no-warn-unused-cli 
+	dh_auto_configure -- --no-warn-unused-cli
 
 override_dh_missing:
 	dh_missing --fail-missing

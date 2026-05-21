@@ -277,6 +277,10 @@ HandleResult DialogBase::dispatchKey(wint_t ch)
     case KEY_ENTER: case 10: case 13:
         return dispatchEnter();
 
+    case ' ':
+        if (focus_ == btn_row_focus_index_) return dispatchEnter();
+        return dispatchChar(' ');
+
     default:
         if (ch > 31 && ch < KEY_MIN) return dispatchChar(ch);
         return onKey(ch);
@@ -397,7 +401,7 @@ HandleResult DialogBase::dispatchGroupKey(wint_t ch)
         }
         break;
 
-    case KEY_ENTER: case 10: case 13:
+    case KEY_ENTER: case 10: case 13: case ' ':
         if (inGroupButtonRow()) {
             Button* btn = button_row_.focusedButton();
             if (btn) armButton(btn);

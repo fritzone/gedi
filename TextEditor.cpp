@@ -1622,7 +1622,23 @@ void TextEditor::process_key(wint_t ch) {
                 case EditorAction::ACT_HELP: showHelpDialog(); return;
                 case EditorAction::ACT_ABOUT: AboutBox(); return;
                 case EditorAction::ACT_TOGGLE_COMMENT: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } handleToggleComment(); return;
-                case EditorAction::ACT_DELETE: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } DeleteSelection(); return;
+                case EditorAction::ACT_DELETE: {
+                    if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; }
+                    CreateUndoPoint(currentBuffer());
+                    EditorBuffer& buf = currentBuffer();
+                    if (buf.selecting) {
+                        DeleteSelection();
+                    } else if (buf.cursor_col <= (int)buf.current_line->text.length()) {
+                        buf.current_line->text.erase(buf.cursor_col - 1, 1); buf.changed = true;
+                    } else if (buf.current_line->next) {
+                        Line* to_delete = buf.current_line->next;
+                        buf.current_line->text += to_delete->text;
+                        buf.current_line->next = to_delete->next;
+                        if (to_delete->next) to_delete->next->prev = buf.current_line;
+                        delete to_delete; buf.changed = true;
+                    }
+                    return;
+                }
                 case EditorAction::ACT_TOGGLE_PROJECT_PANEL: ToggleProjectPanel(); return;
                 case EditorAction::ACT_CLOSE_PROJECT:        CloseProject(); return;
                 default: break;
@@ -2882,12 +2898,7 @@ void TextEditor::PerformSearch(bool next) {
 // Config management is now handled by ConfigManager
 
 void TextEditor::EditorSettingsDialog() {
-    std::vector<std::string> themes;
-    for (auto const& [key, val] : m_themes_data.items()) {
-        themes.push_back(key);
-    }
-    std::sort(themes.begin(), themes.end());
-    SettingsDialog::show(*m_renderer, m_config, *m_configManager, themes);
+    SettingsDialog::show(*m_renderer, m_config, *m_configManager);
 }
 
 // Build command generation is now handled by BuildSystem
