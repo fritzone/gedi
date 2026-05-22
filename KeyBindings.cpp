@@ -44,6 +44,7 @@ void KeyBindings::loadDefaults() {
     addBinding(EditorAction::ACT_REPLACE, CTRL('R'), "Ctrl+R");
     addBinding(EditorAction::ACT_GOTO_LINE, -1, "");
     addBinding(EditorAction::ACT_GO_TO_DEFINITION, KEY_F(12), "F12");
+    addBinding(EditorAction::ACT_FIND_REFERENCES,  KEY_F(24), "Shift+F12");
     addBinding(EditorAction::ACT_COMPILE, KEY_ALT(KEY_F(9)), "Alt+F9"); 
     addBinding(EditorAction::ACT_RUN, CTRL(KEY_F(9)), "Ctrl+F9"); 
     addBinding(EditorAction::ACT_COMPILE_OPTIONS, -1, "");

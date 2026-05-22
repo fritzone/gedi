@@ -327,6 +327,16 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
                                      : FB_LIST;
     bool pressed = false;
 
+    // Double-click detection (mouseinterval(0) disables ncurses synthesis)
+    auto last_click_time = std::chrono::steady_clock::now() - std::chrono::seconds(10);
+    int  last_click_x    = -1;
+    int  last_click_y    = -1;
+
+    // Button capture state: press shows button as pressed; action fires only on release
+    // over the same button.  0 = OK, 1 = Cancel, -1 = none.
+    int  btn_capture      = -1;
+    bool btn_hover_pressed = false;
+
     // ── Layout ───────────────────────────────────────────────────────────────
     // Fixed overhead per row-group:
     //   borders(2) + path(1) + gap(1) + gap-after-list(1) + btn(1) + gap(1) = 7
@@ -483,7 +493,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
         drawButtons(renderer, startx, btn_y, w,
                     ok_text,  focus == FB_OK,
                     can_text, focus == FB_CANCEL,
-                    pressed);
+                    pressed || btn_hover_pressed);
 
         if (focus == FB_INPUT && has_input) {
             std::string full_label = " " + input_label + " ";
@@ -621,6 +631,131 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
                 sync_filename(entries);
             }
             break;
+
+        // ── Mouse ─────────────────────────────────────────────────────────────
+        case KEY_MOUSE: {
+            MEVENT ev;
+            if (getmouse(&ev) != OK) break;
+
+            bool is_press     = (ev.bstate & BUTTON1_PRESSED)        != 0;
+            bool is_release   = (ev.bstate & BUTTON1_RELEASED)       != 0;
+            bool is_clicked   = (ev.bstate & BUTTON1_CLICKED)        != 0; // rare with mouseinterval=0
+            bool is_scroll_up = (ev.bstate & BUTTON4_PRESSED)        != 0;
+            bool is_scroll_dn = (ev.bstate & BUTTON5_PRESSED)        != 0;
+            int mx = ev.x, my = ev.y;
+
+            // Lambdas for button hit-testing (same coordinates as drawButtons)
+            auto overOK  = [&]{ return my == btn_y
+                                     && mx >= startx + w/2 - 12
+                                     && mx <  startx + w/2 - 12 + (int)ok_text.size(); };
+            auto overCan = [&]{ return my == btn_y
+                                     && mx >= startx + w/2 + 2
+                                     && mx <  startx + w/2 + 2  + (int)can_text.size(); };
+
+            // Scroll wheel over the file list
+            if (is_scroll_up || is_scroll_dn) {
+                int delta = is_scroll_up ? -3 : 3;
+                top_of_list = std::max(0, top_of_list + delta);
+                if (!entries.empty() && top_of_list + visible_rows > (int)entries.size())
+                    top_of_list = std::max(0, (int)entries.size() - visible_rows);
+                if (selection < top_of_list) selection = top_of_list;
+                else if (selection >= top_of_list + visible_rows)
+                    selection = top_of_list + visible_rows - 1;
+                sync_filename(entries);
+                break;
+            }
+
+            // ── Button capture: release and drag-motion ───────────────────────
+            if (btn_capture >= 0) {
+                if (is_release || is_clicked) {
+                    // Fire only if released over the same button that was pressed.
+                    if (btn_capture == 0 && overOK()) {
+                        focus = FB_OK;
+                        if (tryAccept()) pressed = true;
+                    } else if (btn_capture == 1 && overCan()) {
+                        focus = FB_CANCEL;
+                        pressed = true;
+                    }
+                    btn_capture       = -1;
+                    btn_hover_pressed = false;
+                } else {
+                    // Motion: update the visual pressed state.
+                    if      (btn_capture == 0) btn_hover_pressed = overOK();
+                    else if (btn_capture == 1) btn_hover_pressed = overCan();
+                }
+                break;
+            }
+
+            // BUTTON1_CLICKED with no capture: synthesised click, fire immediately.
+            if (is_clicked && !is_press) {
+                if (overOK())  { focus = FB_OK;     if (tryAccept()) pressed = true; }
+                else if (overCan()) { focus = FB_CANCEL; pressed = true; }
+                break;
+            }
+
+            if (!is_press) break;  // release or position-report with no capture — ignore
+
+            // Double-click detection
+            auto now = std::chrono::steady_clock::now();
+            bool is_dbl = (ev.bstate & BUTTON1_DOUBLE_CLICKED) != 0 ||
+                          (std::chrono::duration_cast<std::chrono::milliseconds>(
+                               now - last_click_time).count() < 400 &&
+                           mx == last_click_x && my == last_click_y);
+            last_click_time = now;
+            last_click_x    = mx;
+            last_click_y    = my;
+
+            // File list
+            if (my >= starty + 3 && my < list_end_y &&
+                mx >= startx + 1 && mx < startx + 1 + list_w)
+            {
+                int clicked_idx = top_of_list + (my - (starty + 3));
+                if (clicked_idx >= 0 && clicked_idx < (int)entries.size()) {
+                    focus = FB_LIST;
+                    type_search.clear();
+                    selection = clicked_idx;
+                    if (selection < top_of_list) top_of_list = selection;
+                    if (selection >= top_of_list + visible_rows)
+                        top_of_list = selection - visible_rows + 1;
+                    sync_filename(entries);
+                    if (is_dbl) {
+                        auto& sel = entries[clicked_idx];
+                        if (sel.is_directory) {
+                            enter_dir(sel.name);
+                        } else if (!dirs_only) {
+                            filename_buf = sel.name;
+                            if (tryAccept()) pressed = true;
+                        }
+                    }
+                }
+                break;
+            }
+
+            // Filename input field
+            if (has_input && my == input_y &&
+                mx >= startx + 1 && mx < startx + w - 1) {
+                focus = FB_INPUT;
+                break;
+            }
+
+            // Filter combo
+            if (has_filter_combo && filter_y >= 0 && my == filter_y) {
+                focus = FB_FILTER;
+                constexpr int PREFIX_COLS = 9;
+                constexpr int SUFFIX_COLS = 4;
+                int suffix_x = startx + 1 + PREFIX_COLS + ((w - 2) - PREFIX_COLS - SUFFIX_COLS);
+                if (mx >= suffix_x && (int)filters.size() > 1) {
+                    filter_idx = (filter_idx + 1) % (int)filters.size();
+                    filename_buf.clear();
+                }
+                break;
+            }
+
+            // Button press: capture — show pressed, don't fire yet.
+            if (overOK())        { btn_capture = 0; btn_hover_pressed = true; focus = FB_OK;     }
+            else if (overCan())  { btn_capture = 1; btn_hover_pressed = true; focus = FB_CANCEL; }
+            break;
+        }
 
         // ── Backspace ─────────────────────────────────────────────────────────
         case KEY_BACKSPACE: case 127: case 8:

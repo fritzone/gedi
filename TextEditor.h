@@ -4,6 +4,7 @@
 #include "EditorBuffer.h"
 #include "Renderer.h"
 
+#include <chrono>
 #include <string>
 #include <vector>
 #include <memory>
@@ -84,6 +85,13 @@ private:
     int m_compile_output_cursor_pos = 0;
     ViewState m_pre_compile_view_state;
 
+    // Find All References panel
+    bool m_refs_visible = false;
+    std::vector<CompileMessage> m_refs_lines;
+    int  m_refs_scroll_pos = 0;
+    int  m_refs_cursor_pos = 0;
+    std::string m_refs_token;
+
     // Empty-desktop maze (generated once, stable between redraws)
     std::vector<uint8_t> m_desktop_maze;
     int m_desktop_maze_w = 0;
@@ -122,6 +130,8 @@ private:
     void drawStatusBar();
     void drawScrollbars();
     void drawCompileOutputWindow();
+    void findAllReferences();
+    void drawRefsWindow();
     int msgwin_yesno(const std::string& question, const std::string& info);
     void msgwin(const std::string& s);
     void read_file(EditorBuffer& buffer);
@@ -195,12 +205,32 @@ private:
     void regenerateBuildFile();
     int  pickTarget(const std::string& action_label, int exclude_idx = -1);
     std::vector<PanelEntry> buildPanelEntries() const;
+    void handleMouseEvent();
 
     // Project panel state
     bool m_project_panel_open    = false;
     bool m_project_panel_focused = false;
     int  m_project_panel_cursor  = 0;
     int  m_project_panel_scroll  = 0;
+
+    // Debounced semantic re-highlight: reset on every keypress, fire after idle
+    std::chrono::steady_clock::time_point m_last_keystroke_time{};
+
+    // Mouse state
+    bool m_mouse_btn_down        = false;
+    int  m_mouse_press_line      = 0;
+    int  m_mouse_press_col       = 0;
+    int  m_mouse_pending_menu_id = 0;  // set by CallSubMenu when user clicks the menu bar
+
+    // Project-panel double-click detection
+    std::chrono::steady_clock::time_point m_panel_last_click_time{};
+    int  m_panel_last_click_x = -1;
+    int  m_panel_last_click_y = -1;
+
+    // Text-area double-click detection
+    std::chrono::steady_clock::time_point m_text_last_click_time{};
+    int  m_text_last_click_x = -1;
+    int  m_text_last_click_y = -1;
 
     // Background library scan state
     std::future<std::vector<LibraryInfo>> m_lib_future;

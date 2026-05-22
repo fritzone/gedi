@@ -8,8 +8,15 @@
 #include <ncurses.h>
 #include <clang-c/Index.h>
 
+// BUTTON1_MOTION is not universally defined; compute it from the ncurses mask formula.
+// NCURSES_MOUSE_MASK(1, 040) = 040 shifted by (1-1)*6 = 0 positions = 0x20.
+#ifndef BUTTON1_MOTION
+#  define BUTTON1_MOTION static_cast<mmask_t>(0x20)
+#endif
+
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <thread>
 #include <chrono>
 #include <iostream>
@@ -511,10 +518,10 @@ void TextEditor::drawTextArea() {
     }
 
     // Grab a lock-free snapshot of the semantic color table (may be nullptr).
-    // Only use it when the buffer is unmodified: any edit shifts line numbers and
-    // makes the cached per-line data stale/misaligned.
+    // Use it even on a dirty buffer — stale-by-a-few-chars colours are far better
+    // than no semantic highlighting. A debounced re-request will refresh them.
     std::shared_ptr<std::vector<std::vector<uint8_t>>> sem_snap;
-    if (buffer.semantic_cache && !buffer.changed) {
+    if (buffer.semantic_cache) {
         std::unique_lock<std::mutex> lk(buffer.semantic_cache->mutex, std::try_to_lock);
         if (lk.owns_lock()) sem_snap = buffer.semantic_cache->colors;
     }
@@ -724,6 +731,7 @@ void TextEditor::drawEditorState(int active_menu_id) {
         if (m_project_panel_open) drawProjectPanel();
         drawScrollbars();
         if (m_compile_output_visible) drawCompileOutputWindow();
+        if (m_refs_visible) drawRefsWindow();
     }
     drawMenuBar(active_menu_id);
     drawStatusBar();
@@ -795,7 +803,9 @@ void TextEditor::updateMenuLabels() {
         formatMenuItem("Find Pre&vious", EditorAction::ACT_FIND_PREV),
         formatMenuItem("&Replace...", EditorAction::ACT_REPLACE),
         " -------------- ",
-        formatMenuItem("&Go To Line...", EditorAction::ACT_GOTO_LINE)
+        formatMenuItem("&Go To Line...", EditorAction::ACT_GOTO_LINE),
+        formatMenuItem("Go To &Definition", EditorAction::ACT_GO_TO_DEFINITION),
+        formatMenuItem("Find All &References", EditorAction::ACT_FIND_REFERENCES)
     };
 
     m_submenu_build = {
@@ -818,6 +828,317 @@ void TextEditor::updateMenuLabels() {
         formatMenuItem("&View Help...", EditorAction::ACT_HELP),
         formatMenuItem("&About...", EditorAction::ACT_ABOUT)
     };
+}
+
+void TextEditor::handleMouseEvent() {
+    MEVENT ev;
+    if (getmouse(&ev) != OK) return;
+
+    // Separate a real press from motion-while-held (arrives as BUTTON1_PRESSED|REPORT_MOUSE_POSITION).
+    bool is_pos_rpt   = (ev.bstate & REPORT_MOUSE_POSITION)               != 0;
+    bool is_press     = (ev.bstate & (BUTTON1_PRESSED | BUTTON1_CLICKED)) != 0 && !is_pos_rpt;
+    bool is_release   = (ev.bstate & BUTTON1_RELEASED)                    != 0;
+    bool is_dbl       = (ev.bstate & BUTTON1_DOUBLE_CLICKED)              != 0;
+    bool is_motion    = (ev.bstate & (BUTTON1_MOTION | REPORT_MOUSE_POSITION)) != 0;
+    bool is_scroll_up = (ev.bstate & BUTTON4_PRESSED)                     != 0;
+    bool is_scroll_dn = (ev.bstate & BUTTON5_PRESSED)                     != 0;
+
+    // bstate==0 or unknown flag: treat as drag motion only if button is currently held
+    if (!is_press && !is_release && !is_dbl && !is_motion &&
+        !is_scroll_up && !is_scroll_dn) {
+        if (m_mouse_btn_down) is_motion = true;
+        else return;
+    }
+
+    int mx = ev.x, my = ev.y;
+
+    // Track whether the button was down *before* this event clears it.
+    // Used so release events can finalise the selection at the release position.
+    bool btn_was_down = m_mouse_btn_down;
+
+    if (is_release) {
+        m_mouse_btn_down = false;
+        if (!btn_was_down) return;      // spurious release – nothing to finalise
+        is_motion = true;               // treat release position as final drag endpoint
+    }
+
+    // Scroll wheel
+    if (is_scroll_up || is_scroll_dn) {
+        if (m_project_panel_open && mx < PANEL_W) {
+            auto entries      = buildPanelEntries();
+            int  count        = (int)entries.size();
+            int  panel_h      = m_text_area_end_y - m_text_area_start_y + 3;
+            int  visible_count = panel_h - 2;
+            for (int i = 0; i < 3; ++i) {
+                if (is_scroll_up && m_project_panel_scroll > 0)
+                    --m_project_panel_scroll;
+                else if (is_scroll_dn && m_project_panel_scroll + visible_count < count)
+                    ++m_project_panel_scroll;
+            }
+            if (m_project_panel_cursor < m_project_panel_scroll)
+                m_project_panel_cursor = m_project_panel_scroll;
+            if (m_project_panel_cursor >= m_project_panel_scroll + visible_count)
+                m_project_panel_cursor = m_project_panel_scroll + visible_count - 1;
+        } else if (currentBufferIdx() != -1) {
+            EditorBuffer& buf = currentBuffer();
+            for (int i = 0; i < 3; ++i) {
+                if (is_scroll_up && buf.first_visible_line->prev)
+                    buf.first_visible_line = buf.first_visible_line->prev;
+                else if (is_scroll_dn && buf.first_visible_line->next)
+                    buf.first_visible_line = buf.first_visible_line->next;
+            }
+        }
+        return;
+    }
+
+    // Menu bar row (y == 0)
+    if ((is_press || is_dbl) && my == 0) {
+        int w = m_renderer->getWidth();
+        for (size_t i = 0; i < m_menus.size(); ++i) {
+            int xp = (i == m_menus.size() - 1)
+                     ? (w - (int)m_menus[i].length() - 2)
+                     : m_menu_positions[i];
+            if (mx >= xp && mx < xp + (int)m_menus[i].length()) {
+                ActivateMenuBar(static_cast<int>(i) + 1);
+                return;
+            }
+        }
+        return;
+    }
+
+    // Project panel
+    if ((is_press || is_dbl) && m_project_panel_open && mx < PANEL_W) {
+        m_project_panel_focused = true;
+        int panel_y = m_text_area_start_y - 1;
+        int panel_h = m_text_area_end_y - m_text_area_start_y + 3;
+        if (my >= panel_y + 1 && my < panel_y + panel_h - 1) {
+            int idx = m_project_panel_scroll + (my - (panel_y + 1));
+            auto entries = buildPanelEntries();
+            if (idx >= 0 && idx < (int)entries.size()) {
+                m_project_panel_cursor = idx;
+
+                // Manual double-click detection (mouseinterval(0) suppresses DOUBLE_CLICKED)
+                auto now = std::chrono::steady_clock::now();
+                bool is_double = is_dbl ||
+                    (mx == m_panel_last_click_x && my == m_panel_last_click_y &&
+                     std::chrono::duration_cast<std::chrono::milliseconds>(
+                         now - m_panel_last_click_time).count() < 400);
+                m_panel_last_click_time = now;
+                m_panel_last_click_x    = mx;
+                m_panel_last_click_y    = my;
+
+                if (is_double) openProjectPanelFile(idx);
+            }
+        }
+        return;
+    }
+
+    if (is_press && m_project_panel_open && mx >= PANEL_W)
+        m_project_panel_focused = false;
+
+    if (currentBufferIdx() == -1) return;
+
+    // Vertical scrollbar (column bar_x)
+    int bar_x = m_text_area_end_x + 2;
+    if (is_press && mx == bar_x) {
+        EditorBuffer& buf = currentBuffer();
+        if (my == m_text_area_start_y - 1) {
+            if (buf.first_visible_line->prev)
+                buf.first_visible_line = buf.first_visible_line->prev;
+        } else if (my == m_text_area_end_y + 1) {
+            if (buf.first_visible_line->next)
+                buf.first_visible_line = buf.first_visible_line->next;
+        } else if (my >= m_text_area_start_y && my <= m_text_area_end_y) {
+            int track = m_text_area_end_y - m_text_area_start_y + 1;
+            if (track > 1 && buf.total_lines > track) {
+                float prop = float(my - m_text_area_start_y) / float(track - 1);
+                int target = 1 + int(prop * float(buf.total_lines - track));
+                if (target < 1) target = 1;
+                buf.first_visible_line = buf.document_head;
+                for (int i = 1; i < target && buf.first_visible_line->next; ++i)
+                    buf.first_visible_line = buf.first_visible_line->next;
+            }
+        }
+        return;
+    }
+
+    // Horizontal scrollbar (row bar_y)
+    int bar_y = m_text_area_end_y + 2;
+    if (is_press && my == bar_y) {
+        EditorBuffer& buf = currentBuffer();
+        if (mx == m_text_area_start_x - 1) {
+            if (buf.horizontal_scroll_offset > 1) --buf.horizontal_scroll_offset;
+        } else if (mx == m_text_area_end_x + 1) {
+            ++buf.horizontal_scroll_offset;
+        } else if (mx >= m_text_area_start_x && mx <= m_text_area_end_x) {
+            int track = m_text_area_end_x - m_text_area_start_x + 1;
+            if (track > 1) {
+                int max_len = 0;
+                for (const Line* p = buf.document_head; p; p = p->next)
+                    max_len = std::max(max_len, (int)p->text.length());
+                if (max_len > track) {
+                    float prop = float(mx - m_text_area_start_x) / float(track - 1);
+                    int target = 1 + int(prop * float(max_len - track));
+                    if (target < 1) target = 1;
+                    buf.horizontal_scroll_offset = target;
+                }
+            }
+        }
+        return;
+    }
+
+    // Text area click / drag
+    if (my >= m_text_area_start_y && my <= m_text_area_end_y &&
+        mx >= m_text_area_start_x && mx <= m_text_area_end_x) {
+
+        m_project_panel_focused = false;
+        EditorBuffer& buf = currentBuffer();
+
+        // Resolve clicked line pointer + line number
+        int fvl_num = 1;
+        { const Line* p = buf.document_head; while (p && p != buf.first_visible_line) { p = p->next; ++fvl_num; } }
+
+        int   line_offset   = my - m_text_area_start_y;
+        Line* click_line    = buf.first_visible_line;
+        int   click_linenum = fvl_num;
+        for (int i = 0; i < line_offset && click_line->next; ++i) {
+            click_line = click_line->next;
+            ++click_linenum;
+        }
+
+        // Resolve column (1-based); gutter → col 1
+        int col;
+        if (mx < m_text_area_start_x + m_gutter_width) {
+            col = 1;
+        } else {
+            col = mx - m_text_area_start_x - m_gutter_width + 1 + buf.horizontal_scroll_offset;
+            if (col < 1) col = 1;
+            if (col > (int)click_line->text.length() + 1)
+                col = int(click_line->text.length()) + 1;
+        }
+
+        if (is_press) {
+            bool shift = (ev.bstate & BUTTON_SHIFT) != 0;
+
+            // Manual double-click detection (mouseinterval(0) suppresses BUTTON1_DOUBLE_CLICKED)
+            auto now = std::chrono::steady_clock::now();
+            bool is_double = (mx == m_text_last_click_x && my == m_text_last_click_y &&
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now - m_text_last_click_time).count() < 400);
+            m_text_last_click_time = now;
+            m_text_last_click_x    = mx;
+            m_text_last_click_y    = my;
+
+            if (is_double) {
+                // Select word under cursor
+                ClearSelection();
+                const std::string& text = click_line->text;
+                int c0 = col - 1;
+                if (c0 >= 0 && c0 < (int)text.length() &&
+                    (std::isalnum((unsigned char)text[c0]) || text[c0] == '_')) {
+                    int start = c0, end = c0;
+                    while (start > 0 && (std::isalnum((unsigned char)text[start-1]) || text[start-1] == '_')) --start;
+                    while (end < (int)text.length() && (std::isalnum((unsigned char)text[end]) || text[end] == '_')) ++end;
+                    buf.current_line             = click_line;
+                    buf.current_line_num         = click_linenum;
+                    buf.selection_anchor_line    = click_line;
+                    buf.selection_anchor_linenum = click_linenum;
+                    buf.selection_anchor_col     = start + 1;
+                    buf.cursor_col               = end + 1;
+                    buf.cursor_screen_y          = my;
+                    buf.selecting                = true;
+                    UpdateSelection();
+                }
+                m_mouse_btn_down   = true;
+                m_mouse_press_line = click_linenum;
+                m_mouse_press_col  = col;
+            } else if (shift && buf.selection_anchor_line) {
+                // Shift+click: anchor stays, extend cursor to new position
+                buf.current_line     = click_line;
+                buf.current_line_num = click_linenum;
+                buf.cursor_col       = col;
+                buf.cursor_screen_y  = my;
+                if (!buf.selecting) buf.selecting = true;
+                UpdateSelection();
+                m_mouse_btn_down   = true;
+                m_mouse_press_line = click_linenum;
+                m_mouse_press_col  = col;
+            } else {
+                ClearSelection();
+                buf.current_line             = click_line;
+                buf.current_line_num         = click_linenum;
+                buf.cursor_col               = col;
+                buf.cursor_screen_y          = my;
+                buf.selection_anchor_line    = click_line;
+                buf.selection_anchor_col     = col;
+                buf.selection_anchor_linenum = click_linenum;
+                m_mouse_btn_down   = true;
+                m_mouse_press_line = click_linenum;
+                m_mouse_press_col  = col;
+            }
+
+        } else if (is_motion && btn_was_down) {
+            buf.current_line     = click_line;
+            buf.current_line_num = click_linenum;
+            buf.cursor_col       = col;
+            buf.cursor_screen_y  = my;
+            if (!buf.selecting && (click_linenum != m_mouse_press_line || col != m_mouse_press_col))
+                buf.selecting = true;
+            if (buf.selecting)
+                UpdateSelection();
+
+        } else if (is_dbl) {
+            // Fallback: ncurses synthesised BUTTON1_DOUBLE_CLICKED (rare with mouseinterval(0))
+            ClearSelection();
+            const std::string& text = click_line->text;
+            int c0 = col - 1;
+            if (c0 >= 0 && c0 < (int)text.length() &&
+                (std::isalnum((unsigned char)text[c0]) || text[c0] == '_')) {
+                int start = c0, end = c0;
+                while (start > 0 && (std::isalnum((unsigned char)text[start-1]) || text[start-1] == '_')) --start;
+                while (end < (int)text.length() && (std::isalnum((unsigned char)text[end]) || text[end] == '_')) ++end;
+                buf.current_line             = click_line;
+                buf.current_line_num         = click_linenum;
+                buf.selection_anchor_line    = click_line;
+                buf.selection_anchor_linenum = click_linenum;
+                buf.selection_anchor_col     = start + 1;
+                buf.cursor_col               = end + 1;
+                buf.cursor_screen_y          = my;
+                buf.selecting = true;
+                UpdateSelection();
+            }
+        }
+    }
+
+    // Clamp drag that strays outside the text area so selection extends to the nearest edge
+    if (is_motion && btn_was_down && currentBufferIdx() != -1 &&
+        !(my >= m_text_area_start_y && my <= m_text_area_end_y &&
+          mx >= m_text_area_start_x && mx <= m_text_area_end_x)) {
+        EditorBuffer& buf = currentBuffer();
+        if (buf.selecting) {
+            int eff_my = std::max(m_text_area_start_y, std::min(m_text_area_end_y, my));
+
+            int fvl_num = 1;
+            for (const Line* p = buf.document_head; p && p != buf.first_visible_line; p = p->next)
+                ++fvl_num;
+
+            int   offset    = eff_my - m_text_area_start_y;
+            Line* edge_line = buf.first_visible_line;
+            int   edge_num  = fvl_num;
+            for (int i = 0; i < offset && edge_line->next; ++i) {
+                edge_line = edge_line->next;
+                ++edge_num;
+            }
+
+            int edge_col = (my < m_text_area_start_y) ? 1 : (int)edge_line->text.length() + 1;
+
+            buf.current_line     = edge_line;
+            buf.current_line_num = edge_num;
+            buf.cursor_col       = edge_col;
+            buf.cursor_screen_y  = eff_my;
+            UpdateSelection();
+        }
+    }
 }
 
 void TextEditor::main_loop() {
@@ -852,6 +1173,9 @@ void TextEditor::main_loop() {
         wint_t ch = m_renderer->getChar();
 
         if (ch == KEY_RESIZE) { handleResize(); continue; }
+        if (ch == KEY_MOUSE) { handleMouseEvent(); continue; }
+
+        if (ch != ERR) m_last_keystroke_time = std::chrono::steady_clock::now();
 
         if (ch != ERR) {
             if (m_project_panel_focused && !m_compile_output_visible) {
@@ -918,6 +1242,37 @@ void TextEditor::main_loop() {
                     handleResize();
                     break;
                 }
+            } else if (m_refs_visible) {
+                switch (ch) {
+                case KEY_UP:
+                    if (m_refs_cursor_pos > 0) --m_refs_cursor_pos;
+                    break;
+                case KEY_DOWN:
+                    if (m_refs_cursor_pos < (int)m_refs_lines.size() - 1) ++m_refs_cursor_pos;
+                    break;
+                case KEY_PPAGE:
+                    m_refs_cursor_pos = std::max(0, m_refs_cursor_pos - 10);
+                    break;
+                case KEY_NPAGE:
+                    m_refs_cursor_pos = std::min((int)m_refs_lines.size() - 1, m_refs_cursor_pos + 10);
+                    break;
+                case 27: // ESC
+                    m_refs_visible = false;
+                    m_renderer->showCursor();
+                    handleResize();
+                    break;
+                case KEY_ENTER: case 10: case 13: {
+                    if (m_refs_cursor_pos < (int)m_refs_lines.size()) {
+                        const auto& msg = m_refs_lines[m_refs_cursor_pos];
+                        m_refs_visible = false;
+                        if (!msg.filename.empty())
+                            openFileAtLine(msg.filename, msg.line, msg.col);
+                        m_renderer->showCursor();
+                        handleResize();
+                    }
+                    break;
+                }
+                }
             } else if (ch == 27 || ch == KEY_F(10)) {
                 process_key(ch);
             } else {
@@ -928,7 +1283,23 @@ void TextEditor::main_loop() {
                 timeout(-1); nodelay(stdscr, TRUE);
                 for (wint_t key_press : input_buffer) { process_key(key_press); }
             }
-        } else { std::this_thread::sleep_for(std::chrono::milliseconds(10)); }
+        } else {
+            // Idle — check whether a debounced semantic re-highlight is due.
+            if (currentBufferIdx() != -1) {
+                auto& buf = currentBuffer();
+                if (buf.changed && buf.semantic_cache &&
+                    !buf.semantic_cache->in_progress.load() &&
+                    m_last_keystroke_time != std::chrono::steady_clock::time_point{}) {
+                    auto idle_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - m_last_keystroke_time).count();
+                    if (idle_ms >= 1500) {
+                        m_last_keystroke_time = {};
+                        ClangHighlighter::requestHighlight(buf, m_buildSystem.get());
+                    }
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
     }
 }
 
@@ -1791,6 +2162,7 @@ void TextEditor::process_key(wint_t ch) {
                 case EditorAction::ACT_REPLACE: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } ActivateReplace(); return;
                 case EditorAction::ACT_GOTO_LINE: GoToLineDialog(); return;
                 case EditorAction::ACT_GO_TO_DEFINITION: GoToDefinition(); return;
+                case EditorAction::ACT_FIND_REFERENCES:  findAllReferences(); return;
                 case EditorAction::ACT_COMPILE: compileOnly(); return;
                 case EditorAction::ACT_RUN: compileAndRun(); return;
                 case EditorAction::ACT_TOGGLE_OUTPUT: ShowOutputScreen(); return;
@@ -2754,16 +3126,26 @@ void TextEditor::ActivateMenuBar(int initial_menu_id) {
         {8, {&m_submenu_help,    help_x}}
     };
 
-    do {
+    while (true) {
+        m_mouse_pending_menu_id = 0;
         drawEditorState(current_id);
         m_renderer->refresh();
         auto menu_info = menus_by_id.at(current_id);
         action = CallSubMenu(*menu_info.first, menu_info.second, 1, current_id);
 
         if (action == RESIZE_OCCURRED) { handleResize(); break; }
-        if (action == NAVIGATE_RIGHT) { current_id++; if (current_id > max_visible_menu_id) current_id = 1; }
-        else if (action == NAVIGATE_LEFT) { current_id--; if (current_id < 1) current_id = max_visible_menu_id; }
-    } while (action == NAVIGATE_LEFT || action == NAVIGATE_RIGHT);
+        if (action == ITEM_SELECTED || action == CLOSE_MENU) {
+            if (m_mouse_pending_menu_id != 0) {
+                current_id = m_mouse_pending_menu_id;
+                m_mouse_pending_menu_id = 0;
+                continue;
+            }
+            break;
+        }
+        if (action == NAVIGATE_RIGHT) { ++current_id; if (current_id > max_visible_menu_id) current_id = 1; }
+        else if (action == NAVIGATE_LEFT) { --current_id; if (current_id < 1) current_id = max_visible_menu_id; }
+        else break;
+    }
 
     m_renderer->showCursor();
 }
@@ -2874,6 +3256,66 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
         case KEY_RIGHT: copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return NAVIGATE_RIGHT;
         case KEY_RESIZE: copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return RESIZE_OCCURRED;
         case 27: copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return CLOSE_MENU;
+
+        case KEY_MOUSE: {
+            MEVENT mev;
+            if (getmouse(&mev) == OK) {
+                // Scroll wheel: move highlight
+                if (mev.bstate & BUTTON4_PRESSED) {
+                    int tries = (int)finalMenuItems.size();
+                    do { if (selection > 1) --selection; else selection = (int)finalMenuItems.size(); --tries; }
+                    while (tries > 0 && (finalMenuItems[selection-1].find("---") != std::string::npos ||
+                                         (selection-1 < (int)item_disabled.size() && item_disabled[selection-1])));
+                } else if (mev.bstate & BUTTON5_PRESSED) {
+                    int tries = (int)finalMenuItems.size();
+                    do { if (selection < (int)finalMenuItems.size()) ++selection; else selection = 1; --tries; }
+                    while (tries > 0 && (finalMenuItems[selection-1].find("---") != std::string::npos ||
+                                         (selection-1 < (int)item_disabled.size() && item_disabled[selection-1])));
+                } else if (mev.bstate & (BUTTON1_PRESSED | BUTTON1_CLICKED)) {
+                    if (mev.y == 0) {
+                        // Click on menu bar: switch to that menu
+                        int sw = m_renderer->getWidth();
+                        for (size_t k = 0; k < m_menus.size(); ++k) {
+                            int xp = (k == m_menus.size() - 1)
+                                     ? (sw - (int)m_menus[k].length() - 2)
+                                     : m_menu_positions[k];
+                            if (mev.x >= xp && mev.x < xp + (int)m_menus[k].length()) {
+                                m_mouse_pending_menu_id = (int)k + 1;
+                                break;
+                            }
+                        }
+                        copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE);
+                        delwin(behind); nodelay(stdscr, TRUE); return CLOSE_MENU;
+                    } else if (mev.x >= x+1 && mev.x < x+w-1 &&
+                               mev.y >= y+1 && mev.y < y+h-1) {
+                        // Click on an item in the menu
+                        int clicked = mev.y - y;  // 1-based item index
+                        if (clicked >= 1 && clicked <= (int)finalMenuItems.size()) {
+                            if (finalMenuItems[clicked-1].find("---") == std::string::npos &&
+                                !(clicked-1 < (int)item_disabled.size() && item_disabled[clicked-1])) {
+                                selection = clicked;
+                                goto handle_selection;
+                            }
+                        }
+                    } else {
+                        // Click outside menu: close
+                        copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE);
+                        delwin(behind); nodelay(stdscr, TRUE); return CLOSE_MENU;
+                    }
+                } else if (mev.bstate & (REPORT_MOUSE_POSITION | BUTTON1_MOTION)) {
+                    // Mouse hover / drag: update highlighted item
+                    if (mev.x >= x+1 && mev.x < x+w-1 &&
+                        mev.y >= y+1 && mev.y < y+h-1) {
+                        int hovered = mev.y - y;
+                        if (hovered >= 1 && hovered <= (int)finalMenuItems.size() &&
+                            finalMenuItems[hovered-1].find("---") == std::string::npos &&
+                            !(hovered-1 < (int)item_disabled.size() && item_disabled[hovered-1]))
+                            selection = hovered;
+                    }
+                }
+            }
+            break;
+        }
 
         case KEY_ENTER: case 10: case 13:
             if (selection-1 < (int)item_disabled.size() && item_disabled[selection-1]) break;
@@ -3270,6 +3712,168 @@ void TextEditor::compileOnly() {
 }
 
 
+
+void TextEditor::findAllReferences() {
+    if (currentBufferIdx() == -1) return;
+
+    // Extract identifier token under cursor
+    EditorBuffer& buf = currentBuffer();
+    const std::string& cur_text = buf.current_line->text;
+    int c0 = buf.cursor_col - 1;
+    std::string token;
+    if (c0 >= 0 && c0 < (int)cur_text.size() &&
+        (std::isalnum((unsigned char)cur_text[c0]) || cur_text[c0] == '_')) {
+        int start = c0, end = c0;
+        while (start > 0 && (std::isalnum((unsigned char)cur_text[start-1]) || cur_text[start-1] == '_')) --start;
+        while (end < (int)cur_text.size() && (std::isalnum((unsigned char)cur_text[end]) || cur_text[end] == '_')) ++end;
+        token = cur_text.substr(start, end - start);
+    }
+    if (token.empty()) { msgwin("No identifier under cursor."); return; }
+
+    m_refs_token      = token;
+    m_refs_lines.clear();
+    m_refs_scroll_pos = 0;
+    m_refs_cursor_pos = 0;
+
+    namespace fs = std::filesystem;
+
+    // Shorten a path relative to project root for display
+    auto rel_path = [&](const std::string& abs) -> std::string {
+        if (!m_project.root.empty()) {
+            std::error_code ec;
+            auto r = fs::relative(abs, m_project.root, ec);
+            if (!ec) return r.string();
+        }
+        return abs;
+    };
+
+    // Whole-word search through a vector of line strings; appends to m_refs_lines
+    auto search_lines = [&](const std::string& filename, const std::vector<std::string>& lines) {
+        std::string disp_name = rel_path(filename);
+        for (int ln = 1; ln <= (int)lines.size(); ++ln) {
+            const std::string& text = lines[ln - 1];
+            size_t pos = 0;
+            while ((pos = text.find(token, pos)) != std::string::npos) {
+                bool before_ok = (pos == 0) ||
+                    !(std::isalnum((unsigned char)text[pos - 1]) || text[pos - 1] == '_');
+                size_t end_pos = pos + token.size();
+                bool after_ok  = (end_pos >= text.size()) ||
+                    !(std::isalnum((unsigned char)text[end_pos]) || text[end_pos] == '_');
+                if (before_ok && after_ok) {
+                    // Trim leading whitespace for readability
+                    size_t first_nonspace = text.find_first_not_of(" \t");
+                    std::string trimmed = (first_nonspace == std::string::npos) ? text : text.substr(first_nonspace);
+
+                    CompileMessage msg;
+                    msg.filename  = filename;
+                    msg.line      = ln;
+                    msg.col       = (int)pos + 1;
+                    msg.type      = CompileMessage::CMSG_NOTE;
+                    msg.full_text = disp_name + ":" + std::to_string(ln) + ": " + trimmed;
+                    m_refs_lines.push_back(std::move(msg));
+                }
+                pos = end_pos;
+            }
+        }
+    };
+
+    // Search all open buffers (includes unsaved edits)
+    std::set<std::string> searched;
+    for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
+        const EditorBuffer& b = m_bufferManager->getBuffer(i);
+        if (b.filename.empty()) continue;
+        searched.insert(b.filename);
+        std::vector<std::string> lines;
+        for (const Line* p = b.document_head; p; p = p->next)
+            lines.push_back(p->text);
+        search_lines(b.filename, lines);
+    }
+
+    // Search project source files not already in an open buffer
+    if (!m_project.root.empty()) {
+        auto add_file = [&](const std::string& rel) {
+            std::string abs = (fs::path(m_project.root) / rel).string();
+            if (searched.count(abs)) return;
+            searched.insert(abs);
+            std::ifstream f(abs);
+            if (!f) return;
+            std::vector<std::string> lines;
+            std::string line;
+            while (std::getline(f, line)) lines.push_back(line);
+            search_lines(abs, lines);
+        };
+
+        for (const auto& tgt : m_project.targets)
+            for (const auto& src : tgt.sources)
+                add_file(src);
+    }
+
+    if (m_refs_lines.empty()) {
+        msgwin("No references found for '" + token + "'.");
+        return;
+    }
+
+    m_refs_visible = true;
+    m_renderer->hideCursor();
+    handleResize();
+}
+
+void TextEditor::drawRefsWindow() {
+    int h = std::max(5, m_renderer->getHeight() / 4);
+    int w = m_text_area_end_x - m_text_area_start_x + 4;
+    int starty = m_renderer->getHeight() - h - 1;
+    int startx = m_text_area_start_x - 1;
+    int text_height = h - 2;
+
+    std::string title = " References: " + m_refs_token +
+                        " (" + std::to_string(m_refs_lines.size()) + " found) ";
+    m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG,
+                                 Renderer::BoxStyle::DOUBLE, title,
+                                 Renderer::CP_DIALOG_TITLE, A_BOLD);
+
+    // Background fill
+    wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
+    for (int i = 1; i < h - 1; ++i)
+        mvwaddstr(stdscr, starty + i, startx + 1, std::string(w - 2, ' ').c_str());
+    wattroff(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
+
+    // Scroll to keep cursor visible
+    if (m_refs_cursor_pos < m_refs_scroll_pos)
+        m_refs_scroll_pos = m_refs_cursor_pos;
+    if (m_refs_cursor_pos >= m_refs_scroll_pos + text_height)
+        m_refs_scroll_pos = m_refs_cursor_pos - text_height + 1;
+
+    for (int i = 0; i < text_height; ++i) {
+        int idx = m_refs_scroll_pos + i;
+        if (idx >= (int)m_refs_lines.size()) break;
+        const auto& msg = m_refs_lines[idx];
+        bool selected = (idx == m_refs_cursor_pos);
+
+        if (selected) {
+            wattron(stdscr, COLOR_PAIR(Renderer::CP_HIGHLIGHT));
+            mvwaddstr(stdscr, starty + 1 + i, startx + 1, std::string(w - 2, ' ').c_str());
+            wattroff(stdscr, COLOR_PAIR(Renderer::CP_HIGHLIGHT));
+        }
+
+        std::string display = msg.full_text;
+        if ((int)display.size() > w - 4) display = display.substr(0, w - 4);
+        m_renderer->drawText(startx + 2, starty + 1 + i, display,
+                             selected ? Renderer::CP_HIGHLIGHT : Renderer::CP_DIALOG);
+    }
+
+    // Scroll arrows
+    if ((int)m_refs_lines.size() > text_height) {
+        if (m_refs_scroll_pos > 0)
+            m_renderer->drawText(startx + w - 2, starty, "↑", Renderer::CP_HIGHLIGHT);
+        if (m_refs_scroll_pos + text_height < (int)m_refs_lines.size())
+            m_renderer->drawText(startx + w - 2, starty + h - 1, "↓", Renderer::CP_HIGHLIGHT);
+    }
+
+    // Key hint on bottom border
+    const std::string hint = " ↑↓ Navigate  Enter=Jump  Esc=Close ";
+    int hx = startx + (w - (int)hint.size()) / 2;
+    if (hx > startx) m_renderer->drawText(hx, starty + h - 1, hint, Renderer::CP_STATUS_BAR);
+}
 
 void TextEditor::drawCompileOutputWindow() {
     // --- New Layout Calculation ---

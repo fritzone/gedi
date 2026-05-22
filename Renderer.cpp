@@ -3,6 +3,7 @@
 
 #include <ncurses.h>
 #include <termios.h>
+#include <unistd.h>
 #include <csignal>
 
 #include <fstream>
@@ -13,6 +14,12 @@ Renderer::Renderer() {
     cbreak(); noecho();
     signal(SIGINT, SIG_IGN);
     keypad(stdscr, TRUE); nodelay(stdscr, TRUE); curs_set(1);
+    mousemask(ALL_MOUSE_EVENTS | REPORT_MOUSE_POSITION, nullptr);
+    mouseinterval(0);   // no click-delay synthesis; every press → PRESSED, every release → RELEASED
+    // ncurses only enables basic mouse mode (1000); explicitly request button-event tracking (1002)
+    // so we receive motion events while a button is held (needed for drag selection).
+    write(STDOUT_FILENO, "\033[?1002h", 8);
+    fflush(stdout);
     // Pin Ctrl+Down (terminfo kDN5) to a stable key code used by ComboBox
     const char* kdn5 = tigetstr("kDN5");
     if (kdn5 && kdn5 != (char*)-1) define_key(kdn5, 525);
@@ -57,7 +64,12 @@ Renderer::Renderer() {
     };
 }
 
-Renderer::~Renderer() { curs_set(1); endwin(); }
+Renderer::~Renderer() {
+    write(STDOUT_FILENO, "\033[?1002l", 8);  // disable button-event tracking
+    fflush(stdout);
+    curs_set(1);
+    endwin();
+}
 
 void Renderer::clear() { werase(stdscr); }
 

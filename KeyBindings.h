@@ -37,6 +37,7 @@ enum class EditorAction {
     ACT_FIND_PREV,         // Search > Find Previous        — repeats last search backward
     ACT_GOTO_LINE,         // Search > Go To Line           — opens go-to-line dialog
     ACT_GO_TO_DEFINITION,  // Search > Go To Definition / F12 — jumps to symbol via libclang
+    ACT_FIND_REFERENCES,   // Search > Find All References / Shift+F12 — lists every occurrence of token
 
     // ── Run menu ──────────────────────────────────────────────────────────────
     ACT_COMPILE,           // Run > Compile / Alt+F9        — builds without running
@@ -106,6 +107,7 @@ class KeyBindings {
         ActionMapping{EditorAction::ACT_ABOUT,              "about"},
         ActionMapping{EditorAction::ACT_TOGGLE_COMMENT,     "toggle_comment"},
         ActionMapping{EditorAction::ACT_GO_TO_DEFINITION,   "go_to_definition"},
+        ActionMapping{EditorAction::ACT_FIND_REFERENCES,    "find_references"},
         ActionMapping{EditorAction::ACT_TOGGLE_PROJECT_PANEL,"toggle_project_panel"},
         ActionMapping{EditorAction::ACT_CLOSE_PROJECT,      "close_project"},
         ActionMapping{EditorAction::ACT_PROJECT_PROPERTIES, "project_properties"}

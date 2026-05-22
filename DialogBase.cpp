@@ -43,8 +43,10 @@ DialogResult DialogBase::run(Renderer& renderer)
     }
 
     nodelay(stdscr, FALSE);
-    pressed_        = false;
-    pending_button_ = nullptr;
+    pressed_             = false;
+    pending_button_      = nullptr;
+    mouse_capture_btn_   = -1;
+    mouse_hover_pressed_ = false;
 
     while (true) {
         if (background_fn_) {
@@ -73,7 +75,11 @@ DialogResult DialogBase::run(Renderer& renderer)
         wint_t ch = renderer.getChar();
         HandleResult hr = HandleResult::CONTINUE;
 
-        if (ch == 27) {
+        if (ch == KEY_MOUSE) {
+            MEVENT ev;
+            if (getmouse(&ev) == OK)
+                hr = dispatchMouse(ev, startx, starty);
+        } else if (ch == 27) {
             timeout(50);
             wint_t next = renderer.getChar();
             timeout(-1);
@@ -117,15 +123,18 @@ DialogResult DialogBase::run(Renderer& renderer)
 
 void DialogBase::drawFrame(Renderer& renderer, int sx, int sy, bool pressed)
 {
+    // Blend in the hover-pressed state so the captured button appears pressed
+    // during mouse-hold, before the release actually fires the action.
+    bool show_pressed = pressed || mouse_hover_pressed_;
     clearInterior(sx, sy);
     onDraw(renderer, sx, sy);
     if (groups_.empty()) {
         drawInputs(renderer, sx, sy);
         // Button row: focused when focus_ == btn_row_focus_index_
         bool row_focused = (focus_ == btn_row_focus_index_);
-        button_row_.draw(renderer, sx, sy, row_focused, pressed);
+        button_row_.draw(renderer, sx, sy, row_focused, show_pressed);
     } else {
-        drawGroups(renderer, sx, sy, pressed);
+        drawGroups(renderer, sx, sy, show_pressed);
     }
     placeCursor(renderer, sx, sy);
     renderer.refresh();
@@ -488,5 +497,171 @@ HandleResult DialogBase::dispatchGroupAltKey(wint_t ch)
 
     // Button hotkeys trigger the press animation
     tryHotkeyActivate(lower);
+    return HandleResult::CONTINUE;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Mouse dispatch
+// ══════════════════════════════════════════════════════════════════════════════
+
+static int buttonVisualLen(const std::string& label) {
+    int n = 0;
+    for (char c : label) if (c != '&') ++n;
+    return n;
+}
+
+HandleResult DialogBase::dispatchMouse(const MEVENT& ev, int startx, int starty)
+{
+    bool is_press     = (ev.bstate & BUTTON1_PRESSED)        != 0;
+    bool is_release   = (ev.bstate & BUTTON1_RELEASED)       != 0;
+    bool is_clicked   = (ev.bstate & BUTTON1_CLICKED)        != 0; // synthesised (rare with mouseinterval=0)
+    bool is_scroll_up = (ev.bstate & BUTTON4_PRESSED)        != 0;
+    bool is_scroll_dn = (ev.bstate & BUTTON5_PRESSED)        != 0;
+
+    // Treat position-reports while a button is captured as drag/motion events.
+    bool is_motion = false;
+    if (!is_press && !is_release && !is_clicked && !is_scroll_up && !is_scroll_dn) {
+        if (mouse_capture_btn_ >= 0) is_motion = true;
+        else                         return HandleResult::CONTINUE;
+    }
+
+    // Helper: is the mouse currently over button[i]?
+    auto overButton = [&](int i) -> bool {
+        const auto& btn = button_row_.buttons[i];
+        int bx = startx + btn.x;
+        int by = starty + btn.y;
+        int bw = buttonVisualLen(btn.label);
+        return (ev.y == by && ev.x >= bx && ev.x < bx + bw);
+    };
+
+    // ── Synthesised BUTTON1_CLICKED (press + release in one event) ────────────
+    // With mouseinterval(0) this is rare, but handle it for robustness:
+    // treat as an immediate full click bypassing the capture machinery.
+    if (is_clicked && !is_press && mouse_capture_btn_ < 0) {
+        for (int i = 0; i < (int)button_row_.buttons.size(); ++i) {
+            if (overButton(i)) {
+                button_row_.inner_focus = i;
+                if (!groups_.empty())
+                    group_focus_ = static_cast<int>(groups_.size());
+                else
+                    focus_ = btn_row_focus_index_;
+                armButton(&button_row_.buttons[i]);
+                return HandleResult::CONTINUE;
+            }
+        }
+        // Fall through to focus-change hit-tests below.
+        is_press = true; // treat remainder as a press for focus changes
+    }
+
+    // ── Events while a button is captured ────────────────────────────────────
+    if (mouse_capture_btn_ >= 0) {
+        bool still_over = overButton(mouse_capture_btn_);
+
+        if (is_release || is_clicked) {
+            if (still_over) {
+                // User released on the same button they pressed → fire it.
+                armButton(&button_row_.buttons[mouse_capture_btn_]);
+            }
+            mouse_capture_btn_   = -1;
+            mouse_hover_pressed_ = false;
+            return HandleResult::CONTINUE;
+        }
+
+        // Drag/motion: update the visual pressed state, nothing else.
+        mouse_hover_pressed_ = still_over;
+        return HandleResult::CONTINUE;
+    }
+
+    // ── No active capture ─────────────────────────────────────────────────────
+    if (!is_press && !is_scroll_up && !is_scroll_dn)
+        return HandleResult::CONTINUE;
+
+    // Button-row press: capture the button, show it as pressed.
+    if (is_press) {
+        for (int i = 0; i < (int)button_row_.buttons.size(); ++i) {
+            if (overButton(i)) {
+                mouse_capture_btn_   = i;
+                mouse_hover_pressed_ = true;
+                button_row_.inner_focus = i;
+                if (!groups_.empty())
+                    group_focus_ = static_cast<int>(groups_.size());
+                else
+                    focus_ = btn_row_focus_index_;
+                return HandleResult::CONTINUE;
+            }
+        }
+    }
+
+    // Mode A: input field focus on click
+    if (groups_.empty() && is_press) {
+        for (int i = 0; i < (int)inputs_.size(); ++i) {
+            const auto& inp = inputs_[i];
+            int fx = startx + inp.field_x;
+            int fy = starty + inp.field_y;
+            if (ev.y == fy && ev.x >= fx && ev.x < fx + inp.field_w) {
+                focus_ = inp.focus_index;
+                return HandleResult::CONTINUE;
+            }
+        }
+    }
+
+    // Mode B: click on a group to focus it; click on checkbox/spinner to activate
+    if (!groups_.empty() && is_press) {
+        for (int g = 0; g < (int)groups_.size(); ++g) {
+            const auto& grp = groups_[g];
+            int gx1 = startx + grp.box_x;
+            int gy1 = starty + grp.box_y;
+            int gx2 = gx1 + grp.box_w - 1;
+            int gy2 = gy1 + grp.box_h - 1;
+            if (ev.x >= gx1 && ev.x <= gx2 && ev.y >= gy1 && ev.y <= gy2) {
+                group_focus_ = g;
+                // Hit-test checkboxes
+                for (auto& cb : groups_[g].checkboxes) {
+                    int cx = startx + cb.x, cy = starty + cb.y;
+                    if (ev.y == cy && ev.x >= cx && ev.x < cx + 3 + 1 + (int)cb.label.size()) {
+                        cb.value = !cb.value;
+                        return HandleResult::CONTINUE;
+                    }
+                }
+                // Hit-test spinners (< and > arrows)
+                for (auto& sp : groups_[g].spinners) {
+                    int sx2 = startx + sp.x, sy2 = starty + sp.y;
+                    if (ev.y == sy2) {
+                        if (ev.x == sx2     && sp.value > sp.min_val) --sp.value;
+                        else if (ev.x == sx2 + 4 && sp.value < sp.max_val) ++sp.value;
+                    }
+                }
+                // OptionList click
+                if (!groups_[g].optionlists.empty()) {
+                    auto& ol = groups_[g].optionlists[0];
+                    if (ev.y >= starty + ol.y && ev.y < starty + ol.y + ol.visible_rows) {
+                        auto rows = ol.buildRows();
+                        int row_i   = ev.y - (starty + ol.y);
+                        int abs_row = ol.top_row + row_i;
+                        if (abs_row >= 0 && abs_row < (int)rows.size() && !rows[abs_row].is_group) {
+                            ol.cursor = rows[abs_row].opt_idx;
+                            auto& opt = ol.options[ol.cursor];
+                            if (opt.is_radio) *opt.i_val = opt.radio_val;
+                            else              *opt.b_val = !*opt.b_val;
+                        }
+                    }
+                }
+                return HandleResult::CONTINUE;
+            }
+        }
+    }
+
+    // Scroll wheel on OptionList (works regardless of group focus)
+    if ((is_scroll_up || is_scroll_dn) && !groups_.empty()) {
+        for (int g = 0; g < (int)groups_.size(); ++g) {
+            if (!groups_[g].optionlists.empty()) {
+                auto& ol = groups_[g].optionlists[0];
+                if (is_scroll_up && ol.cursor > 0) --ol.cursor;
+                if (is_scroll_dn && ol.cursor < (int)ol.options.size() - 1) ++ol.cursor;
+                return HandleResult::CONTINUE;
+            }
+        }
+    }
+
     return HandleResult::CONTINUE;
 }

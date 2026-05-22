@@ -154,6 +154,9 @@ private:
     HandleResult dispatchGroupKey   (wint_t ch);
     HandleResult dispatchGroupAltKey(wint_t ch);
 
+    // ── Mouse ─────────────────────────────────────────────────────────────────
+    HandleResult dispatchMouse(const MEVENT& ev, int startx, int starty);
+
     bool inGroupButtonRow() const noexcept {
         return !groups_.empty() &&
                group_focus_ == static_cast<int>(groups_.size());
@@ -190,6 +193,12 @@ private:
     // Shared — press animation state
     bool    pressed_        = false;
     Button* pending_button_ = nullptr;
+
+    // Mouse button-capture state
+    // Set on BUTTON1_PRESSED over a button; cleared on BUTTON1_RELEASED.
+    // The action fires only if the release happens while still over the same button.
+    int  mouse_capture_btn_   = -1;   // index into button_row_.buttons (-1 = none)
+    bool mouse_hover_pressed_ = false; // paint captured button as visually pressed
 
     DialogResult result_;
 
