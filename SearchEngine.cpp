@@ -61,6 +61,29 @@ SearchResult SearchEngine::search(EditorBuffer& buffer, const std::string& term,
     return result;
 }
 
+MatchStats SearchEngine::getMatchStats(EditorBuffer& buffer, const std::string& term, int current_line_num, int current_col) {
+    MatchStats stats;
+    if (term.empty()) return stats;
+
+    std::string lower_term = term;
+    std::transform(lower_term.begin(), lower_term.end(), lower_term.begin(), ::tolower);
+
+    int line_num = 1;
+    for (Line* p = buffer.document_head; p != nullptr; p = p->next, ++line_num) {
+        std::string lower_line = p->text;
+        std::transform(lower_line.begin(), lower_line.end(), lower_line.begin(), ::tolower);
+
+        size_t pos = 0;
+        while ((pos = lower_line.find(lower_term, pos)) != std::string::npos) {
+            ++stats.total;
+            if (line_num == current_line_num && (int)pos + 1 == current_col)
+                stats.current = stats.total;
+            pos += lower_term.length();
+        }
+    }
+    return stats;
+}
+
 int SearchEngine::replaceAll(EditorBuffer& buffer, const std::string& searchTerm, const std::string& replaceTerm) {
     if (searchTerm.empty()) return 0;
 

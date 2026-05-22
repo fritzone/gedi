@@ -7,7 +7,8 @@ EditorBuffer::EditorBuffer(const EditorBuffer &other) :
     cursor_screen_y(other.cursor_screen_y), horizontal_scroll_offset(other.horizontal_scroll_offset),
     selecting(other.selecting), selection_anchor_col(other.selection_anchor_col),
     selection_anchor_linenum(other.selection_anchor_linenum), syntax_type(other.syntax_type),
-    keywords(other.keywords), in_multiline_comment(other.in_multiline_comment)
+    keywords(other.keywords), in_multiline_comment(other.in_multiline_comment),
+    saved_lines(other.saved_lines)
 {
     if (!other.document_head) {
         document_head = nullptr; current_line = nullptr; first_visible_line = nullptr; selection_anchor_line = nullptr;
@@ -32,9 +33,9 @@ EditorBuffer::EditorBuffer(const EditorBuffer &other) :
 
 EditorBuffer::EditorBuffer(int nr) : bufferNr(nr) {
     document_head = new Line();
-
     current_line = document_head;
     first_visible_line = document_head;
+    saved_lines = {""};  // mirrors the single empty line a new buffer starts with
 }
 
 EditorBuffer::~EditorBuffer() {
@@ -59,6 +60,7 @@ EditorBuffer::EditorBuffer(EditorBuffer &&other) noexcept :
     selecting(other.selecting), selection_anchor_line(other.selection_anchor_line),
     selection_anchor_col(other.selection_anchor_col), selection_anchor_linenum(other.selection_anchor_linenum),
     undo_stack(std::move(other.undo_stack)), redo_stack(std::move(other.redo_stack)),
+    saved_lines(std::move(other.saved_lines)),
     syntax_type(other.syntax_type), keywords(std::move(other.keywords)),
     in_multiline_comment(other.in_multiline_comment),
     semantic_cache(std::move(other.semantic_cache))
@@ -79,6 +81,7 @@ EditorBuffer &EditorBuffer::operator=(EditorBuffer &&other) noexcept {
     selecting = other.selecting; selection_anchor_line = other.selection_anchor_line;
     selection_anchor_col = other.selection_anchor_col; selection_anchor_linenum = other.selection_anchor_linenum;
     undo_stack = std::move(other.undo_stack); redo_stack = std::move(other.redo_stack);
+    saved_lines = std::move(other.saved_lines);
     syntax_type = other.syntax_type; keywords = std::move(other.keywords);
     in_multiline_comment = other.in_multiline_comment;
     semantic_cache = std::move(other.semantic_cache);

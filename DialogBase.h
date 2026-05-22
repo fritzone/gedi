@@ -69,6 +69,11 @@ protected:
     // Return true to take over cursor placement (hides/shows cursor yourself).
     virtual bool onPlaceCursor(Renderer&, int /*sx*/, int /*sy*/) { return false; }
 
+    // Optional: set a callback that redraws the background each frame before the
+    // dialog is painted on top. Used by dialogs (e.g. Replace) that need the
+    // editor content to stay live while the dialog is open.
+    void setBackgroundRefresh(std::function<void()> fn) noexcept { background_fn_ = std::move(fn); }
+
     // ── Mode A registration ───────────────────────────────────────────────────
     void addInput  (InputDescriptor d) { inputs_.push_back(std::move(d)); }
 
@@ -187,4 +192,6 @@ private:
     Button* pending_button_ = nullptr;
 
     DialogResult result_;
+
+    std::function<void()> background_fn_;
 };

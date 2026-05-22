@@ -18,8 +18,29 @@
 #include <cstdio>
 #include <regex>
 #include <algorithm>
+#include <cstdlib>
 #include <sstream>
 
+
+// Build a flat vector of line strings from a buffer's linked list.
+static std::vector<std::string> snapshot_lines(const EditorBuffer& buf) {
+    std::vector<std::string> snap;
+    snap.reserve(buf.total_lines);
+    for (const Line* p = buf.document_head; p; p = p->next)
+        snap.push_back(p->text);
+    return snap;
+}
+
+// True when the current buffer content matches the on-disk saved snapshot.
+static bool matches_saved(const EditorBuffer& buf) {
+    if (buf.total_lines != static_cast<int>(buf.saved_lines.size())) return false;
+    const Line* p = buf.document_head;
+    for (const auto& s : buf.saved_lines) {
+        if (!p || p->text != s) return false;
+        p = p->next;
+    }
+    return true;
+}
 
 // --- Key Code Defines ---
 #define KEY_CTRL_F 6
@@ -44,6 +65,7 @@ void TextEditor::OpenFileBrowser() {
     };
     std::string filename = FileBrowser::open(*m_renderer, "Open File", kFilters);
     if (!filename.empty()) {
+        addRecentFile(filename);
         for(size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
             if (m_bufferManager->getBuffer(i).filename == filename) {
                 SwitchToBuffer(i);
@@ -74,6 +96,122 @@ void TextEditor::SaveFileBrowser() {
         SyntaxHighlighter::setSyntaxType(buffer);
         handleResize();
     }
+}
+
+void TextEditor::addRecentFile(const std::string& path) {
+    if (path.empty()) return;
+    auto& rf = m_config.recent_files;
+    rf.erase(std::remove(rf.begin(), rf.end(), path), rf.end());
+    rf.insert(rf.begin(), path);
+    if (rf.size() > 10) rf.resize(10);
+    m_configManager->saveConfig(m_config);
+}
+
+void TextEditor::OpenRecentFile(const std::string& path) {
+    for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
+        if (m_bufferManager->getBuffer(i).filename == path) {
+            SwitchToBuffer(i);
+            handleResize();
+            return;
+        }
+    }
+    DoNew();
+    currentBuffer().filename = path;
+    read_file(currentBuffer());
+    handleResize();
+}
+
+void TextEditor::saveSession() {
+    json session;
+
+    if (currentBufferIdx() != -1 && !currentBuffer().is_new_file)
+        session["active_file"] = get_full_path(currentBuffer().filename);
+
+    if (!m_project.name.empty())
+        session["project"] = m_project.projectFilePath();
+
+    json buffers = json::array();
+    for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
+        const EditorBuffer& buf = m_bufferManager->getBuffer(i);
+        if (buf.is_new_file || buf.filename.empty()) continue;
+
+        int fv_num = 1;
+        Line* p = buf.document_head;
+        while (p && p != buf.first_visible_line) { p = p->next; ++fv_num; }
+
+        json entry;
+        entry["filename"]           = get_full_path(buf.filename);
+        entry["line"]               = buf.current_line_num;
+        entry["col"]                = buf.cursor_col;
+        entry["first_visible_line"] = fv_num;
+        buffers.push_back(entry);
+    }
+    session["buffers"] = buffers;
+    m_configManager->saveSession(session);
+}
+
+void TextEditor::restoreSession() {
+    json session = m_configManager->loadSession();
+    if (session.empty()) { DoNew(); return; }
+
+    if (session.contains("project")) {
+        std::string proj_path = session["project"];
+        if (std::filesystem::exists(proj_path))
+            GediProject::load(proj_path, m_project);
+    }
+
+    if (session.contains("buffers")) {
+        try {
+            for (const auto& entry : session["buffers"]) {
+                std::string filename = entry["filename"];
+                if (!std::filesystem::exists(filename)) continue;
+
+                int line_num = entry.value("line", 1);
+                int col      = entry.value("col", 1);
+                int fv_num   = entry.value("first_visible_line", 1);
+
+                m_bufferManager->addBuffer();
+                currentBuffer().filename = filename;
+                read_file(currentBuffer());
+
+                int target_line = std::max(1, std::min(line_num, currentBuffer().total_lines));
+                currentBuffer().current_line_num = target_line;
+                currentBuffer().cursor_col       = std::max(1, col);
+                currentBuffer().current_line     = currentBuffer().document_head;
+                for (int i = 1; i < target_line; ++i) {
+                    if (currentBuffer().current_line->next)
+                        currentBuffer().current_line = currentBuffer().current_line->next;
+                    else break;
+                }
+
+                int target_fv = std::max(1, std::min(fv_num, target_line));
+                currentBuffer().first_visible_line = currentBuffer().document_head;
+                for (int i = 1; i < target_fv; ++i) {
+                    if (currentBuffer().first_visible_line->next)
+                        currentBuffer().first_visible_line = currentBuffer().first_visible_line->next;
+                    else break;
+                }
+
+                update_cursor_and_scroll();
+            }
+        } catch (...) {
+            // partial restore is acceptable; empty-check below handles fallback
+        }
+    }
+
+    if (m_bufferManager->bufferCount() == 0) { DoNew(); return; }
+
+    if (session.contains("active_file")) {
+        std::string active = session["active_file"];
+        for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
+            if (m_bufferManager->getBuffer(i).filename == active) {
+                SwitchToBuffer(static_cast<int>(i));
+                break;
+            }
+        }
+    }
+
+    handleResize();
 }
 
 void TextEditor::selectfile() {
@@ -138,7 +276,7 @@ void TextEditor::run(int argc, char* argv[]) {
     m_text_area_end_y = m_renderer->getHeight() - 4;
 
     if (argc < 2) {
-        DoNew();
+        restoreSession();
     } else {
         std::string input = argv[1];
         int jump_line = -1;
@@ -213,6 +351,7 @@ void TextEditor::read_file(EditorBuffer& buffer) {
     }
     buffer.current_line = buffer.first_visible_line = buffer.document_head;
     buffer.current_line_num = 1; buffer.cursor_col = 1; buffer.cursor_screen_y = m_text_area_start_y; buffer.changed = false;
+    buffer.saved_lines = snapshot_lines(buffer);
     
     // Check if it's a system file
     if (buffer.filename.rfind("/usr/include", 0) == 0 || buffer.filename.rfind("/usr/local/include", 0) == 0) {
@@ -232,6 +371,7 @@ void TextEditor::write_file(EditorBuffer& buffer) {
     f.close();
     buffer.changed = false;
     buffer.is_new_file = false;
+    buffer.saved_lines = snapshot_lines(buffer);
 
     // Invalidate the compile command cache for this file, as its content has changed.
     m_buildSystem->invalidateCache(buffer.filename);
@@ -260,6 +400,7 @@ void TextEditor::TryExit() {
             }
         }
     }
+    saveSession();
     main_loop_running = false;
 }
 
@@ -273,6 +414,19 @@ void TextEditor::insert_line_after(EditorBuffer& buffer, Line* current_p, const 
     current_p->next = p;
     buffer.changed = true;
     buffer.total_lines++;
+}
+
+void TextEditor::drawEmptyDesktop() {
+    int w = m_renderer->getWidth();
+    int h = m_renderer->getHeight();
+
+    cchar_t shade;
+    wchar_t shade_wch[] = { L'🮘', L'\0' };  // ▒ medium shade
+    setcchar(&shade, shade_wch, WA_NORMAL, Renderer::CP_DESKTOP, nullptr);
+
+    for (int y = 1; y < h - 1; ++y)
+        for (int x = 0; x < w; ++x)
+            mvadd_wch(y, x, &shade);
 }
 
 void TextEditor::drawMainUI() {
@@ -469,6 +623,13 @@ void TextEditor::drawStatusBar() {
     if (m_search_mode) {
         std::string search_prompt = "Search: " + m_search_term;
         m_renderer->drawText(1, h - 1, search_prompt, Renderer::CP_STATUS_BAR);
+        if (m_search_match_total > 0) {
+            std::string info = std::to_string(m_search_match_current) + "/" + std::to_string(m_search_match_total);
+            m_renderer->drawText(w - (int)info.size() - 2, h - 1, info, Renderer::CP_STATUS_BAR_HIGHLIGHT);
+        } else if (m_search_term.length() > 2) {
+            const std::string no_match = "No matches";
+            m_renderer->drawText(w - (int)no_match.size() - 2, h - 1, no_match, Renderer::CP_CHANGED_INDICATOR);
+        }
         return;
     }
 
@@ -555,16 +716,17 @@ void TextEditor::drawScrollbars() {
 
 void TextEditor::drawEditorState(int active_menu_id) {
     m_renderer->clear();
-    drawMainUI();
-    drawTextArea();
-    if (m_project_panel_open) drawProjectPanel();
+    if (currentBufferIdx() == -1) {
+        drawEmptyDesktop();
+    } else {
+        drawMainUI();
+        drawTextArea();
+        if (m_project_panel_open) drawProjectPanel();
+        drawScrollbars();
+        if (m_compile_output_visible) drawCompileOutputWindow();
+    }
     drawMenuBar(active_menu_id);
     drawStatusBar();
-    drawScrollbars();
-
-    if (m_compile_output_visible) {
-        drawCompileOutputWindow();
-    }
 }
 
 int TextEditor::msgwin_yesno(const std::string& question, const std::string& info) {
@@ -675,14 +837,13 @@ void TextEditor::main_loop() {
 
         update_cursor_and_scroll();
         drawEditorState();
-        if (m_project_panel_focused) {
+        if (m_project_panel_focused || currentBufferIdx() == -1) {
             m_renderer->hideCursor();
-        } else if (currentBufferIdx() != -1) {
+        } else {
             if (m_search_mode) {
                 m_renderer->setCursor(1 + strlen("Search: ") + m_search_term.length(), m_renderer->getHeight() - 1);
             } else if (!m_compile_output_visible) {
                 EditorBuffer& buffer = currentBuffer();
-                // Adjust cursor position for the gutter
                 m_renderer->setCursor(buffer.cursor_col - buffer.horizontal_scroll_offset + m_text_area_start_x + m_gutter_width, buffer.cursor_screen_y);
             }
         }
@@ -1152,6 +1313,8 @@ void TextEditor::RestoreStateFromRecord(EditorBuffer& buffer, const UndoRecord& 
     buffer.cursor_screen_y = m_text_area_start_y + (record.cursor_line_num - record.first_visible_line_num);
 
     update_cursor_and_scroll();
+
+    buffer.changed = !matches_saved(buffer);
 }
 
 void TextEditor::GoToDefinition() {
@@ -1592,6 +1755,22 @@ void TextEditor::handleSmartBlockClose(wint_t closing_char) {
 
 
 void TextEditor::process_key(wint_t ch) {
+    // When no buffer is open, only global (buffer-independent) actions fire.
+    if (currentBufferIdx() == -1) {
+        switch (m_keyBindings->getAction(ch)) {
+            case EditorAction::ACT_NEW:          DoNew();              return;
+            case EditorAction::ACT_NEW_PROJECT:  CreateNewProject();   return;
+            case EditorAction::ACT_OPEN_PROJECT: OpenProject();        return;
+            case EditorAction::ACT_OPEN:         selectfile();         return;
+            case EditorAction::ACT_EXIT:         TryExit();            return;
+            case EditorAction::ACT_SETTINGS:     EditorSettingsDialog(); return;
+            case EditorAction::ACT_HELP:         showHelpDialog();     return;
+            case EditorAction::ACT_ABOUT:        AboutBox();           return;
+            default: break;
+        }
+        // Fall through so that global hotkeys (Ctrl+N, F10, ESC/Alt…) below still fire.
+    }
+
     if (currentBufferIdx() != -1) {
         EditorAction action = m_keyBindings->getAction(ch);
         if (action != EditorAction::ACT_UNKNOWN) {
@@ -1658,6 +1837,7 @@ void TextEditor::process_key(wint_t ch) {
             if (!m_search_term.empty()) {
                 m_search_term.pop_back();
                 if (m_search_term.length() <= 2) ClearSelection();
+                m_search_match_total = m_search_match_current = 0;
             }
             break;
         default:
@@ -2592,6 +2772,19 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
     std::vector<std::string> finalMenuItems = menuItems;
     std::vector<bool> item_disabled(menuItems.size(), false);
 
+    if (menu_id == 1 && !m_config.recent_files.empty()) { // File — append recent files
+        finalMenuItems.push_back(" ----------------- ");
+        for (size_t i = 0; i < m_config.recent_files.size(); ++i) {
+            std::string name = get_filename_from_path(m_config.recent_files[i]);
+            std::string item = " " + name;
+            const int max_w = 28;
+            if ((int)item.length() > max_w)
+                item = " ..." + name.substr(name.length() - (max_w - 4));
+            finalMenuItems.push_back(item);
+        }
+        item_disabled.resize(finalMenuItems.size(), false);
+    }
+
     if (menu_id == 5) { // Project — disable certain items when no project is loaded
         bool no_project = m_project.name.empty();
         if (no_project && item_disabled.size() > 2) item_disabled[2] = true; // Project Properties
@@ -2691,10 +2884,14 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
             case 1: // File
                 if (selection == 1) DoNew();
                 else if (selection == 2) selectfile();
-                else if (selection == 4) { if (currentBuffer().is_new_file) SaveFileBrowser(); else write_file(currentBuffer()); }
-                else if (selection == 5) SaveFileBrowser();
+                else if (selection == 4) { if (currentBufferIdx() != -1) { if (currentBuffer().is_new_file) SaveFileBrowser(); else write_file(currentBuffer()); } }
+                else if (selection == 5) { if (currentBufferIdx() != -1) SaveFileBrowser(); }
                 else if (selection == 7) TryExit();
-                else NotImplemented();
+                else if (selection >= 9) {
+                    int rf_idx = selection - 9;
+                    if (rf_idx < (int)m_config.recent_files.size())
+                        OpenRecentFile(m_config.recent_files[rf_idx]);
+                }
                 break;
             case 2: // Edit
                 if (selection == 1) HandleUndo();
@@ -2798,10 +2995,6 @@ void TextEditor::CloseWindow() {
     }
 
     m_bufferManager->removeBuffer(currentBufferIdx());
-
-    if (!m_bufferManager->hasBuffers()) {
-        DoNew();
-    }
 }
 
 void TextEditor::SwitchToBuffer(int index) {
@@ -2857,6 +3050,7 @@ void TextEditor::ActivateSearch() {
 
 void TextEditor::DeactivateSearch() {
     if (!m_search_mode) return;
+    m_search_match_total = m_search_match_current = 0;
 
     EditorBuffer& buffer = currentBuffer();
 
@@ -2892,6 +3086,13 @@ void TextEditor::PerformSearch(bool next) {
         UpdateSelection();
 
         update_cursor_and_scroll();
+
+        MatchStats stats = SearchEngine::getMatchStats(buffer, m_search_term, res.line_num, res.col);
+        m_search_match_total   = stats.total;
+        m_search_match_current = stats.current;
+    } else {
+        m_search_match_total   = 0;
+        m_search_match_current = 0;
     }
 }
 
@@ -3149,68 +3350,93 @@ void TextEditor::drawCompileOutputWindow() {
 
 
 
+bool TextEditor::isAtSearchMatch() {
+    if (m_search_term.empty() || currentBufferIdx() == -1) return false;
+    const auto& buf = currentBuffer();
+    if (!buf.selecting || buf.selection_anchor_line != buf.current_line) return false;
+
+    int start = buf.selection_anchor_col;
+    int end   = buf.cursor_col;
+    if (start > end) std::swap(start, end);
+
+    int len = static_cast<int>(m_search_term.length());
+    if (end - start != len) return false;
+
+    const std::string& text = buf.current_line->text;
+    if (start - 1 + len > static_cast<int>(text.size())) return false;
+
+    std::string selected  = text.substr(start - 1, len);
+    std::string lower_sel = selected,    lower_term = m_search_term;
+    std::transform(lower_sel.begin(),  lower_sel.end(),  lower_sel.begin(),  ::tolower);
+    std::transform(lower_term.begin(), lower_term.end(), lower_term.begin(), ::tolower);
+    return lower_sel == lower_term;
+}
+
 void TextEditor::ActivateReplace() {
-    DialogResult res = ReplaceDialog::show(*m_renderer, m_search_term, m_replace_term);
+    if (currentBufferIdx() == -1) return;
+    if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; }
 
-    if (res.accepted()) {
-        m_search_term  = res["find"];
-        m_replace_term = res["replace"];
+    auto find_next_cb = [this](const std::string& find,
+                               const std::string& /*replace*/,
+                               std::string& status) {
+        if (find.empty()) { status = ""; return; }
+        m_search_term = find;
+        PerformSearch(true);
+        if (m_search_match_total > 0)
+            status = std::to_string(m_search_match_current) + " of " +
+                     std::to_string(m_search_match_total) + " matches";
+        else
+            status = "No matches found";
+    };
 
-        if      (res["action"] == "replace")     PerformReplace();
-        else if (res["action"] == "replace_all") PerformReplaceAll();
-    }
+    auto replace_cb = [this](const std::string& find,
+                             const std::string& replace,
+                             std::string& status) {
+        if (find.empty()) { status = ""; return; }
+        m_search_term  = find;
+        m_replace_term = replace;
+        PerformReplace();
+        if (m_search_match_total > 0)
+            status = std::to_string(m_search_match_current) + " of " +
+                     std::to_string(m_search_match_total) + " matches";
+        else
+            status = "No more matches";
+    };
+
+    auto replace_all_cb = [this](const std::string& find,
+                                 const std::string& replace,
+                                 std::string& status) {
+        if (find.empty()) { status = ""; return; }
+        m_search_term  = find;
+        m_replace_term = replace;
+        CreateUndoPoint(currentBuffer());
+        int n = SearchEngine::replaceAll(currentBuffer(), m_search_term, m_replace_term);
+        if (n > 0) currentBuffer().changed = true;
+        ClearSelection();
+        update_cursor_and_scroll();
+        m_search_match_total = m_search_match_current = 0;
+        status = "Replaced " + std::to_string(n) + " occurrence(s)";
+    };
+
+    auto bg_refresh = [this]() {
+        drawEditorState(0);
+    };
+
+    ReplaceDialog::show(*m_renderer, m_search_term, m_replace_term,
+                        find_next_cb, replace_cb, replace_all_cb, bg_refresh);
 }
 
 void TextEditor::PerformReplace() {
-    if (m_search_term.empty()) {
-        PerformSearch(false); // Just find if search term is empty but replace isn't
-        return;
-    }
-
-    // Check if the current selection actually matches the search term
-    if (currentBuffer().selecting) {
-        std::string selected_text;
-        Line* p = currentBuffer().selection_anchor_line;
-        int start_col = currentBuffer().selection_anchor_col;
-        int end_col = currentBuffer().cursor_col;
-
-        // This simple version only works for single-line selections
-        if (p == currentBuffer().current_line) {
-            if (start_col > end_col) std::swap(start_col, end_col);
-            selected_text = p->text.substr(start_col - 1, end_col - start_col);
-        }
-
-        std::string lower_selected = selected_text;
-        std::string lower_search = m_search_term;
-        std::transform(lower_selected.begin(), lower_selected.end(), lower_selected.begin(), ::tolower);
-        std::transform(lower_search.begin(), lower_search.end(), lower_search.begin(), ::tolower);
-
-        if (lower_selected == lower_search) {
-            // It's a match, perform replacement
-            DeleteSelection();
-            currentBuffer().current_line->text.insert(currentBuffer().cursor_col - 1, m_replace_term);
-            currentBuffer().cursor_col += m_replace_term.length();
-            currentBuffer().changed = true;
-            CreateUndoPoint(currentBuffer());
-        }
-    }
-
-    // Find the next occurrence
-    PerformSearch(true);
-}
-
-void TextEditor::PerformReplaceAll() {
     if (m_search_term.empty()) return;
-    CreateUndoPoint(currentBuffer());
 
-    int replacements = SearchEngine::replaceAll(currentBuffer(), m_search_term, m_replace_term);
-
-    if (replacements > 0) {
+    if (isAtSearchMatch()) {
+        DeleteSelection();
+        currentBuffer().current_line->text.insert(currentBuffer().cursor_col - 1, m_replace_term);
+        currentBuffer().cursor_col += m_replace_term.length();
         currentBuffer().changed = true;
     }
 
-    msgwin("Replaced " + std::to_string(replacements) + " occurrence(s).");
-    update_cursor_and_scroll();
+    PerformSearch(true);
 }
 
 void TextEditor::handleToggleComment() {

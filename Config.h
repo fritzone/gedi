@@ -3,6 +3,7 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 struct Config {
     bool smart_indentation = true;
@@ -14,6 +15,7 @@ struct Config {
     std::vector<bool> security_flags = {true, true, true, true, true};
     std::string extra_compile_flags = "-Wall";
     std::map<std::string, std::string> keybindings;
+    std::vector<std::string> recent_files;  // MRU list, newest first, max 10
 };
 
 

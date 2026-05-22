@@ -35,16 +35,25 @@ DialogResult DialogBase::run(Renderer& renderer)
 
     onInit();
 
-    renderer.drawShadow(startx, starty, w_, h_);
-    renderer.drawBoxWithTitle(startx, starty, w_, h_,
-        Renderer::CP_DIALOG, Renderer::DOUBLE,
-        " " + title_ + " ", Renderer::CP_DIALOG_TITLE, A_BOLD);
+    if (!background_fn_) {
+        renderer.drawShadow(startx, starty, w_, h_);
+        renderer.drawBoxWithTitle(startx, starty, w_, h_,
+            Renderer::CP_DIALOG, Renderer::DOUBLE,
+            " " + title_ + " ", Renderer::CP_DIALOG_TITLE, A_BOLD);
+    }
 
     nodelay(stdscr, FALSE);
     pressed_        = false;
     pending_button_ = nullptr;
 
     while (true) {
+        if (background_fn_) {
+            background_fn_();
+            renderer.drawShadow(startx, starty, w_, h_);
+            renderer.drawBoxWithTitle(startx, starty, w_, h_,
+                Renderer::CP_DIALOG, Renderer::DOUBLE,
+                " " + title_ + " ", Renderer::CP_DIALOG_TITLE, A_BOLD);
+        }
         drawFrame(renderer, startx, starty, pressed_);
 
         if (pressed_) {

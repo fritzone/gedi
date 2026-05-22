@@ -237,9 +237,11 @@ void Renderer::loadColors(const json &theme_data) {
     if (m_color_pair_map.count("gutter_fg")) {
         pair_content(CP_GUTTER_FG, &g_fg, &g_bg);
         // Toned down foreground: if it's bright (>= 8), use the non-bright version
-        if (g_fg >= 8) g_fg -= 8; 
+        if (g_fg >= 8) g_fg -= 8;
         init_pair(CP_GUTTER_FG, g_fg, default_bg);
     }
+
+    init_pair(CP_DESKTOP, COLOR_BLUE, COLOR_WHITE);
 }
 
 

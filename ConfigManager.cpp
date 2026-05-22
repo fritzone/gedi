@@ -5,7 +5,11 @@
 #include <iomanip>
 
 ConfigManager::ConfigManager(const std::string& configPath, const std::string& colorsPath)
-    : m_configPath(configPath), m_colorsPath(colorsPath) {}
+    : m_configPath(configPath), m_colorsPath(colorsPath)
+{
+    auto abs_dir = std::filesystem::absolute(std::filesystem::path(configPath)).parent_path();
+    m_sessionPath = (abs_dir / "session.json").string();
+}
 
 void ConfigManager::loadConfig(Config& config) {
     if (!std::filesystem::exists(m_configPath)) {
@@ -25,6 +29,7 @@ void ConfigManager::loadConfig(Config& config) {
             if (data.contains("security_flags")) config.security_flags = data["security_flags"].get<std::vector<bool>>();
             if (data.contains("extra_compile_flags")) config.extra_compile_flags = data["extra_compile_flags"];
             if (data.contains("keybindings")) config.keybindings = data["keybindings"].get<std::map<std::string, std::string>>();
+            if (data.contains("recent_files")) config.recent_files = data["recent_files"].get<std::vector<std::string>>();
         }
     } catch (const json::parse_error& e) {
         // We can't easily call msgwin here without a pointer to TextEditor or a callback.
@@ -44,10 +49,27 @@ void ConfigManager::saveConfig(const Config& config) {
     j["security_flags"] = config.security_flags;
     j["extra_compile_flags"] = config.extra_compile_flags;
     j["keybindings"] = config.keybindings;
+    j["recent_files"] = config.recent_files;
     
     std::ofstream o(m_configPath);
     if (o.is_open()) {
         o << std::setw(4) << j << std::endl;
+    }
+}
+
+void ConfigManager::saveSession(const json& session) {
+    std::ofstream o(m_sessionPath);
+    if (o.is_open())
+        o << std::setw(4) << session << std::endl;
+}
+
+json ConfigManager::loadSession() {
+    if (!std::filesystem::exists(m_sessionPath)) return json::object();
+    try {
+        std::ifstream f(m_sessionPath);
+        return json::parse(f);
+    } catch (...) {
+        return json::object();
     }
 }
 

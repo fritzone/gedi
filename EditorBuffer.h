@@ -91,6 +91,8 @@ public:
     int bufferNr = 1;
     std::vector<UndoRecord> undo_stack;
     std::vector<UndoRecord> redo_stack;
+    // Snapshot of line content at last save/load; used to detect real changes.
+    std::vector<std::string> saved_lines;
     CompilerSettings compiler_settings;
     std::shared_ptr<SemanticCache> semantic_cache{std::make_shared<SemanticCache>()};
 

@@ -50,7 +50,8 @@ public:
         CP_SYNTAX_FIELD,          // member fields
         CP_SYNTAX_NAMESPACE,      // namespaces
         CP_SYNTAX_ENUM_CONSTANT,  // enum constants
-        CP_SYNTAX_MACRO           // macro expansions
+        CP_SYNTAX_MACRO,          // macro expansions
+        CP_DESKTOP                // empty-desktop fill: blue on white
     };
 
     enum BoxStyle { SINGLE, DOUBLE };

@@ -72,6 +72,8 @@ private:
     std::string m_search_term;
     std::string m_replace_term;
     ViewState m_search_origin;
+    int m_search_match_current = 0;
+    int m_search_match_total   = 0;
 
     // Output Screens
     bool m_output_screen_visible = false;
@@ -81,6 +83,11 @@ private:
     int m_compile_output_scroll_pos = 0;
     int m_compile_output_cursor_pos = 0;
     ViewState m_pre_compile_view_state;
+
+    // Empty-desktop maze (generated once, stable between redraws)
+    std::vector<uint8_t> m_desktop_maze;
+    int m_desktop_maze_w = 0;
+    int m_desktop_maze_h = 0;
 
     // UI Coordinates
     int m_text_area_start_x = 1, m_text_area_start_y = 2, m_text_area_end_x = 0, m_text_area_end_y = 0;
@@ -108,6 +115,7 @@ private:
     EditorBuffer& currentBuffer() { return m_bufferManager->currentBuffer(); }
     int currentBufferIdx() const { return m_bufferManager->currentBufferIndex(); }
     void drawEditorState(int active_menu_id = -1);
+    void drawEmptyDesktop();
     void drawMainUI();
     void drawTextArea();
     void drawMenuBar(int active_menu_id = -1);
@@ -139,9 +147,13 @@ private:
     void ActivateSearch();
     void DeactivateSearch();
     void PerformSearch(bool next);
+    void addRecentFile(const std::string& path);
+    void OpenRecentFile(const std::string& path);
+    void saveSession();
+    void restoreSession();
     void ActivateReplace();
     void PerformReplace();
-    void PerformReplaceAll();
+    bool isAtSearchMatch();
     void GoToLineDialog();
     void GoToDefinition();
     void GoToNextWord();
