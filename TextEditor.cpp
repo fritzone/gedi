@@ -368,7 +368,8 @@ void TextEditor::read_file(EditorBuffer& buffer) {
     }
 
     SyntaxHighlighter::setSyntaxType(buffer);
-    ClangHighlighter::requestHighlight(buffer, m_buildSystem.get());
+    if (m_config.syntax_highlight >= 2)
+        ClangHighlighter::requestHighlight(buffer, m_buildSystem.get());
 }
 
 void TextEditor::write_file(EditorBuffer& buffer) {
@@ -384,7 +385,8 @@ void TextEditor::write_file(EditorBuffer& buffer) {
     m_buildSystem->invalidateCache(buffer.filename);
 
     // Re-run semantic highlighting with the saved (definitive) content.
-    ClangHighlighter::requestHighlight(buffer, m_buildSystem.get());
+    if (m_config.syntax_highlight >= 2)
+        ClangHighlighter::requestHighlight(buffer, m_buildSystem.get());
 }
 
 void TextEditor::TryExit() {
@@ -521,7 +523,7 @@ void TextEditor::drawTextArea() {
     // Use it even on a dirty buffer — stale-by-a-few-chars colours are far better
     // than no semantic highlighting. A debounced re-request will refresh them.
     std::shared_ptr<std::vector<std::vector<uint8_t>>> sem_snap;
-    if (buffer.semantic_cache) {
+    if (m_config.syntax_highlight >= 2 && buffer.semantic_cache) {
         std::unique_lock<std::mutex> lk(buffer.semantic_cache->mutex, std::try_to_lock);
         if (lk.owns_lock()) sem_snap = buffer.semantic_cache->colors;
     }
@@ -543,7 +545,7 @@ void TextEditor::drawTextArea() {
             }
 
             std::vector<SyntaxToken> tokens;
-            if (buffer.syntax_type != EditorBuffer::ST_NONE) {
+            if (m_config.syntax_highlight >= 1 && buffer.syntax_type != EditorBuffer::ST_NONE) {
                 tokens = SyntaxHighlighter::parseLine(buffer, p->text, *m_renderer);
             }
 
@@ -564,7 +566,7 @@ void TextEditor::drawTextArea() {
                     if (is_char_selected) {
                         color = Renderer::CP_SELECTION;
                     } else {
-                        if (buffer.syntax_type != EditorBuffer::ST_NONE) {
+                        if (m_config.syntax_highlight >= 1 && buffer.syntax_type != EditorBuffer::ST_NONE) {
                             while (token_idx < tokens.size() && token_char_offset + tokens[token_idx].text.length() <= char_idx) {
                                 token_char_offset += tokens[token_idx].text.length();
                                 token_idx++;
@@ -589,7 +591,15 @@ void TextEditor::drawTextArea() {
                             }
                         }
                     }
-                    m_renderer->drawText(screen_x, current_screen_y, std::string(1, p->text[char_idx]), color, flags);
+                    char raw = p->text[char_idx];
+                    if (m_config.show_whitespace && !is_char_selected && (raw == ' ' || raw == '\t')) {
+                        const char* marker = (raw == ' ') ? "\xc2\xb7" : "\xe2\x86\x92"; // · or →
+                        m_renderer->drawText(screen_x, current_screen_y, marker,
+                                             Renderer::CP_WHITESPACE, 0);
+                    } else {
+                        m_renderer->drawText(screen_x, current_screen_y,
+                                             std::string(1, raw), color, flags);
+                    }
                     screen_x++;
                 }
             }
@@ -1287,7 +1297,8 @@ void TextEditor::main_loop() {
             // Idle — check whether a debounced semantic re-highlight is due.
             if (currentBufferIdx() != -1) {
                 auto& buf = currentBuffer();
-                if (buf.changed && buf.semantic_cache &&
+                if (m_config.syntax_highlight >= 2 &&
+                    buf.changed && buf.semantic_cache &&
                     !buf.semantic_cache->in_progress.load() &&
                     m_last_keystroke_time != std::chrono::steady_clock::time_point{}) {
                     auto idle_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -3541,7 +3552,8 @@ void TextEditor::PerformSearch(bool next) {
 // Config management is now handled by ConfigManager
 
 void TextEditor::EditorSettingsDialog() {
-    SettingsDialog::show(*m_renderer, m_config, *m_configManager);
+    SettingsDialog::show(*m_renderer, m_config, *m_configManager,
+        [this]() { drawEditorState(); });
 }
 
 // Build command generation is now handled by BuildSystem

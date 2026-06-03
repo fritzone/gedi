@@ -23,6 +23,8 @@ void ConfigManager::loadConfig(Config& config) {
             if (data.contains("smart_indentation")) config.smart_indentation = data["smart_indentation"];
             if (data.contains("indentation_width")) config.indentation_width = data["indentation_width"];
             if (data.contains("show_line_numbers")) config.show_line_numbers = data["show_line_numbers"];
+            if (data.contains("syntax_highlight")) config.syntax_highlight = data["syntax_highlight"];
+            if (data.contains("show_whitespace"))  config.show_whitespace  = data["show_whitespace"];
             if (data.contains("color_scheme")) config.color_scheme_name = data["color_scheme"];
             if (data.contains("compile_mode")) config.compile_mode = data["compile_mode"];
             if (data.contains("optimization_level")) config.optimization_level = data["optimization_level"];
@@ -43,6 +45,8 @@ void ConfigManager::saveConfig(const Config& config) {
     j["smart_indentation"] = config.smart_indentation;
     j["indentation_width"] = config.indentation_width;
     j["show_line_numbers"] = config.show_line_numbers;
+    j["syntax_highlight"] = config.syntax_highlight;
+    j["show_whitespace"]  = config.show_whitespace;
     j["color_scheme"] = config.color_scheme_name;
     j["compile_mode"] = config.compile_mode;
     j["optimization_level"] = config.optimization_level;

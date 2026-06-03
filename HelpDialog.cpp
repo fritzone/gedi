@@ -52,9 +52,9 @@ void HelpDialog::show(Renderer& renderer, HelpProvider& helpProvider, std::vecto
         const HelpSection& section = helpProvider.getHelpData().at(current_id);
 
         std::vector<HelpLine> render_lines;
-        struct LinkInfo { const TextSegment* segment; int y_pos; };
+        struct LinkInfo { const TextSegment* segment; int y_pos; int x_start; int len; };
         std::vector<LinkInfo> all_links;
-        int content_width = w - 4;
+        int content_width = w - 5;  // reserve one column on the right for the scrollbar
 
         for (const auto& original_line : section.lines) {
             HelpLine current_render_line;
@@ -69,27 +69,60 @@ void HelpDialog::show(Renderer& renderer, HelpProvider& helpProvider, std::vecto
                 std::string remaining_text = segment.text;
                 while (!remaining_text.empty()) {
                     int space_left = content_width - current_x;
+
                     if (space_left <= 0) {
                         render_lines.push_back(current_render_line);
                         current_render_line.segments.clear();
                         current_x = 0;
-                        space_left = content_width;
+                        if (!remaining_text.empty() && remaining_text[0] == ' ')
+                            remaining_text = remaining_text.substr(1);
+                        continue;
                     }
 
-                    std::string part = remaining_text.substr(0, space_left);
-                    current_render_line.segments.push_back({part, segment.style, segment.target_id});
-                    current_x += part.length();
-                    remaining_text = remaining_text.substr(part.length());
+                    if ((int)remaining_text.length() <= space_left) {
+                        current_render_line.segments.push_back({remaining_text, segment.style, segment.target_id});
+                        current_x += (int)remaining_text.length();
+                        break;
+                    }
+
+                    // Text overflows — find last space within the available width
+                    size_t break_pos = remaining_text.rfind(' ', space_left - 1);
+
+                    if (break_pos != std::string::npos && break_pos > 0) {
+                        std::string part = remaining_text.substr(0, break_pos);
+                        current_render_line.segments.push_back({part, segment.style, segment.target_id});
+                        render_lines.push_back(current_render_line);
+                        current_render_line.segments.clear();
+                        current_x = 0;
+                        remaining_text = remaining_text.substr(break_pos + 1);
+                    } else if (current_x > 0) {
+                        // No word boundary but not at line start — wrap and retry
+                        render_lines.push_back(current_render_line);
+                        current_render_line.segments.clear();
+                        current_x = 0;
+                        if (!remaining_text.empty() && remaining_text[0] == ' ')
+                            remaining_text = remaining_text.substr(1);
+                    } else {
+                        // At line start with no space — hard-break the long token
+                        std::string part = remaining_text.substr(0, space_left);
+                        current_render_line.segments.push_back({part, segment.style, segment.target_id});
+                        current_x += (int)part.length();
+                        remaining_text = remaining_text.substr(space_left);
+                        render_lines.push_back(current_render_line);
+                        current_render_line.segments.clear();
+                        current_x = 0;
+                    }
                 }
             }
             render_lines.push_back(current_render_line);
         }
 
-        for(size_t y = 0; y < render_lines.size(); ++y) {
+        for (size_t y = 0; y < render_lines.size(); ++y) {
+            int x = 0;
             for (const auto& segment : render_lines[y].segments) {
-                if (segment.style == STYLE_LINK) {
-                    all_links.push_back({&segment, (int)y});
-                }
+                if (segment.style == STYLE_LINK)
+                    all_links.push_back({&segment, (int)y, x, (int)segment.text.size()});
+                x += (int)segment.text.size();
             }
         }
 
@@ -149,6 +182,29 @@ void HelpDialog::show(Renderer& renderer, HelpProvider& helpProvider, std::vecto
             }
         }
 
+        // Vertical scrollbar
+        bool sb_visible  = (int)render_lines.size() > max_view_lines;
+        int  sb_bar_x    = startx + w - 2;
+        int  sb_arrow_top = starty + 1;
+        int  sb_arrow_bot = starty + h - 2;
+        int  sb_track_top = sb_arrow_top + 1;
+        int  sb_track_h   = max_view_lines - 2;
+
+        if (sb_visible) {
+            attron(COLOR_PAIR(Renderer::CP_HIGHLIGHT));
+            mvaddch(sb_arrow_top, sb_bar_x, ACS_UARROW);
+            mvaddch(sb_arrow_bot, sb_bar_x, ACS_DARROW);
+            for (int i = 0; i < sb_track_h; ++i)
+                mvaddch(sb_track_top + i, sb_bar_x, ACS_CKBOARD);
+            if (sb_track_h > 0) {
+                float proportion = (float)scroll_offset / ((int)render_lines.size() - max_view_lines);
+                if (proportion > 1.0f) proportion = 1.0f;
+                int thumb_y = sb_track_top + (int)((sb_track_h - 1) * proportion);
+                mvaddch(thumb_y, sb_bar_x, ACS_BLOCK);
+            }
+            attroff(COLOR_PAIR(Renderer::CP_HIGHLIGHT));
+        }
+
         // Draw custom status line for help
         renderer.drawText(0, screen_h - 1, std::string(screen_w, ' '), Renderer::CP_STATUS_BAR);
         int pos = 1;
@@ -202,6 +258,58 @@ void HelpDialog::show(Renderer& renderer, HelpProvider& helpProvider, std::vecto
             }
         } else if (ch == 27 || tolower(ch) == 'q' || ch == 'c') {
             break;
+        } else if (ch == KEY_MOUSE) {
+            MEVENT ev;
+            if (getmouse(&ev) == OK) {
+                bool is_pos_rpt  = (ev.bstate & REPORT_MOUSE_POSITION) != 0;
+                bool is_press    = (ev.bstate & (BUTTON1_PRESSED | BUTTON1_CLICKED)) != 0 && !is_pos_rpt;
+                bool scroll_up   = (ev.bstate & BUTTON4_PRESSED) != 0;
+                bool scroll_dn   = (ev.bstate & BUTTON5_PRESSED) != 0;
+                int  mx = ev.x, my = ev.y;
+
+                // Scroll wheel — 3 lines per tick
+                if (scroll_up || scroll_dn) {
+                    for (int i = 0; i < 3; ++i) {
+                        if (scroll_up && scroll_offset > 0) --scroll_offset;
+                        if (scroll_dn && scroll_offset + max_view_lines < (int)render_lines.size()) ++scroll_offset;
+                    }
+                }
+
+                if (is_press) {
+                    // Click outside the dialog → close
+                    if (mx < startx || mx >= startx + w || my < starty || my >= starty + h) {
+                        break;
+                    }
+
+                    // Click on scrollbar arrows / track
+                    if (sb_visible && mx == sb_bar_x) {
+                        if (my == sb_arrow_top) {
+                            if (scroll_offset > 0) --scroll_offset;
+                        } else if (my == sb_arrow_bot) {
+                            if (scroll_offset + max_view_lines < (int)render_lines.size()) ++scroll_offset;
+                        } else if (my > sb_arrow_top && my < sb_arrow_bot && sb_track_h > 1) {
+                            float proportion = (float)(my - sb_track_top) / (sb_track_h - 1);
+                            scroll_offset = (int)(proportion * ((int)render_lines.size() - max_view_lines));
+                            if (scroll_offset < 0) scroll_offset = 0;
+                        }
+                    }
+
+                    // Click on a link → follow it
+                    for (int li = 0; li < (int)all_links.size(); ++li) {
+                        const auto& lnk = all_links[li];
+                        if (lnk.y_pos < scroll_offset || lnk.y_pos >= scroll_offset + max_view_lines)
+                            continue;
+                        int sy = starty + 1 + (lnk.y_pos - scroll_offset);
+                        int sx = startx + 2 + lnk.x_start;
+                        if (my == sy && mx >= sx && mx < sx + lnk.len) {
+                            help_history.push_back(lnk.segment->target_id);
+                            scroll_offset     = 0;
+                            selected_link_idx = 0;
+                            break;
+                        }
+                    }
+                }
+            }
         }
     }
 

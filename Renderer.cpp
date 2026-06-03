@@ -60,7 +60,8 @@ Renderer::Renderer() {
         {"type", CP_SYNTAX_TYPE}, {"function", CP_SYNTAX_FUNCTION},
         {"parameter", CP_SYNTAX_PARAMETER}, {"field", CP_SYNTAX_FIELD},
         {"namespace", CP_SYNTAX_NAMESPACE}, {"enum_constant", CP_SYNTAX_ENUM_CONSTANT},
-        {"macro", CP_SYNTAX_MACRO}
+        {"macro", CP_SYNTAX_MACRO},
+        {"whitespace", CP_WHITESPACE}
     };
 }
 
@@ -251,6 +252,12 @@ void Renderer::loadColors(const json &theme_data) {
         // Toned down foreground: if it's bright (>= 8), use the non-bright version
         if (g_fg >= 8) g_fg -= 8;
         init_pair(CP_GUTTER_FG, g_fg, default_bg);
+    }
+
+    // Whitespace marker fallback: dark gray on editor background
+    if (!m_color_pair_map.count("whitespace") ||
+        !theme_data.contains("ui") || !theme_data["ui"].contains("whitespace")) {
+        init_pair(CP_WHITESPACE, COLOR_BLACK + 8, default_bg);  // brightblack = dark gray
     }
 
     init_pair(CP_DESKTOP, COLOR_BLUE, COLOR_WHITE);

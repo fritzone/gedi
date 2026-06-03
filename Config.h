@@ -9,6 +9,8 @@ struct Config {
     bool smart_indentation = true;
     int indentation_width = 4;
     bool show_line_numbers = true;
+    int syntax_highlight = 2;    // 0=none  1=basic  2=advanced (clang)
+    bool show_whitespace = false;
     std::string color_scheme_name = "Obsidian";
     int compile_mode = -1;
     int optimization_level = -1;
