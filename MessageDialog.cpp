@@ -101,7 +101,7 @@ void MessageDialog::show(Renderer& renderer, const std::string& message) {
             timeout(1);
             wint_t next = renderer.getChar();
             timeout(-1);
-            if (next == ERR) break;
+            if (next == (wint_t)ERR) break;
         }
         if (ch == KEY_ENTER || ch == 10 || ch == 13 || ch == ' ' || tolower(ch) == 'o')
             pressed = true;

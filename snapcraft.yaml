@@ -1,0 +1,91 @@
+name: gedi
+title: Gedi Text Editor
+base: core22
+version: '0.1'
+summary: A simple yet powerful console-based C++ text editor
+description: |
+  gedi is a lightweight and feature-rich text editor
+  that runs in the terminal. It provides syntax highlighting, a build system,
+  a custom help system, and more.
+license: MIT
+contact: https://github.com/fritzone/gedi/issues
+issues: https://github.com/fritzone/gedi/issues
+source-code: https://github.com/fritzone/gedi
+website: https://github.com/fritzone/gedi
+
+grade: stable
+confinement: strict
+
+# Ignore unused library warnings since we are bundling a compiler toolchain
+lint:
+  ignore:
+    - library
+
+apps:
+  gedi:
+    command: usr/bin/gedi
+    plugs:
+      - home
+      - network
+      - removable-media
+    environment:
+      PYTHONPATH: $SNAP/usr/lib/python3/dist-packages
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+      TERMINFO: $SNAP/usr/share/terminfo
+      # Ensure bundled tools are found first
+      PATH: $SNAP/usr/bin:$SNAP/bin:$PATH
+      # Help the bundled compiler find its headers and libraries
+      CPATH: $SNAP/usr/include:$SNAP/usr/include/x86_64-linux-gnu:$SNAP/usr/include/c++/12:$SNAP/usr/include/x86_64-linux-gnu/c++/12
+      LIBRARY_PATH: $SNAP/usr/lib/x86_64-linux-gnu:$SNAP/lib/x86_64-linux-gnu:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12
+      LD_LIBRARY_PATH: $SNAP/usr/lib/x86_64-linux-gnu:$SNAP/lib/x86_64-linux-gnu:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12:$SNAP/usr/lib:$SNAP/lib
+      # Help GCC find its internal components
+      COMPILER_PATH: $SNAP/usr/lib/gcc/x86_64-linux-gnu/12
+      # Help CMake find its modules
+      CMAKE_ROOT: $SNAP/usr/share/cmake-3.22
+
+layout:
+  /usr/share/gedi:
+    bind: $SNAP/usr/share/gedi
+  /usr/local/lib/python3/dist-packages/gedi:
+    bind: $SNAP/usr/lib/python3/dist-packages/gedi
+
+parts:
+  gedi:
+    plugin: cmake
+    source: .
+    cmake-parameters:
+      - -DCMAKE_INSTALL_PREFIX=/usr
+      - -DCMAKE_PREFIX_PATH=/usr/lib/llvm-14
+    build-packages:
+      - g++
+      - cmake
+      - libncurses-dev
+      - libclang-14-dev
+    stage-packages:
+      - libncursesw6
+      - libclang1-14
+      - python3
+      - ncurses-term
+      - locales-all
+      - g++-12
+      - gcc-12
+      - binutils
+      - make
+      - cmake
+      - ninja-build
+      - pkg-config
+      - libc6-dev
+      - libc-dev-bin
+      - libstdc++-12-dev
+    prime:
+      - -usr/share/man
+      - -usr/share/doc
+
+  compiler-links:
+    plugin: nil
+    after: [gedi]
+    override-prime: |
+      mkdir -p $CRAFT_PRIME/usr/bin
+      ln -sf g++-12 $CRAFT_PRIME/usr/bin/g++
+      ln -sf gcc-12 $CRAFT_PRIME/usr/bin/gcc

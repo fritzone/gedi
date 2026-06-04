@@ -2,6 +2,9 @@
 #include <ncurses.h>
 #include <algorithm>
 
+
+
+
 void BuildOutputDialog::show(Renderer& renderer, const std::vector<std::string>& lines) {
     int h = renderer.getHeight() - 10;
     int w = renderer.getWidth() - 20;
@@ -53,5 +56,6 @@ void BuildOutputDialog::show(Renderer& renderer, const std::vector<std::string>&
     copywin(behind, stdscr, 0, 0, starty, startx, h, w, FALSE);
     delwin(behind);
     nodelay(stdscr, TRUE);
+    
     renderer.showCursor();
 }

@@ -56,6 +56,7 @@ if(CURSES_FOUND AND CLANG_FOUND)
         PickTargetDialog.cpp
         utils.cpp
         DialogBase.cpp
+        DependencyChecker.cpp
 
         ClangHighlighter.h
         BufferManager.h

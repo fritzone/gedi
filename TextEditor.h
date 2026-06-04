@@ -114,6 +114,8 @@ private:
     std::vector<std::string> m_submenu_options;
     std::vector<std::string> m_submenu_help;
 
+    std::filesystem::path m_exe_dir;
+
 public:
     void run(int argc, char* argv[]);
 
@@ -159,6 +161,12 @@ private:
     void PerformSearch(bool next);
     void addRecentFile(const std::string& path);
     void OpenRecentFile(const std::string& path);
+    int  showRecentFilesSubMenu(int x, int y);
+    void clearSemanticColors(EditorBuffer& buffer);
+    void clearSemanticColorsFrom(EditorBuffer& buffer, int from_line_0based);
+    void insertSemanticLine(EditorBuffer& buffer, int split_line_0based);
+    void removeSemanticLines(EditorBuffer& buffer, int merge_target_0based, int lines_removed);
+    void removeSemanticLine(EditorBuffer& buffer, int removed_line_0based);
     void saveSession();
     void restoreSession();
     void ActivateReplace();
@@ -212,6 +220,12 @@ private:
     bool m_project_panel_focused = false;
     int  m_project_panel_cursor  = 0;
     int  m_project_panel_scroll  = 0;
+
+    // Bracket-match flash: set by handleSmartBlockClose, consumed by drawTextArea
+    Line* m_flash_match_line = nullptr;
+    int   m_flash_match_col  = -1;
+    std::chrono::steady_clock::time_point m_flash_start{};
+    static constexpr int FLASH_DURATION_MS = 500;
 
     // Debounced semantic re-highlight: reset on every keypress, fire after idle
     std::chrono::steady_clock::time_point m_last_keystroke_time{};

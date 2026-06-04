@@ -248,22 +248,33 @@ class ArchManager(PackageManager):
 
 def get_distro() -> Tuple[Optional[str], Optional[PackageManager]]:
     """Detects the Linux distribution and returns its ID and a PackageManager instance."""
-    if not os.path.exists('/etc/os-release'):
-        return None, None
+    # In a snap, we might not have access to everything, but we are likely on Ubuntu/Debian base
+    distro_id = None
+    if os.path.exists('/etc/os-release'):
+        with open('/etc/os-release') as f:
+            lines = f.readlines()
+        info = {k.strip(): v.strip().strip('"') for k, v in (line.split('=', 1) for line in lines if '=' in line)}
+        distro_id = info.get('ID')
+        id_like = info.get('ID_LIKE', '').split()
     
-    with open('/etc/os-release') as f:
-        lines = f.readlines()
-    
-    info = {k.strip(): v.strip().strip('"') for k, v in (line.split('=', 1) for line in lines if '=' in line)}
-    distro_id = info.get('ID')
-    id_like = info.get('ID_LIKE', '').split()
+    # Check if we are in a snap
+    is_snap = 'SNAP' in os.environ
 
-    if distro_id in ['debian', 'ubuntu', 'linuxmint'] or 'debian' in id_like:
-        return 'debian', DebianManager()
-    if distro_id in ['fedora', 'centos', 'rhel'] or 'fedora' in id_like:
-        return 'redhat', RedHatManager()
-    if distro_id == 'arch' or 'arch' in id_like:
-        return 'arch', ArchManager()
+    if distro_id in ['debian', 'ubuntu', 'linuxmint'] or (distro_id and 'debian' in id_like) or is_snap:
+        # Check if dpkg is actually available and working
+        if run_command(['dpkg', '--version']):
+            return 'debian', DebianManager()
+        elif is_snap:
+            # Fallback for snap: we can't use dpkg, so we return a dummy or base manager
+            return 'snap', PackageManager()
+    
+    if distro_id in ['fedora', 'centos', 'rhel'] or (distro_id and 'fedora' in id_like):
+        if run_command(['rpm', '--version']):
+            return 'redhat', RedHatManager()
+    
+    if distro_id == 'arch' or (distro_id and 'arch' in id_like):
+        if run_command(['pacman', '--version']):
+            return 'arch', ArchManager()
         
     return None, None
 

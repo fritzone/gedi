@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Gedi
+Comment=A simple yet powerful console-based C++ text editor
+Exec=gedi %F
+Icon=gedi
+Terminal=true
+Categories=Development;TextEditor;
+Keywords=Text;Editor;C++;Terminal;
+MimeType=text/x-c++src;text/x-c++hdr;text/x-chdr;text/x-csrc;

@@ -8,10 +8,14 @@ void SyntaxHighlighter::setSyntaxType(EditorBuffer& buffer) {
     std::string lower_filename = buffer.filename;
     std::transform(lower_filename.begin(), lower_filename.end(), lower_filename.begin(), ::tolower);
 
+    // Extract basename so exact-name checks work for absolute paths too.
+    auto slash = lower_filename.rfind('/');
+    std::string base = (slash != std::string::npos) ? lower_filename.substr(slash + 1) : lower_filename;
+
     if (ends_with(lower_filename, ".c") || ends_with(lower_filename, ".h")) { buffer.syntax_type = EditorBuffer::ST_C_CPP; }
     else if (ends_with(lower_filename, ".cpp") || ends_with(lower_filename, ".hpp") || ends_with(lower_filename, ".cxx")) { buffer.syntax_type = EditorBuffer::ST_C_CPP; }
-    else if (lower_filename == "makefile" || lower_filename == "gnumakefile") { buffer.syntax_type = EditorBuffer::ST_MAKEFILE; }
-    else if (lower_filename == "cmakelists.txt") { buffer.syntax_type = EditorBuffer::ST_CMAKE; }
+    else if (base == "makefile" || base == "gnumakefile") { buffer.syntax_type = EditorBuffer::ST_MAKEFILE; }
+    else if (base == "cmakelists.txt" || ends_with(lower_filename, ".cmake")) { buffer.syntax_type = EditorBuffer::ST_CMAKE; }
     else if (ends_with(lower_filename, ".s") || ends_with(lower_filename, ".asm")) { buffer.syntax_type = EditorBuffer::ST_ASSEMBLY; }
     else if (ends_with(lower_filename, ".ld")) { buffer.syntax_type = EditorBuffer::ST_LD_SCRIPT; }
     else if (ends_with(lower_filename, ".prim")) { buffer.syntax_type = EditorBuffer::PRIMAL; }
@@ -30,11 +34,84 @@ void SyntaxHighlighter::loadKeywords(EditorBuffer& buffer) {
         for (const auto& kw : glsl_keywords) buffer.keywords[kw] = Renderer::CP_SYNTAX_KEYWORD;
     }
     else if (buffer.syntax_type == EditorBuffer::ST_CMAKE) {
-        const std::vector<std::string> cmake_keywords = { "add_compile_definitions", "add_compile_options", "add_custom_command", "add_custom_target", "add_dependencies", "add_executable", "add_library", "add_link_options", "add_subdirectory", "add_test", "aux_source_directory", "break", "build_command", "cmake_minimum_required", "cmake_policy", "configure_file", "create_test_sourcelist", "define_property", "else", "elseif", "enable_language", "enable_testing", "endforeach", "endfunction", "endif", "endmacro", "endwhile", "execute_process", "export", "file", "find_file", "find_library", "find_package", "find_path", "find_program", "fltk_wrap_ui", "foreach", "function", "get_cmake_property", "get_directory_property", "get_filename_component", "get_property", "get_source_file_property", "get_target_property", "get_test_property", "if", "include", "include_directories", "include_external_msproject", "include_regular_expression", "install", "link_directories", "link_libraries", "list", "load_cache", "load_command", "macro", "mark_as_advanced", "math", "message", "option", "project", "qt_wrap_cpp", "qt_wrap_ui", "remove_definitions", "return", "separate_arguments", "set", "set_directory_properties", "set_property", "set_source_files_properties", "set_target_properties", "set_tests_properties", "site_name", "source_group", "string", "target_compile_definitions", "target_compile_features", "target_compile_options", "target_include_directories", "target_link_libraries", "target_link_options", "try_compile", "try_run", "unset", "variable_watch", "while" };
-        for (const auto& kw : cmake_keywords) {
-            std::string lower_kw = kw;
-            std::transform(lower_kw.begin(), lower_kw.end(), lower_kw.begin(), ::tolower);
-            buffer.keywords[lower_kw] = Renderer::CP_SYNTAX_KEYWORD;
+        // Built-in commands → keyword colour
+        const std::vector<std::string> cmake_commands = {
+            "add_compile_definitions", "add_compile_options", "add_custom_command",
+            "add_custom_target", "add_dependencies", "add_executable", "add_library",
+            "add_link_options", "add_subdirectory", "add_test", "aux_source_directory",
+            "break", "build_command", "cmake_host_system_information", "cmake_minimum_required",
+            "cmake_parse_arguments", "cmake_path", "cmake_policy", "configure_file",
+            "continue", "create_test_sourcelist", "define_property", "else", "elseif",
+            "enable_language", "enable_testing", "endforeach", "endfunction", "endif",
+            "endmacro", "endwhile", "execute_process", "export", "file", "find_file",
+            "find_library", "find_package", "find_path", "find_program", "fltk_wrap_ui",
+            "foreach", "function", "get_cmake_property", "get_directory_property",
+            "get_filename_component", "get_property", "get_source_file_property",
+            "get_target_property", "get_test_property", "if", "include",
+            "include_directories", "include_external_msproject", "include_guard",
+            "include_regular_expression", "install", "link_directories", "link_libraries",
+            "list", "load_cache", "macro", "mark_as_advanced", "math", "message",
+            "option", "project", "qt_wrap_cpp", "qt_wrap_ui", "remove_definitions",
+            "return", "separate_arguments", "set", "set_directory_properties",
+            "set_property", "set_source_files_properties", "set_target_properties",
+            "set_tests_properties", "site_name", "source_group", "string",
+            "target_compile_definitions", "target_compile_features",
+            "target_compile_options", "target_include_directories",
+            "target_link_directories", "target_link_libraries", "target_link_options",
+            "target_precompile_headers", "target_sources", "try_compile", "try_run",
+            "unset", "variable_watch", "while", "write_file"
+        };
+        for (const auto& kw : cmake_commands) {
+            std::string lk = kw;
+            std::transform(lk.begin(), lk.end(), lk.begin(), ::tolower);
+            buffer.keywords[lk] = Renderer::CP_SYNTAX_KEYWORD;
+        }
+
+        // Scope / modifier / option keywords → preprocessor colour
+        const std::vector<std::string> cmake_modifiers = {
+            "PUBLIC", "PRIVATE", "INTERFACE",
+            "STATIC", "SHARED", "MODULE", "OBJECT", "IMPORTED", "ALIAS", "UNKNOWN",
+            "REQUIRED", "QUIET", "OPTIONAL", "COMPONENTS", "CONFIG", "EXACT", "GLOBAL",
+            "HINTS", "PATHS", "NAMES", "DOC", "NO_DEFAULT_PATH",
+            "NO_CMAKE_ENVIRONMENT_PATH", "NO_CMAKE_PATH",
+            "NO_SYSTEM_ENVIRONMENT_PATH", "NO_CMAKE_SYSTEM_PATH",
+            "CMAKE_FIND_ROOT_PATH_BOTH", "ONLY_CMAKE_FIND_ROOT_PATH",
+            "NO_CMAKE_FIND_ROOT_PATH",
+            "DESTINATION", "TARGETS", "FILES", "PROGRAMS", "DIRECTORY", "SCRIPT",
+            "CODE", "EXPORT", "RUNTIME", "LIBRARY", "ARCHIVE", "FRAMEWORK",
+            "BUNDLE", "RESOURCE", "INCLUDES", "PERMISSIONS", "CONFIGURATIONS",
+            "NAMELINK_ONLY", "NAMELINK_SKIP", "OPTIONAL", "COMPONENT",
+            "STATUS", "WARNING", "AUTHOR_WARNING", "CHECK_START", "CHECK_PASS",
+            "CHECK_FAIL", "SEND_ERROR", "FATAL_ERROR", "DEPRECATION",
+            "PROPERTIES", "PROPERTY", "APPEND", "APPEND_STRING",
+            "DIRECTORY", "TARGET", "SOURCE", "TEST", "VARIABLE", "CACHE",
+            "AND", "OR", "NOT",
+            "MATCHES", "LESS", "GREATER", "EQUAL", "LESS_EQUAL", "GREATER_EQUAL",
+            "STRLESS", "STRGREATER", "STREQUAL", "STRLESS_EQUAL", "STRGREATER_EQUAL",
+            "VERSION_LESS", "VERSION_GREATER", "VERSION_EQUAL",
+            "VERSION_LESS_EQUAL", "VERSION_GREATER_EQUAL",
+            "DEFINED", "COMMAND", "EXISTS", "IS_DIRECTORY", "IS_SYMLINK",
+            "IS_ABSOLUTE", "IS_NEWER_THAN", "IN_LIST",
+            "FORCE", "PARENT_SCOPE", "INHERITED",
+            "BEFORE", "AFTER", "EXCLUDE_FROM_ALL",
+            "WIN32", "MACOSX_BUNDLE", "WITH_SOVERSION",
+            "LANGUAGE", "LINKER_LANGUAGE", "OUTPUT_NAME",
+            "POSITION_INDEPENDENT_CODE"
+        };
+        for (const auto& kw : cmake_modifiers) {
+            std::string lk = kw;
+            std::transform(lk.begin(), lk.end(), lk.begin(), ::tolower);
+            buffer.keywords[lk] = Renderer::CP_SYNTAX_PREPROCESSOR;
+        }
+
+        // Boolean / tri-state constants → number colour
+        const std::vector<std::string> cmake_bools = {
+            "ON", "OFF", "TRUE", "FALSE", "YES", "NO", "NOTFOUND", "IGNORE"
+        };
+        for (const auto& kw : cmake_bools) {
+            std::string lk = kw;
+            std::transform(lk.begin(), lk.end(), lk.begin(), ::tolower);
+            buffer.keywords[lk] = Renderer::CP_SYNTAX_NUMBER;
         }
     } else if (buffer.syntax_type == EditorBuffer::ST_ASSEMBLY) {
         const std::vector<std::string> instructions = {"mov", "lea", "add", "sub", "mul", "imul", "div", "idiv", "inc", "dec", "and", "or", "xor", "not", "shl", "shr", "sal", "sar", "rol", "ror", "jmp", "je", "jne", "jz", "jnz", "jg", "jge", "jl", "jle", "ja", "jae", "jb", "jbe", "jc", "jnc", "call", "ret", "push", "pop", "cmp", "test", "syscall"};
@@ -223,12 +300,49 @@ std::vector<SyntaxToken> SyntaxHighlighter::parseLine(EditorBuffer& buffer, cons
                 std::transform(lookup_word.begin(), lookup_word.end(), lookup_word.begin(), ::tolower);
             }
 
-            if (buffer.keywords.count(lookup_word)) {
+            // In CMake mode a keyword immediately followed by '.' is a filename
+            // component (e.g. config.cpp, module.so) — don't highlight it.
+            bool is_filename_part = buffer.syntax_type == EditorBuffer::ST_CMAKE
+                                    && i < line.length() && line[i] == '.';
+
+            if (!is_filename_part && buffer.keywords.count(lookup_word)) {
                 int color = buffer.keywords.at(lookup_word);
                 int flags = renderer.getStyleFlags(static_cast<Renderer::ColorPairID>(color));
                 tokens.push_back({word, color, flags});
             } else {
                 tokens.push_back({word, Renderer::CP_DEFAULT_TEXT});
+            }
+            continue;
+        }
+
+        // CMake variable/generator-expression references: ${VAR}, $ENV{X}, $<expr>
+        if (buffer.syntax_type == EditorBuffer::ST_CMAKE && line[i] == '$') {
+            size_t start = i++;
+            if (i < line.length() && line[i] == '<') {
+                // Generator expression $<...> — handle nesting
+                int depth = 1; ++i;
+                while (i < line.length() && depth > 0) {
+                    if (line[i] == '<') ++depth;
+                    else if (line[i] == '>') --depth;
+                    ++i;
+                }
+                tokens.push_back({line.substr(start, i - start), Renderer::CP_SYNTAX_REGISTER_VAR});
+            } else {
+                // Optional prefix letters (ENV, CACHE, …) then '{'
+                while (i < line.length() && isalpha(line[i])) ++i;
+                if (i < line.length() && line[i] == '{') {
+                    int depth = 1; ++i;
+                    while (i < line.length() && depth > 0) {
+                        if (line[i] == '{') ++depth;
+                        else if (line[i] == '}') --depth;
+                        ++i;
+                    }
+                    tokens.push_back({line.substr(start, i - start), Renderer::CP_SYNTAX_REGISTER_VAR});
+                } else {
+                    // Bare '$' — emit as default and reset position
+                    i = start + 1;
+                    tokens.push_back({"$", Renderer::CP_DEFAULT_TEXT});
+                }
             }
             continue;
         }

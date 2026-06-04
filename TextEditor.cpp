@@ -233,35 +233,39 @@ void TextEditor::run(int argc, char* argv[]) {
     std::string colorsPath = "colors.json";
 
     // Determine executable directory for relative path fallback
-    std::filesystem::path exe_dir;
     {
         std::error_code ec;
         auto exe = std::filesystem::read_symlink("/proc/self/exe", ec);
-        if (!ec) exe_dir = exe.parent_path();
+        if (!ec) m_exe_dir = exe.parent_path();
     }
 
-    if (!std::filesystem::exists(configPath) && !exe_dir.empty())
-        configPath = (exe_dir / "config.json").string();
-    if (!std::filesystem::exists(configPath) && !exe_dir.empty())
-        configPath = (exe_dir.parent_path() / "config.json").string();
+    if (!std::filesystem::exists(configPath) && !m_exe_dir.empty())
+        configPath = (m_exe_dir / "config.json").string();
+    if (!std::filesystem::exists(configPath) && !m_exe_dir.empty())
+        configPath = (m_exe_dir.parent_path() / "config.json").string();
+    if (!std::filesystem::exists(configPath) && !m_exe_dir.empty())
+        configPath = (m_exe_dir.parent_path() / "share/gedi/config.json").string();
     if (!std::filesystem::exists(configPath))
         configPath = "/usr/share/gedi/config.json";
 
-    if (!std::filesystem::exists(colorsPath) && !exe_dir.empty())
-        colorsPath = (exe_dir / "colors.json").string();
-    if (!std::filesystem::exists(colorsPath) && !exe_dir.empty())
-        colorsPath = (exe_dir.parent_path() / "colors.json").string();
+    if (!std::filesystem::exists(colorsPath) && !m_exe_dir.empty())
+        colorsPath = (m_exe_dir / "colors.json").string();
+    if (!std::filesystem::exists(colorsPath) && !m_exe_dir.empty())
+        colorsPath = (m_exe_dir.parent_path() / "colors.json").string();
+    if (!std::filesystem::exists(colorsPath) && !m_exe_dir.empty())
+        colorsPath = (m_exe_dir.parent_path() / "share/gedi/colors.json").string();
     if (!std::filesystem::exists(colorsPath))
         colorsPath = "/usr/share/gedi/colors.json";
 
     m_configManager = std::make_unique<ConfigManager>(configPath, colorsPath);
     m_configManager->loadConfig(m_config);
+    m_configManager->loadToolchain(m_config);
     m_themes_data = m_configManager->loadThemes();
 
     m_keyBindings = std::make_unique<KeyBindings>();
     m_keyBindings->loadFromConfig(m_config.keybindings);
 
-    m_buildSystem = std::make_unique<BuildSystem>(m_config);
+    m_buildSystem = std::make_unique<BuildSystem>(m_config, m_exe_dir);
     m_helpProvider = std::make_unique<HelpProvider>();
     m_bufferManager = std::make_unique<BufferManager>();
 
@@ -413,6 +417,92 @@ void TextEditor::TryExit() {
     main_loop_running = false;
 }
 
+void TextEditor::clearSemanticColors(EditorBuffer& buffer) {
+    if (buffer.semantic_cache) {
+        std::lock_guard<std::mutex> lk(buffer.semantic_cache->mutex);
+        buffer.semantic_cache->colors = nullptr;
+        ++buffer.semantic_cache->version;  // discard any in-flight analysis
+    }
+}
+
+void TextEditor::insertSemanticLine(EditorBuffer& buffer, int split_line_0based) {
+    // Called when a new line is inserted after split_line_0based.
+    // Builds a shifted copy of the color table so that lines whose content
+    // didn't change keep their semantic colors immediately.
+    if (!buffer.semantic_cache) return;
+
+    std::shared_ptr<std::vector<std::vector<uint8_t>>> old_ptr;
+    {
+        std::lock_guard<std::mutex> lk(buffer.semantic_cache->mutex);
+        old_ptr = buffer.semantic_cache->colors;
+    }
+    if (!old_ptr || old_ptr->empty()) return;
+
+    const auto& old = *old_ptr;
+    int n = (int)old.size();
+    split_line_0based = std::min(split_line_0based, n);
+
+    // New layout (size n+1):
+    //   [0 .. split-1]      = old (unchanged)
+    //   [split]             = {} (split line — content changed)
+    //   [split+1]           = {} (new line — no colors yet)
+    //   [split+2 .. n]      = old[split+1 .. n-1] (shifted down, content unchanged)
+    auto new_ptr = std::make_shared<std::vector<std::vector<uint8_t>>>(n + 1);
+    auto& nv = *new_ptr;
+    for (int i = 0; i < split_line_0based; ++i)
+        nv[i] = old[i];
+    for (int i = split_line_0based + 1; i < n; ++i)
+        nv[i + 1] = old[i];
+
+    std::lock_guard<std::mutex> lk(buffer.semantic_cache->mutex);
+    buffer.semantic_cache->colors = new_ptr;
+    ++buffer.semantic_cache->version;
+}
+
+void TextEditor::removeSemanticLines(EditorBuffer& buffer, int merge_target_0based, int lines_removed) {
+    // Shift the color table up after deleting lines_removed lines that started
+    // immediately after merge_target_0based. The merge target row is cleared
+    // (its content changed). Lines after the deleted range shift up.
+    if (!buffer.semantic_cache || merge_target_0based < 0 || lines_removed <= 0) return;
+
+    std::shared_ptr<std::vector<std::vector<uint8_t>>> old_ptr;
+    {
+        std::lock_guard<std::mutex> lk(buffer.semantic_cache->mutex);
+        old_ptr = buffer.semantic_cache->colors;
+    }
+    if (!old_ptr || old_ptr->empty()) return;
+
+    const auto& old = *old_ptr;
+    int n = (int)old.size();
+    int new_size = std::max(0, n - lines_removed);
+
+    // New layout (size n - lines_removed):
+    //   [0 .. merge_target-1]            = old (unchanged)
+    //   [merge_target]                   = {} (merge target — content changed)
+    //   [merge_target+1 .. new_size-1]   = old[merge_target+lines_removed+1 .. n-1] (shifted up)
+    auto new_ptr = std::make_shared<std::vector<std::vector<uint8_t>>>(new_size);
+    auto& nv = *new_ptr;
+
+    for (int i = 0; i < merge_target_0based && i < (int)nv.size(); ++i)
+        nv[i] = old[i];
+    // nv[merge_target_0based] stays default-constructed (empty = cleared)
+    int dst = merge_target_0based + 1;
+    int src = merge_target_0based + lines_removed + 1;
+    for (; src < n && dst < (int)nv.size(); ++src, ++dst)
+        nv[dst] = old[src];
+
+    std::lock_guard<std::mutex> lk(buffer.semantic_cache->mutex);
+    buffer.semantic_cache->colors = new_ptr;
+    ++buffer.semantic_cache->version;
+}
+
+void TextEditor::removeSemanticLine(EditorBuffer& buffer, int removed_line_0based) {
+    // Single-line removal: the line at removed_line_0based is deleted and its
+    // content merged into removed_line_0based-1.
+    if (removed_line_0based < 1) return;
+    removeSemanticLines(buffer, removed_line_0based - 1, 1);
+}
+
 void TextEditor::insert_line_after(EditorBuffer& buffer, Line* current_p, const std::string& s) {
     if (!current_p) return;
     Line* p = new Line();
@@ -550,7 +640,7 @@ void TextEditor::drawTextArea() {
             }
 
             int screen_x = m_text_area_start_x + m_gutter_width;
-            int token_idx = 0;
+            size_t token_idx = 0;
             size_t token_char_offset = 0;
 
             for (size_t char_idx = 0; char_idx < p->text.length(); ++char_idx) {
@@ -591,6 +681,19 @@ void TextEditor::drawTextArea() {
                             }
                         }
                     }
+                    // Bracket-match flash: highest-priority color override.
+                    // Timer is checked here; expires after FLASH_DURATION_MS.
+                    if (m_flash_match_line == p && current_col == m_flash_match_col) {
+                        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - m_flash_start).count();
+                        if (elapsed < FLASH_DURATION_MS) {
+                            color = Renderer::CP_HIGHLIGHT;
+                            flags = A_BOLD;
+                        } else {
+                            m_flash_match_line = nullptr;
+                        }
+                    }
+
                     char raw = p->text[char_idx];
                     if (m_config.show_whitespace && !is_char_selected && (raw == ' ' || raw == '\t')) {
                         const char* marker = (raw == ' ') ? "\xc2\xb7" : "\xe2\x86\x92"; // · or →
@@ -775,15 +878,23 @@ void TextEditor::updateMenuLabels() {
     m_menus = {" &File ", " &Edit ", " &Search ", " &Build ", " &Project ", " &Window ", " &Options ", " &Help "};
     m_menu_positions = { 1, 7, 13, 21, 28, 37, 45, 54 };
 
-    m_submenu_file = {
-        formatMenuItem("&New", EditorAction::ACT_NEW),
-        formatMenuItem("&Open...", EditorAction::ACT_OPEN),
-        " -------------- ",
-        formatMenuItem("&Save", EditorAction::ACT_SAVE),
-        formatMenuItem("Save &As...", EditorAction::ACT_SAVE_AS),
-        " -------------- ",
-        formatMenuItem("E&xit", EditorAction::ACT_EXIT)
-    };
+    {
+        const std::string rf_label = "&Recent Files";
+        const std::string rf_arrow = " >";
+        int rf_pad = 30 - 1 - (int)rf_label.size() - (int)rf_arrow.size();
+        std::string rf_item = " " + rf_label + std::string(rf_pad, ' ') + rf_arrow;
+        m_submenu_file = {
+            formatMenuItem("&New", EditorAction::ACT_NEW),
+            formatMenuItem("&Open...", EditorAction::ACT_OPEN),
+            " -------------- ",
+            formatMenuItem("&Save", EditorAction::ACT_SAVE),
+            formatMenuItem("Save &As...", EditorAction::ACT_SAVE_AS),
+            " -------------- ",
+            rf_item,
+            " -------------- ",
+            formatMenuItem("E&xit", EditorAction::ACT_EXIT)
+        };
+    }
 
     m_submenu_project = {
         formatMenuItem("New &Project...",           EditorAction::ACT_NEW_PROJECT),        // sel 1
@@ -1185,9 +1296,9 @@ void TextEditor::main_loop() {
         if (ch == KEY_RESIZE) { handleResize(); continue; }
         if (ch == KEY_MOUSE) { handleMouseEvent(); continue; }
 
-        if (ch != ERR) m_last_keystroke_time = std::chrono::steady_clock::now();
+        if (ch != (wint_t)ERR) m_last_keystroke_time = std::chrono::steady_clock::now();
 
-        if (ch != ERR) {
+        if (ch != (wint_t)ERR) {
             if (m_project_panel_focused && !m_compile_output_visible) {
                 handleProjectPanelKey(ch);
             } else if (m_compile_output_visible) {
@@ -1289,7 +1400,7 @@ void TextEditor::main_loop() {
                 std::vector<wint_t> input_buffer; input_buffer.push_back(ch);
                 nodelay(stdscr, TRUE); timeout(1);
                 wint_t next_ch;
-                while ((next_ch = m_renderer->getChar()) != ERR) { input_buffer.push_back(next_ch); }
+                while ((next_ch = m_renderer->getChar()) != (wint_t)ERR) { input_buffer.push_back(next_ch); }
                 timeout(-1); nodelay(stdscr, TRUE);
                 for (wint_t key_press : input_buffer) { process_key(key_press); }
             }
@@ -1303,7 +1414,7 @@ void TextEditor::main_loop() {
                     m_last_keystroke_time != std::chrono::steady_clock::time_point{}) {
                     auto idle_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::steady_clock::now() - m_last_keystroke_time).count();
-                    if (idle_ms >= 1500) {
+                    if (idle_ms >= 800) {
                         m_last_keystroke_time = {};
                         ClangHighlighter::requestHighlight(buf, m_buildSystem.get());
                     }
@@ -1497,6 +1608,8 @@ void TextEditor::DeleteSelection() {
         lines_deleted_count++;
     }
     buffer.total_lines -= lines_deleted_count;
+    if (lines_deleted_count > 0)
+        removeSemanticLines(buffer, p_start_linenum - 1, lines_deleted_count);
     buffer.changed = true;
     ClearSelection();
 }
@@ -1573,6 +1686,7 @@ void TextEditor::HandlePaste() {
                 buffer.cursor_col = line_to_insert.length() + 1;
                 line_to_insert += remainder;
             }
+            insertSemanticLine(buffer, buffer.current_line_num - 1);
             insert_line_after(buffer, last_line, line_to_insert);
             last_line = last_line->next;
             buffer.current_line_num++;
@@ -1674,6 +1788,7 @@ void TextEditor::RestoreStateFromRecord(EditorBuffer& buffer, const UndoRecord& 
         buffer.document_head = new Line();
     }
     buffer.total_lines = record.lines.size();
+    clearSemanticColors(buffer);  // document rebuilt — old line/col indices are invalid
 
     buffer.current_line_num = record.cursor_line_num;
     buffer.cursor_col = record.cursor_col;
@@ -2098,9 +2213,9 @@ void TextEditor::handleSmartBlockClose(wint_t closing_char) {
         const std::string& line_text = search_line->text;
         for (int i = search_col; i >= 0; --i) {
             if (i < (int)line_text.length()) {
-                if (line_text[i] == closing_char) {
+                if (line_text[i] == (char)closing_char) {
                     nesting_level++;
-                } else if (line_text[i] == open_char) {
+                } else if (line_text[i] == (char)open_char) {
                     nesting_level--;
                     if (nesting_level < 0) {
                         // Found the matching brace
@@ -2118,6 +2233,11 @@ void TextEditor::handleSmartBlockClose(wint_t closing_char) {
                             buffer.cursor_col++;
                         }
                         buffer.changed = true;
+
+                        // Flash the matching opener so the user sees the pairing
+                        m_flash_match_line = search_line;
+                        m_flash_match_col  = i + 1;   // convert 0-based index → 1-based col
+                        m_flash_start      = std::chrono::steady_clock::now();
                         return;
                     }
                 }
@@ -2198,6 +2318,7 @@ void TextEditor::process_key(wint_t ch) {
                         buf.current_line->next = to_delete->next;
                         if (to_delete->next) to_delete->next->prev = buf.current_line;
                         delete to_delete; buf.changed = true;
+                        removeSemanticLine(buf, buf.current_line_num);
                     }
                     return;
                 }
@@ -2270,7 +2391,7 @@ void TextEditor::process_key(wint_t ch) {
             timeout(-1);
             nodelay(stdscr, TRUE);
 
-            if (next_ch != ERR) {
+            if (next_ch != (wint_t)ERR) {
                 HandleAltKey(next_ch);
             }
         }
@@ -2395,6 +2516,7 @@ void TextEditor::process_key(wint_t ch) {
         std::string new_line_text = indent_str + remainder;
         int new_cursor_col = indent_str.length() + 1;
 
+        insertSemanticLine(buffer, buffer.current_line_num - 1);
         insert_line_after(buffer, buffer.current_line, new_line_text);
 
         buffer.cursor_screen_y++;
@@ -2412,6 +2534,7 @@ void TextEditor::process_key(wint_t ch) {
             buffer.current_line->prev->text += buffer.current_line->text; buffer.cursor_screen_y--; buffer.current_line = buffer.current_line->prev; buffer.current_line_num--;
             buffer.current_line->next = to_delete->next; if (to_delete->next) to_delete->next->prev = buffer.current_line;
             delete to_delete; buffer.changed = true;
+            removeSemanticLine(buffer, buffer.current_line_num);  // removed line was at current_line_num (now decremented)
         }
         break;
     case KEY_DC:
@@ -2423,6 +2546,7 @@ void TextEditor::process_key(wint_t ch) {
             Line* to_delete = buffer.current_line->next; buffer.current_line->text += to_delete->text;
             buffer.current_line->next = to_delete->next; if(to_delete->next) to_delete->next->prev = buffer.current_line;
             delete to_delete; buffer.changed = true;
+            removeSemanticLine(buffer, buffer.current_line_num);  // next line (0-based = current_line_num) was deleted
         }
         break;
     case KEY_IC: buffer.insert_mode = !buffer.insert_mode; break;
@@ -2457,18 +2581,6 @@ void TextEditor::process_key(wint_t ch) {
 
 
 // ── Project helpers ───────────────────────────────────────────────────────────
-
-static std::string findCMakeLists(const std::string& start_dir)
-{
-    namespace fs = std::filesystem;
-    fs::path dir(start_dir);
-    for (int depth = 0; depth < 6 && dir != dir.parent_path(); ++depth) {
-        fs::path cmake = dir / "CMakeLists.txt";
-        if (fs::exists(cmake)) return cmake.string();
-        dir = dir.parent_path();
-    }
-    return {};
-}
 
 static bool addFileToCMakeLists(const std::string& cmake_path, const std::string& new_file)
 {
@@ -2703,7 +2815,8 @@ void TextEditor::CreateNewProject()
         // ── Git init (optional) ───────────────────────────────────────────────
         if (temp.init_git) {
             std::string cmd = "git -C \"" + root.string() + "\" init -q 2>/dev/null";
-            std::system(cmd.c_str());
+            auto t = std::system(cmd.c_str());
+            (void)t;
 
             std::ofstream gi(root / ".gitignore");
             if (temp.build_system == 0) {
@@ -3165,17 +3278,8 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
     std::vector<std::string> finalMenuItems = menuItems;
     std::vector<bool> item_disabled(menuItems.size(), false);
 
-    if (menu_id == 1 && !m_config.recent_files.empty()) { // File — append recent files
-        finalMenuItems.push_back(" ----------------- ");
-        for (size_t i = 0; i < m_config.recent_files.size(); ++i) {
-            std::string name = get_filename_from_path(m_config.recent_files[i]);
-            std::string item = " " + name;
-            const int max_w = 28;
-            if ((int)item.length() > max_w)
-                item = " ..." + name.substr(name.length() - (max_w - 4));
-            finalMenuItems.push_back(item);
-        }
-        item_disabled.resize(finalMenuItems.size(), false);
+    if (menu_id == 1 && m_config.recent_files.empty()) {
+        if (item_disabled.size() > 6) item_disabled[6] = true; // disable "Recent Files" when empty
     }
 
     if (menu_id == 5) { // Project — disable certain items when no project is loaded
@@ -3238,7 +3342,7 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
             }
 
             m_renderer->drawText(x + 1, y + 1 + i, std::string(w - 2, ' '), Renderer::CP_MENU_ITEM);
-            bool is_selected = (i + 1) == selection;
+            bool is_selected = (static_cast<int>(i) + 1) == selection;
             bool is_disabled = (i < item_disabled.size() && item_disabled[i]);
             int text_color = is_disabled ? Renderer::CP_DIALOG
                            : (is_selected ? Renderer::CP_MENU_SELECTED : Renderer::CP_MENU_ITEM);
@@ -3264,9 +3368,27 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
             break;
         }
         case KEY_LEFT:  copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return NAVIGATE_LEFT;
-        case KEY_RIGHT: copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return NAVIGATE_RIGHT;
+        case KEY_RIGHT:
+            if (menu_id == 1 && selection == 7 && !m_config.recent_files.empty()) goto handle_selection;
+            copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return NAVIGATE_RIGHT;
         case KEY_RESIZE: copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return RESIZE_OCCURRED;
-        case 27: copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return CLOSE_MENU;
+        case 27: {
+            // Peek for an Alt+key follow-up (same 50 ms window the main loop uses).
+            // If found, push both characters back via unget_wch so the main loop
+            // processes the Alt+key action in its own clean top-level context —
+            // avoids calling TryExit / dialogs from deep inside the menu call stack.
+            timeout(50);
+            wint_t next_ch = m_renderer->getChar();
+            timeout(-1);
+            copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE);
+            delwin(behind);
+            nodelay(stdscr, TRUE);
+            if (next_ch != (wint_t)ERR) {
+                unget_wch(next_ch);
+                unget_wch(27);
+            }
+            return CLOSE_MENU;
+        }
 
         case KEY_MOUSE: {
             MEVENT mev;
@@ -3331,6 +3453,28 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
         case KEY_ENTER: case 10: case 13:
             if (selection-1 < (int)item_disabled.size() && item_disabled[selection-1]) break;
         handle_selection:
+            if (menu_id == 1 && selection == 7 && !m_config.recent_files.empty()) {
+                int sub_x = x + w - 1;
+                int sub_y = y + selection;
+                if (sub_x + 34 > m_renderer->getWidth()) sub_x = x - 34;
+                int rf_idx = showRecentFilesSubMenu(sub_x, sub_y);
+                if (rf_idx == -2) {
+                    // ESC+key pushed to unget queue; close parent menu so the main
+                    // loop can replay the sequence in its own clean top-level context.
+                    copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE);
+                    delwin(behind);
+                    nodelay(stdscr, TRUE);
+                    return CLOSE_MENU;
+                }
+                if (rf_idx >= 0 && rf_idx < (int)m_config.recent_files.size()) {
+                    copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE);
+                    delwin(behind);
+                    nodelay(stdscr, TRUE);
+                    OpenRecentFile(m_config.recent_files[rf_idx]);
+                    return ITEM_SELECTED;
+                }
+                break; // sub-menu dismissed: redraw parent and continue
+            }
             delwin(behind); drawEditorState(-1); nodelay(stdscr, TRUE);
             // Re-numbered cases for menu logic
             switch (menu_id) {
@@ -3339,12 +3483,7 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
                 else if (selection == 2) selectfile();
                 else if (selection == 4) { if (currentBufferIdx() != -1) { if (currentBuffer().is_new_file) SaveFileBrowser(); else write_file(currentBuffer()); } }
                 else if (selection == 5) { if (currentBufferIdx() != -1) SaveFileBrowser(); }
-                else if (selection == 7) TryExit();
-                else if (selection >= 9) {
-                    int rf_idx = selection - 9;
-                    if (rf_idx < (int)m_config.recent_files.size())
-                        OpenRecentFile(m_config.recent_files[rf_idx]);
-                }
+                else if (selection == 9) TryExit();
                 break;
             case 2: // Edit
                 if (selection == 1) HandleUndo();
@@ -3415,6 +3554,121 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
             }
             break;
         }
+        }
+    }
+}
+
+int TextEditor::showRecentFilesSubMenu(int x, int y) {
+    const int max_files = std::min((int)m_config.recent_files.size(), 9);
+    if (max_files == 0) return -1;
+
+    const int item_w = 30;  // item string width; box width = item_w + 4 (2-char margin each side)
+    std::vector<std::string> items;
+    items.reserve(max_files);
+    for (int i = 0; i < max_files; ++i) {
+        std::string name = get_filename_from_path(m_config.recent_files[i]);
+        std::string prefix = " &" + std::to_string(i + 1) + " ";
+        int available = item_w - (int)prefix.size() - 1;
+        if ((int)name.size() > available)
+            name = "..." + name.substr(name.size() - (available - 3));
+        std::string item = prefix + name;
+        item.resize(item_w - 1, ' ');
+        item += ' ';
+        items.push_back(item);
+    }
+
+    int w = item_w + 4;  // same "+4" pattern as CallSubMenu: items fit inside box with margin
+    int h = (int)items.size() + 2;
+
+    if (x + w > m_renderer->getWidth()) x = m_renderer->getWidth() - w;
+    if (x < 0) x = 0;
+    if (y + h > m_renderer->getHeight()) y = m_renderer->getHeight() - h;
+    if (y < 1) y = 1;
+
+    WINDOW* behind = newwin(h + 1, w + 1, y, x);
+    copywin(stdscr, behind, y, x, 0, 0, h, w, FALSE);
+    m_renderer->drawShadow(x, y, w, h);
+
+    int selection = 1;
+    while (true) {
+        m_renderer->drawBox(x, y, w, h, Renderer::CP_MENU_ITEM, Renderer::SINGLE);
+        for (int i = 0; i < (int)items.size(); ++i) {
+            m_renderer->drawText(x + 1, y + 1 + i, std::string(w - 2, ' '), Renderer::CP_MENU_ITEM);
+            int color = ((i + 1) == selection) ? Renderer::CP_MENU_SELECTED : Renderer::CP_MENU_ITEM;
+            m_renderer->drawStyledText(x + 2, y + 1 + i, items[i], color);
+        }
+        m_renderer->refresh();
+
+        wint_t ch = m_renderer->getChar();
+        switch (ch) {
+        case KEY_UP:
+            if (selection > 1) --selection; else selection = (int)items.size();
+            break;
+        case KEY_DOWN:
+            if (selection < (int)items.size()) ++selection; else selection = 1;
+            break;
+        case KEY_LEFT: {
+            copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE);
+            delwin(behind);
+            return -1;
+        }
+        case 27: {
+            timeout(50);
+            wint_t next_ch = m_renderer->getChar();
+            timeout(-1);
+            copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE);
+            delwin(behind);
+            if (next_ch != (wint_t)ERR) {
+                // Push ESC+key back; return -2 so caller closes the parent menu too.
+                // The main loop will then replay the sequence in its own clean context.
+                unget_wch(next_ch);
+                unget_wch(27);
+                return -2;
+            }
+            return -1;
+        }
+        case KEY_ENTER: case 10: case 13: {
+            int result = selection - 1;
+            copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE);
+            delwin(behind);
+            return result;
+        }
+        case KEY_MOUSE: {
+            MEVENT mev;
+            if (getmouse(&mev) == OK) {
+                if (mev.bstate & (BUTTON1_PRESSED | BUTTON1_CLICKED)) {
+                    if (mev.x >= x+1 && mev.x < x+w-1 && mev.y >= y+1 && mev.y < y+h-1) {
+                        int clicked = mev.y - y;
+                        if (clicked >= 1 && clicked <= (int)items.size()) {
+                            copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE);
+                            delwin(behind);
+                            return clicked - 1;
+                        }
+                    } else {
+                        copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE);
+                        delwin(behind);
+                        return -1;
+                    }
+                } else if (mev.bstate & (REPORT_MOUSE_POSITION | BUTTON1_MOTION)) {
+                    if (mev.x >= x+1 && mev.x < x+w-1 && mev.y >= y+1 && mev.y < y+h-1) {
+                        int hovered = mev.y - y;
+                        if (hovered >= 1 && hovered <= (int)items.size())
+                            selection = hovered;
+                    }
+                }
+            }
+            break;
+        }
+        default:
+            if (ch >= '1' && ch <= '9') {
+                int idx = (int)(ch - '1');
+                if (idx < max_files) {
+                    copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE);
+                    delwin(behind);
+                    return idx;
+                }
+            }
+            break;
         }
     }
 }
@@ -3616,7 +3870,47 @@ CompilationResult TextEditor::runCompilationProcess() {
         base_dir = m_project.root;
     } else {
         EditorBuffer& buffer = currentBuffer();
-        result   = m_buildSystem->runCompilationProcess(buffer);
+
+        // For unsaved new files the source doesn't exist on disk yet.
+        // Write the buffer content to a temp file so the compiler can read it.
+        std::string temp_src;
+        if (buffer.is_new_file) {
+            auto dot = buffer.filename.rfind('.');
+            std::string ext = (dot != std::string::npos) ? buffer.filename.substr(dot) : ".cpp";
+            std::string tmpl = "/tmp/gedi_XXXXXX";
+            int fd = mkstemp(tmpl.data());
+            if (fd != -1) {
+                close(fd);
+                temp_src = tmpl + ext;
+                std::rename(tmpl.c_str(), temp_src.c_str());
+                std::ofstream out(temp_src);
+                for (Line* p = buffer.document_head; p; p = p->next)
+                    out << p->text << "\n";
+            }
+        }
+
+        std::string saved_name = buffer.filename;
+        if (!temp_src.empty()) buffer.filename = temp_src;
+
+        result = m_buildSystem->runCompilationProcess(buffer);
+
+        if (!temp_src.empty()) {
+            buffer.filename = saved_name;
+            // Rewrite output lines so the user sees the virtual filename, not /tmp/…
+            for (auto& ln : result.output_lines) {
+                size_t pos;
+                while ((pos = ln.find(temp_src)) != std::string::npos)
+                    ln.replace(pos, temp_src.size(), saved_name);
+            }
+            std::remove(temp_src.c_str());
+            // Record the compiled executable so compileAndRun can delete it after use.
+            // Strip shell quotes that may wrap the path (e.g. ""/tmp/foo"" → /tmp/foo).
+            std::string exe = result.executable_name;
+            if (exe.size() >= 2 && exe.front() == '"' && exe.back() == '"')
+                exe = exe.substr(1, exe.size() - 2);
+            result.temp_exe = exe;
+        }
+
         auto sep = buffer.filename.rfind('/');
         if (sep != std::string::npos) base_dir = buffer.filename.substr(0, sep);
     }
@@ -3683,12 +3977,14 @@ void TextEditor::compileAndRun() {
         std::string temp_output_file = "tedit_run_output.tmp";
         std::string run_cmd = (exe[0] == '/') ? "\"" + exe + "\"" : ("./" + exe);
         run_cmd += " > " + temp_output_file + " 2>&1";
-        system(run_cmd.c_str());
+        auto t = system(run_cmd.c_str());
+        (void)t;
 
         std::ifstream run_output_stream(temp_output_file);
         m_output_content = std::string((std::istreambuf_iterator<char>(run_output_stream)), std::istreambuf_iterator<char>());
         run_output_stream.close();
         remove(temp_output_file.c_str());
+        if (!result.temp_exe.empty()) std::remove(result.temp_exe.c_str());
         m_output_content += "\n\n--- Press any key to return to the editor. ---";
 
         reset_prog_mode();
@@ -4166,12 +4462,18 @@ void TextEditor::CompileOptionsDialog() {
 }
 
 void TextEditor::AboutBox() {
-    MessageDialog::show(*m_renderer, "gedi C++ Editor\nVersion 1.0\nAn interactive IDE for C++ programmers.");
+    MessageDialog::show(*m_renderer, "gedi C++ Editor (c) fritzone 2026\n\nAn interactive IDE for C++ programmers.");
 }
 
 void TextEditor::loadHelpFile() {
     std::string helpPath = "help.hlp";
-    if (!std::filesystem::exists(helpPath)) helpPath = "/usr/share/gedi/help.hlp";
+    if (!std::filesystem::exists(helpPath) && !m_exe_dir.empty())
+        helpPath = (m_exe_dir / "help.hlp").string();
+    if (!std::filesystem::exists(helpPath) && !m_exe_dir.empty())
+        helpPath = (m_exe_dir.parent_path() / "share/gedi/help.hlp").string();
+    if (!std::filesystem::exists(helpPath))
+        helpPath = "/usr/share/gedi/help.hlp";
+    
     m_helpProvider->loadHelpFile(helpPath);
 }
 
@@ -4528,7 +4830,7 @@ void TextEditor::openProjectPanelFile(int index) {
     handleResize();
 }
 
-int TextEditor::pickTarget(const std::string& action_label, int exclude_idx)
+int TextEditor::pickTarget(const std::string& /*action_label*/, int exclude_idx)
 {
     return PickTargetDialog::show(*m_renderer, m_project.targets,
                                   "Select Target", exclude_idx);

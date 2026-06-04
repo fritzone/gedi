@@ -17,7 +17,7 @@ void HelpProvider::loadHelpFile(const std::string& path) {
         std::smatch match;
         if (std::regex_match(line, match, section_re)) {
             std::string id = match[1].str();
-            m_help_data[id] = HelpSection{id};
+            m_help_data[id] = HelpSection{id, {}};
             current_section = &m_help_data[id];
         } else if (current_section) {
             HelpLine help_line;
@@ -33,13 +33,13 @@ void HelpProvider::loadHelpFile(const std::string& path) {
 
                 if (first_token == std::sregex_iterator()) {
                     if (!remaining_text.empty()) {
-                        help_line.segments.push_back({remaining_text, STYLE_NORMAL});
+                        help_line.segments.push_back({remaining_text, STYLE_NORMAL, ""});
                     }
                     break;
                 }
 
                 if (first_token->position() > 0) {
-                    help_line.segments.push_back({remaining_text.substr(0, first_token->position()), STYLE_NORMAL});
+                    help_line.segments.push_back({remaining_text.substr(0, first_token->position()), STYLE_NORMAL, ""});
                 }
 
                 if (first_token->str().starts_with("[[")) { // It's a link
@@ -49,7 +49,7 @@ void HelpProvider::loadHelpFile(const std::string& path) {
                         first_token->operator[](1).str()
                     });
                 } else { // It's bold
-                    help_line.segments.push_back({first_token->operator[](1).str(), STYLE_BOLD});
+                    help_line.segments.push_back({first_token->operator[](1).str(), STYLE_BOLD, ""});
                 }
                 remaining_text = first_token->suffix().str();
             }

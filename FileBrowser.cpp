@@ -214,7 +214,7 @@ void FileBrowser::drawInputField(Renderer& renderer,
                                  int x, int y, int w,
                                  const std::string& label,
                                  const std::string& value,
-                                 bool focused)
+                                 bool /*focused*/)
 {
     std::string full_label = " " + label + " ";
     int field_w = w - 2;
@@ -313,7 +313,9 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
 
     // ── State ─────────────────────────────────────────────────────────────────
     char cwd_buf[1024];
-    getcwd(cwd_buf, sizeof(cwd_buf));
+    auto c = getcwd(cwd_buf, sizeof(cwd_buf));
+    (void)c;
+
     std::string current_path = cwd_buf;
 
     std::string filename_buf = initial_filename;
@@ -371,7 +373,9 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
 
     auto enter_dir = [&](const std::string& name) {
         if (chdir(name.c_str()) == 0) {
-            getcwd(cwd_buf, sizeof(cwd_buf));
+            auto c = getcwd(cwd_buf, sizeof(cwd_buf));
+            (void)c;
+
             current_path = cwd_buf;
             selection    = 0;
             top_of_list  = 0;
@@ -518,7 +522,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
             timeout(50);
             wint_t next = renderer.getChar();
             timeout(-1);
-            if (next == ERR) break;   // bare ESC → cancel
+            if (next == (wint_t)ERR) break;   // bare ESC → cancel
             char lower = static_cast<char>(std::tolower(static_cast<unsigned char>(next)));
             if ((mode == Mode::OPEN       && lower == 'o') ||
                 (mode == Mode::SAVE       && lower == 's') ||

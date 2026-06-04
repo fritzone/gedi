@@ -1,4 +1,5 @@
 #include "ConfigManager.h"
+#include "DependencyChecker.h"
 #include <fstream>
 #include <filesystem>
 #include <iostream>
@@ -87,6 +88,21 @@ json ConfigManager::loadThemes() {
         }
     }
     return json::object();
+}
+
+void ConfigManager::loadToolchain(Config& config) {
+    std::string path = DependencyChecker::toolchainPath();
+    if (!std::filesystem::exists(path)) return;
+    try {
+        std::ifstream f(path);
+        json j = json::parse(f);
+        config.toolchain.cc         = j.value("cc",         "");
+        config.toolchain.cxx        = j.value("cxx",        "");
+        config.toolchain.clang      = j.value("clang",      "");
+        config.toolchain.clang_cxx  = j.value("clang_cxx",  "");
+        config.toolchain.pkg_config = j.value("pkg_config", "");
+        config.toolchain.python3    = j.value("python3",    "");
+    } catch (...) {}
 }
 
 void ConfigManager::createDefaultConfigFile(const std::string& path) {

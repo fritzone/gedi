@@ -6,7 +6,6 @@
 
 static std::vector<OptionList::Option> buildOptions(const CompilerSettings& s, int tab)
 {
-    using O = OptionList::Option;
     CompilerSettings& t = const_cast<CompilerSettings&>(s);
 
     if (tab == 0) return {

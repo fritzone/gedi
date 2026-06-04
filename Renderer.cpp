@@ -18,7 +18,9 @@ Renderer::Renderer() {
     mouseinterval(0);   // no click-delay synthesis; every press → PRESSED, every release → RELEASED
     // ncurses only enables basic mouse mode (1000); explicitly request button-event tracking (1002)
     // so we receive motion events while a button is held (needed for drag selection).
-    write(STDOUT_FILENO, "\033[?1002h", 8);
+    auto t = write(STDOUT_FILENO, "\033[?1002h", 8);
+    (void)t;
+
     fflush(stdout);
     // Pin Ctrl+Down (terminfo kDN5) to a stable key code used by ComboBox
     const char* kdn5 = tigetstr("kDN5");
@@ -66,7 +68,9 @@ Renderer::Renderer() {
 }
 
 Renderer::~Renderer() {
-    write(STDOUT_FILENO, "\033[?1002l", 8);  // disable button-event tracking
+    auto t = write(STDOUT_FILENO, "\033[?1002l", 8);  // disable button-event tracking
+    (void)t;
+
     fflush(stdout);
     curs_set(1);
     endwin();
@@ -192,7 +196,7 @@ int Renderer::getWidth() const { return m_width; }
 
 int Renderer::getHeight() const { return m_height; }
 
-void Renderer::setCursor(int x, int y) { move(y, x); }
+void Renderer::setCursor(int x, int y) { curs_set(1); move(y, x); }
 
 int Renderer::getStyleFlags(ColorPairID id) const {
     if (m_style_attributes.count(id)) {
@@ -230,12 +234,8 @@ void Renderer::loadColors(const json &theme_data) {
     init_pair(CP_COMPILE_WARNING, COLOR_YELLOW, dialog_bg);
     init_pair(CP_DEFAULT_ON_SELECTION, default_fg, sel_bg);
 
-    // Ensure shadows blend correctly with their respective backgrounds
+    // button_shadow uses half-block chars (▀/▄) that must blend with the dialog background
     short shadow_fg, shadow_bg;
-    if (m_color_pair_map.count("shadow")) {
-        pair_content(CP_SHADOW, &shadow_fg, &shadow_bg);
-        init_pair(CP_SHADOW, shadow_fg, default_bg);
-    }
     if (m_color_pair_map.count("button_shadow")) {
         pair_content(CP_BUTTON_SHADOW, &shadow_fg, &shadow_bg);
         init_pair(CP_BUTTON_SHADOW, shadow_fg, dialog_bg);

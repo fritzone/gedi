@@ -5,6 +5,15 @@
 #include <string>
 #include <vector>
 
+struct Toolchain {
+    std::string cc;
+    std::string cxx;
+    std::string clang;
+    std::string clang_cxx;
+    std::string pkg_config;
+    std::string python3;
+};
+
 struct Config {
     bool smart_indentation = true;
     int indentation_width = 4;
@@ -18,6 +27,7 @@ struct Config {
     std::string extra_compile_flags = "-Wall";
     std::map<std::string, std::string> keybindings;
     std::vector<std::string> recent_files;  // MRU list, newest first, max 10
+    Toolchain toolchain;
 };
 
 

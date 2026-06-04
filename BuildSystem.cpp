@@ -5,7 +5,8 @@
 #include <filesystem>
 #include <sys/wait.h>
 
-BuildSystem::BuildSystem(const Config& config) : m_config(config) {}
+BuildSystem::BuildSystem(const Config& config, std::filesystem::path exe_dir) 
+    : m_config(config), m_exe_dir(exe_dir) {}
 
 CompilationResult BuildSystem::runCompilationProcess(EditorBuffer& buffer) {
     CompilationResult result;
@@ -331,7 +332,16 @@ std::string BuildSystem::guessCompileCommand(const std::string& filename) {
     }
 
     // Slow path: run cguess outside the lock so other threads aren't blocked.
-    std::string cguess_cmd = "python3 /usr/local/lib/python3/dist-packages/gedi/cguess.py \"" + filename + "\" 2>/dev/null";
+    std::string cguess_path = "cguess.py";
+    if (!std::filesystem::exists(cguess_path) && !m_exe_dir.empty())
+        cguess_path = (m_exe_dir / "cguess.py").string();
+    if (!std::filesystem::exists(cguess_path) && !m_exe_dir.empty())
+        cguess_path = (m_exe_dir.parent_path() / "lib/python3/dist-packages/gedi/cguess.py").string();
+    if (!std::filesystem::exists(cguess_path))
+        cguess_path = "/usr/local/lib/python3/dist-packages/gedi/cguess.py";
+
+    const std::string python = m_config.toolchain.python3.empty() ? "python3" : m_config.toolchain.python3;
+    std::string cguess_cmd = "\"" + python + "\" \"" + cguess_path + "\" \"" + filename + "\" 2>/dev/null";
     char buffer_arr[512];
     std::string full_cguess_output;
 
@@ -347,6 +357,12 @@ std::string BuildSystem::guessCompileCommand(const std::string& filename) {
     if (found != std::string::npos) {
         result = full_cguess_output.substr(found + 7);
         if (!result.empty() && result.back() == '\n') result.pop_back();
+    }
+
+    // Fallback: use the toolchain-discovered C++ compiler, or g++ if unknown.
+    if (result.empty()) {
+        const std::string cxx = m_config.toolchain.cxx.empty() ? "g++" : m_config.toolchain.cxx;
+        result = "\"" + cxx + "\" \"" + filename + "\" -o \"" + filename.substr(0, filename.find_last_of('.')) + "\"";
     }
 
     {

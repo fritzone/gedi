@@ -59,10 +59,12 @@ EditorBuffer::EditorBuffer(EditorBuffer &&other) noexcept :
     cursor_screen_y(other.cursor_screen_y), horizontal_scroll_offset(other.horizontal_scroll_offset),
     selecting(other.selecting), selection_anchor_line(other.selection_anchor_line),
     selection_anchor_col(other.selection_anchor_col), selection_anchor_linenum(other.selection_anchor_linenum),
-    undo_stack(std::move(other.undo_stack)), redo_stack(std::move(other.redo_stack)),
-    saved_lines(std::move(other.saved_lines)),
-    syntax_type(other.syntax_type), keywords(std::move(other.keywords)),
+    syntax_type(other.syntax_type),
+    keywords(std::move(other.keywords)),
     in_multiline_comment(other.in_multiline_comment),
+    undo_stack(std::move(other.undo_stack)),
+    redo_stack(std::move(other.redo_stack)),
+    saved_lines(std::move(other.saved_lines)),
     semantic_cache(std::move(other.semantic_cache))
 {
     other.document_head = nullptr;

@@ -16,6 +16,7 @@ public:
     void loadConfig(Config& config);
     void saveConfig(const Config& config);
     json loadThemes();
+    void loadToolchain(Config& config);
 
     void saveSession(const json& session);
     json loadSession();

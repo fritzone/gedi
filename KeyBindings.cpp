@@ -134,8 +134,8 @@ int KeyBindings::stringToKey(const std::string& str) {
 
     if (s.find("SHIFT+") == 0 && s.length() >= 7) {
         std::string base = s.substr(6);
-        if (base == "DEL") return 330; 
-        if (base == "INS") return 337; 
+        if (base == "DEL") return KEY_SDC;   // shifted delete-character key
+        if (base == "INS") return KEY_SIC;   // shifted insert-character key
         if (base.find("F") == 0) {
             try { return KEY_F(std::stoi(base.substr(1)) + 12); } catch(...) {}
         }

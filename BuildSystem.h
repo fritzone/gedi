@@ -15,6 +15,7 @@ struct CompilationResult {
     std::string executable_name;
     bool success;
     std::string full_command;
+    std::string temp_exe;  // if set, delete this executable after running
 };
 
 struct CompileMessage {
@@ -28,7 +29,7 @@ struct CompileMessage {
 
 class BuildSystem {
 public:
-    BuildSystem(const Config& config);
+    BuildSystem(const Config& config, std::filesystem::path exe_dir = "");
 
     CompilationResult runCompilationProcess(EditorBuffer& buffer);
     CompilationResult runProjectBuild(const GediProject& project);
@@ -54,6 +55,7 @@ public:
 
 private:
     Config m_config;
+    std::filesystem::path m_exe_dir;
     std::mutex m_cache_mutex;
     std::map<std::string, std::string> m_compile_command_cache;
 };

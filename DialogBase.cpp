@@ -83,14 +83,14 @@ DialogResult DialogBase::run(Renderer& renderer)
             timeout(50);
             wint_t next = renderer.getChar();
             timeout(-1);
-            if (next == ERR) { result_.cancel(); break; }
+            if (next == (wint_t)ERR) { result_.cancel(); break; }
 
             if (next == '[') {
                 // CSI sequence — read until the final byte (0x40–0x7E)
                 std::string csi;
                 timeout(30);
                 wint_t c;
-                while ((c = renderer.getChar()) != ERR && csi.size() < 16) {
+                while ((c = renderer.getChar()) != (wint_t)ERR && csi.size() < 16) {
                     csi += static_cast<char>(c);
                     if (c >= 64 && c <= 126) break;
                 }
@@ -519,10 +519,8 @@ HandleResult DialogBase::dispatchMouse(const MEVENT& ev, int startx, int starty)
     bool is_scroll_dn = (ev.bstate & BUTTON5_PRESSED)        != 0;
 
     // Treat position-reports while a button is captured as drag/motion events.
-    bool is_motion = false;
     if (!is_press && !is_release && !is_clicked && !is_scroll_up && !is_scroll_dn) {
-        if (mouse_capture_btn_ >= 0) is_motion = true;
-        else                         return HandleResult::CONTINUE;
+        if (mouse_capture_btn_ < 0) return HandleResult::CONTINUE;
     }
 
     // Helper: is the mouse currently over button[i]?
