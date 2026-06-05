@@ -4,12 +4,12 @@
 #include <algorithm>
 
 static constexpr int W          = 60;
-static constexpr int H          = 28;
+static constexpr int H          = 22;   // fits an 80x25 screen (was 28)
 static constexpr int INNER_W    = W - 4;
 static constexpr int TAB_Y      = 2;
 static constexpr int CONTENT_Y  = 4;
-static constexpr int CONTENT_H  = H - 7;   // rows 4..24 (height 21)
-static constexpr int BTN_Y      = H - 3;   // = 25
+static constexpr int CONTENT_H  = H - 7;   // = 15 (rows 4..18)
+static constexpr int BTN_Y      = H - 3;   // = 19
 
 // Widget y-positions inside the content box (dialog-relative)
 // Tab 0 – Editing  (innerCount order: cb[0], cb[1], sp[0])
@@ -24,7 +24,7 @@ static constexpr int DI_SYNH_Y  = CONTENT_Y + 5;   // radiolist start
 
 // Tab 2 – Colors
 static constexpr int CL_LIST_Y    = CONTENT_Y + 2;
-static constexpr int CL_LIST_ROWS = CONTENT_H - 4; // = 17
+static constexpr int CL_LIST_ROWS = CONTENT_H - 4; // = 11
 
 // ── Constructor ───────────────────────────────────────────────────────────────
 

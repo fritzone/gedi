@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
-#include <ncurses.h>
+#include "curses_compat.h"
 #include <unistd.h>
 
 // ── UTF-8 helpers ─────────────────────────────────────────────────────────────

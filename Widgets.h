@@ -1,5 +1,5 @@
 #pragma once
-#include <ncurses.h>
+#include "curses_compat.h"
 #include "Renderer.h"
 #include <algorithm>
 #include <string>
@@ -325,6 +325,21 @@ struct TabControl {
         if (ch == KEY_RIGHT && active_tab < (int)tab_names.size() - 1)
         { ++active_tab; return true; }
         return false;
+    }
+
+    // Hit-test a click against the tab labels. startx/starty are the dialog's
+    // top-left on screen (same origin draw() is given). Returns the clicked tab
+    // index, or -1 if the point is not on a label. Geometry mirrors draw():
+    // each label is " name " and labels are separated by a single space.
+    int hitTest(int startx, int starty, int ev_x, int ev_y) const {
+        if (ev_y != starty + y) return -1;
+        int cur_x = startx + x;
+        for (int i = 0; i < (int)tab_names.size(); ++i) {
+            int len = (int)tab_names[i].size() + 2;   // leading + trailing space
+            if (ev_x >= cur_x && ev_x < cur_x + len) return i;
+            cur_x += len + 1;                          // +1 gap between labels
+        }
+        return -1;
     }
 
     int activeTab() const noexcept { return active_tab; }

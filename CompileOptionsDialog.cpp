@@ -1,7 +1,7 @@
 #include "CompileOptionsDialog.h"
 #include "BuildSystem.h"
 #include "utils.h"
-#include <ncurses.h>
+#include "curses_compat.h"
 #include <cstdio>
 
 static std::vector<OptionList::Option> buildOptions(const CompilerSettings& s, int tab)

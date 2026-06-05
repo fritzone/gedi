@@ -1,7 +1,7 @@
 #include "FileBrowser.h"
 #include "utils.h"
 
-#include <ncurses.h>
+#include "curses_compat.h"
 #include <dirent.h>
 #include <sys/stat.h>
 #include <fnmatch.h>

@@ -5,7 +5,7 @@
 #include <vector>
 #include <map>
 #include <array>
-#include <ncurses.h>
+#include "curses_compat.h"
 
 const int KEY_ALT_OFFSET = 10000;
 #define KEY_ALT(c) (KEY_ALT_OFFSET + (c))

@@ -4,7 +4,7 @@
 #include "DialogResult.h"
 #include "Widgets.h"
 #include "Renderer.h"
-#include <ncurses.h>
+#include "curses_compat.h"
 #include <string>
 #include <string_view>
 #include <vector>

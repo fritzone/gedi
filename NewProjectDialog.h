@@ -35,11 +35,12 @@ private:
     bool onTab(bool forward) override;
 
     // ── Layout constants ──────────────────────────────────────────────────────
-    static constexpr int W            = 100;
+    // Sized to fit an 80x25 screen (was 100 wide). H=18 already fits at 25 rows.
+    static constexpr int W            = 78;
     static constexpr int H            = 18;
-    static constexpr int FIELD_X      = 16;   // left edge of fields (from inner_x = startx+2)
-    static constexpr int FIELD_W_NAME = 42;   // name field width
-    static constexpr int FIELD_W_PATH = 34;   // path field width
+    static constexpr int FIELD_X      = 9;    // left edge of fields (from inner_x = startx+2)
+    static constexpr int FIELD_W_NAME = 34;   // name field width
+    static constexpr int FIELD_W_PATH = 24;   // path field width
     static constexpr int NAME_BOX_Y   = 1;
     static constexpr int NAME_BOX_H   = 3;
     static constexpr int PATH_BOX_Y   = 5;
@@ -49,20 +50,20 @@ private:
     static constexpr int BTN_Y        = H - 3;  // = 15
 
     // Browse button inside the Location box
-    static constexpr int BROWSE_BTN_X = 2 + FIELD_X + FIELD_W_PATH + 1; // = 54
+    static constexpr int BROWSE_BTN_X = 2 + FIELD_X + FIELD_W_PATH + 1; // = 36
     static constexpr int BROWSE_BTN_Y = PATH_BOX_Y + 1;                  // = 6
 
     // Library panel (right side)
-    static constexpr int LIB_BOX_X   = 65;
-    static constexpr int LIB_BOX_W   = 32;
+    static constexpr int LIB_BOX_W   = 26;
+    static constexpr int LIB_BOX_X   = W - 2 - LIB_BOX_W;  // = 50
     static constexpr int LIB_BOX_Y   = 1;
     static constexpr int LIB_BOX_H   = H - 4;  // = 14
     static constexpr int LIB_VISIBLE  = LIB_BOX_H - 3;   // = 11 visible rows (1 row for filter)
-    static constexpr int LIB_ITEM_W   = LIB_BOX_W - 2;   // = 30 usable chars
+    static constexpr int LIB_ITEM_W   = LIB_BOX_W - 2;   // = 24 usable chars
 
     // Button positions (centered under left half)
-    static constexpr int BTN_CREATE_X = 21;
-    static constexpr int BTN_CANCEL_X = BTN_CREATE_X + 11 + 4;  // = 36
+    static constexpr int BTN_CREATE_X = 14;
+    static constexpr int BTN_CANCEL_X = BTN_CREATE_X + 11 + 1;  // = 26
 
     static constexpr int GRP_NAME = 0;
     static constexpr int GRP_PATH = 1;

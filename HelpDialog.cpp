@@ -1,5 +1,5 @@
 #include "HelpDialog.h"
-#include <ncurses.h>
+#include "curses_compat.h"
 #include <algorithm>
 
 void HelpDialog::show(Renderer& renderer, HelpProvider& helpProvider, std::vector<std::string>& help_history) {
@@ -223,8 +223,23 @@ void HelpDialog::show(Renderer& renderer, HelpProvider& helpProvider, std::vecto
         renderer.refresh();
 
         int ch = renderer.getChar();
-        
-        if (ch == 9 || ch == KEY_RIGHT || ch == KEY_DOWN) { 
+
+        if (ch == KEY_RESIZE) {
+            // Backing screen was blanked and resized. Refresh the cached screen
+            // dimensions and re-snapshot the (now blank) backdrop so the next
+            // iteration re-lays-out and repaints the help window at the new size.
+            renderer.updateDimensions();
+            screen_h = renderer.getHeight();
+            screen_w = renderer.getWidth();
+            renderer.repaintBackground();   // redraw the editor behind at the new size
+            if (screen_backup) delwin(screen_backup);
+            screen_backup = newwin(screen_h, screen_w, 0, 0);
+            if (screen_backup)
+                copywin(stdscr, screen_backup, 0, 0, 0, 0, screen_h - 1, screen_w - 1, FALSE);
+            continue;
+        }
+
+        if (ch == 9 || ch == KEY_RIGHT || ch == KEY_DOWN) {
             if (!all_links.empty()) {
                 selected_link_idx = (selected_link_idx + 1) % all_links.size();
             } else if (ch == KEY_DOWN) {

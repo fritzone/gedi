@@ -1,6 +1,6 @@
 #include "AddFileDialog.h"
 #include "FileBrowser.h"
-#include <ncurses.h>
+#include "curses_compat.h"
 #include <algorithm>
 
 static void insertUtf8At(std::string& buf, int& pos, wint_t ch)

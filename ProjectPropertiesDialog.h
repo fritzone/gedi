@@ -24,8 +24,9 @@ private:
     bool onTab(bool forward) override;
 
     // ── Layout constants ──────────────────────────────────────────────────────
-    static constexpr int W           = 100;
-    static constexpr int H           = 30;
+    // Sized to fit an 80x25 screen (was 100x30).
+    static constexpr int W           = 78;
+    static constexpr int H           = 23;
 
     // Left panel
     static constexpr int INFO_BOX_Y  = 1;
@@ -33,16 +34,16 @@ private:
     static constexpr int CFG_BOX_Y   = 4;
     static constexpr int CFG_BOX_H   = 5;
     static constexpr int TGT_BOX_Y   = 9;
-    static constexpr int TGT_BOX_H   = 18;
-    static constexpr int TGT_VISIBLE = TGT_BOX_H - 2;  // 16 visible rows
+    static constexpr int TGT_BOX_H   = 10;             // rows 9..18
+    static constexpr int TGT_VISIBLE = TGT_BOX_H - 2;  // 8 visible rows
 
     // Right panel (library list)
-    static constexpr int LIB_BOX_X   = 65;
-    static constexpr int LIB_BOX_W   = 32;
+    static constexpr int LIB_BOX_W   = 26;
+    static constexpr int LIB_BOX_X   = W - 2 - LIB_BOX_W;  // = 50
     static constexpr int LIB_BOX_Y   = 1;
-    static constexpr int LIB_BOX_H   = H - 4;   // 26
-    static constexpr int LIB_VISIBLE  = LIB_BOX_H - 3;  // 23 visible rows
-    static constexpr int LIB_ITEM_W   = LIB_BOX_W - 2;  // 30
+    static constexpr int LIB_BOX_H   = H - 4;   // 19
+    static constexpr int LIB_VISIBLE  = LIB_BOX_H - 3;  // 16 visible rows
+    static constexpr int LIB_ITEM_W   = LIB_BOX_W - 2;  // 24
 
     // Buttons
     static constexpr int BTN_Y           = H - 3;

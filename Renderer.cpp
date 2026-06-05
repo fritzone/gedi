@@ -1,7 +1,7 @@
 #include "nlohmann/json.hpp"
 #include "Renderer.h"
 
-#include <ncurses.h>
+#include "curses_compat.h"
 #include <termios.h>
 #include <unistd.h>
 #include <csignal>
@@ -16,22 +16,31 @@ Renderer::Renderer() {
     keypad(stdscr, TRUE); nodelay(stdscr, TRUE); curs_set(1);
     mousemask(ALL_MOUSE_EVENTS | REPORT_MOUSE_POSITION, nullptr);
     mouseinterval(0);   // no click-delay synthesis; every press → PRESSED, every release → RELEASED
+#ifndef GEDI_GUI
     // ncurses only enables basic mouse mode (1000); explicitly request button-event tracking (1002)
     // so we receive motion events while a button is held (needed for drag selection).
+    // NOTE: we deliberately do NOT enable any-motion tracking (1003) here: ncurses 6.3
+    // cannot decode bare pointer-motion (getmouse() returns ERR), and the legacy
+    // encoding makes it mis-report hover as spurious clicks. Hover is handled in the
+    // SDL build instead (see curses_compat.cpp); enabling it for the terminal would
+    // require parsing SGR mouse sequences ourselves.
     auto t = write(STDOUT_FILENO, "\033[?1002h", 8);
     (void)t;
 
     fflush(stdout);
+#endif
     // Pin Ctrl+Down (terminfo kDN5) to a stable key code used by ComboBox
     const char* kdn5 = tigetstr("kDN5");
     if (kdn5 && kdn5 != (char*)-1) define_key(kdn5, 525);
     start_color(); use_default_colors();
     getmaxyx(stdscr, m_height, m_width);
+#ifndef GEDI_GUI
     struct termios term;
     if (tcgetattr(STDIN_FILENO, &term) == 0) {
         term.c_iflag &= ~(IXON | IXOFF);
         tcsetattr(STDIN_FILENO, TCSANOW, &term);
     }
+#endif
     m_color_map = {
         {"black", COLOR_BLACK}, {"red", COLOR_RED}, {"green", COLOR_GREEN},
         {"yellow", COLOR_YELLOW}, {"blue", COLOR_BLUE}, {"magenta", COLOR_MAGENTA},
@@ -68,10 +77,12 @@ Renderer::Renderer() {
 }
 
 Renderer::~Renderer() {
+#ifndef GEDI_GUI
     auto t = write(STDOUT_FILENO, "\033[?1002l", 8);  // disable button-event tracking
     (void)t;
 
     fflush(stdout);
+#endif
     curs_set(1);
     endwin();
 }

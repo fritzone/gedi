@@ -5,7 +5,7 @@
 #include "PickTargetDialog.h"
 #include "utils.h"
 
-#include <ncurses.h>
+#include "curses_compat.h"
 #include <clang-c/Index.h>
 
 // BUTTON1_MOTION is not universally defined; compute it from the ncurses mask formula.
@@ -228,7 +228,12 @@ void TextEditor::selectfile() {
 
 void TextEditor::run(int argc, char* argv[]) {
     m_renderer = std::make_unique<Renderer>();
-    
+
+    // Let modal dialogs repaint the editor behind them after a window resize.
+    // handleResize() recomputes the text-area / scrollbar bounds for the new size;
+    // drawEditorState() then repaints the whole editor chrome with them.
+    m_renderer->setBackgroundRepaint([this]() { handleResize(); drawEditorState(); });
+
     std::string configPath = "config.json";
     std::string colorsPath = "colors.json";
 
@@ -3393,6 +3398,13 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
         case KEY_MOUSE: {
             MEVENT mev;
             if (getmouse(&mev) == OK) {
+                // A real button press must NOT carry a position-report bit: this
+                // ncurses reports pointer motion (hover, or motion-while-held) as
+                // BUTTON1_PRESSED|REPORT_MOUSE_POSITION (see handleMouseEvent), so
+                // without this guard a plain hover would be mistaken for a click and
+                // immediately activate the item under the pointer.
+                bool is_pos_rpt = (mev.bstate & REPORT_MOUSE_POSITION) != 0;
+                bool is_click   = (mev.bstate & (BUTTON1_PRESSED | BUTTON1_CLICKED)) != 0 && !is_pos_rpt;
                 // Scroll wheel: move highlight
                 if (mev.bstate & BUTTON4_PRESSED) {
                     int tries = (int)finalMenuItems.size();
@@ -3404,7 +3416,7 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
                     do { if (selection < (int)finalMenuItems.size()) ++selection; else selection = 1; --tries; }
                     while (tries > 0 && (finalMenuItems[selection-1].find("---") != std::string::npos ||
                                          (selection-1 < (int)item_disabled.size() && item_disabled[selection-1])));
-                } else if (mev.bstate & (BUTTON1_PRESSED | BUTTON1_CLICKED)) {
+                } else if (is_click) {
                     if (mev.y == 0) {
                         // Click on menu bar: switch to that menu
                         int sw = m_renderer->getWidth();
@@ -3436,9 +3448,29 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
                         delwin(behind); nodelay(stdscr, TRUE); return CLOSE_MENU;
                     }
                 } else if (mev.bstate & (REPORT_MOUSE_POSITION | BUTTON1_MOTION)) {
-                    // Mouse hover / drag: update highlighted item
-                    if (mev.x >= x+1 && mev.x < x+w-1 &&
-                        mev.y >= y+1 && mev.y < y+h-1) {
+                    if (mev.y == 0) {
+                        // Hover over the menu bar: if the pointer is over a *different*
+                        // top-level menu, close this dropdown and let ActivateMenuBar
+                        // reopen the one under the pointer (same mechanism as a click
+                        // on the bar). This gives the classic "slide across the bar to
+                        // switch menus" behaviour.
+                        int sw = m_renderer->getWidth();
+                        for (size_t k = 0; k < m_menus.size(); ++k) {
+                            int xp = (k == m_menus.size() - 1)
+                                     ? (sw - (int)m_menus[k].length() - 2)
+                                     : m_menu_positions[k];
+                            if (mev.x >= xp && mev.x < xp + (int)m_menus[k].length()) {
+                                if ((int)k + 1 != menu_id) {
+                                    m_mouse_pending_menu_id = (int)k + 1;
+                                    copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE);
+                                    delwin(behind); nodelay(stdscr, TRUE); return CLOSE_MENU;
+                                }
+                                break;
+                            }
+                        }
+                    } else if (mev.x >= x+1 && mev.x < x+w-1 &&
+                               mev.y >= y+1 && mev.y < y+h-1) {
+                        // Mouse hover / drag: update highlighted item
                         int hovered = mev.y - y;
                         if (hovered >= 1 && hovered <= (int)finalMenuItems.size() &&
                             finalMenuItems[hovered-1].find("---") == std::string::npos &&

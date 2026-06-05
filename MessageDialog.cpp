@@ -1,5 +1,5 @@
 #include "MessageDialog.h"
-#include <ncurses.h>
+#include "curses_compat.h"
 #include <vector>
 #include <string>
 #include <algorithm>
@@ -39,50 +39,65 @@ static std::vector<std::string> wrapMessage(const std::string& message, int max_
 }
 
 void MessageDialog::show(Renderer& renderer, const std::string& message) {
-    // ── Size the dialog to the content ───────────────────────────────────────
-    const int max_w   = std::min(renderer.getWidth() - 8, 60);
-    const int inner_w = max_w - 4;   // 2 border + 2 padding on each side
+    // ── Layout state (recomputed on resize) ──────────────────────────────────
+    int w = 0, h = 0, n = 0, starty = 0, startx = 0, btn_y = 0, btn_x = 0;
+    std::vector<std::string> lines;
+    WINDOW* behind = nullptr;
 
-    std::vector<std::string> lines = wrapMessage(message, inner_w);
+    const std::string ok_text = " &Ok ";
 
-    // Cap lines so the dialog never taller than the screen
-    const int max_lines = renderer.getHeight() - 8;
-    if ((int)lines.size() > max_lines) lines.resize(max_lines);
+    // Size the dialog to the content and the current screen, snapshot the area
+    // behind it, and draw the frame + wrapped text. Called once up front and
+    // again on every resize so nothing stale is left on screen.
+    auto layoutAndDraw = [&]() {
+        const int max_w   = std::min(renderer.getWidth() - 8, 60);
+        const int inner_w = max_w - 4;   // 2 border + 2 padding on each side
 
-    int n = (int)lines.size();
-    int w = max_w;
-    // Layout: border(1) + margin(1) + text(n) + margin(1) + button(1) + shadow(1) + border(1)
-    int h = n + 6;
+        lines = wrapMessage(message, inner_w);
 
-    int starty = (renderer.getHeight() - h) / 2;
-    int startx = (renderer.getWidth()  - w) / 2;
+        // Cap lines so the dialog is never taller than the screen
+        const int max_lines = renderer.getHeight() - 8;
+        if ((int)lines.size() > max_lines) lines.resize(std::max(0, max_lines));
 
-    // ── Save area behind dialog ───────────────────────────────────────────────
-    WINDOW* behind = newwin(h + 1, w + 1, starty, startx);
-    copywin(stdscr, behind, starty, startx, 0, 0, h, w, FALSE);
+        n = (int)lines.size();
+        w = max_w;
+        // Layout: border(1) + margin(1) + text(n) + margin(1) + button(1) + shadow(1) + border(1)
+        h = n + 6;
 
-    // ── Draw frame ────────────────────────────────────────────────────────────
-    renderer.drawShadow(startx, starty, w, h);
-    renderer.drawBoxWithTitle(startx, starty, w, h,
-                              Renderer::CP_DIALOG, Renderer::DOUBLE,
-                              " Message ", Renderer::CP_DIALOG_TITLE, A_BOLD);
+        starty = (renderer.getHeight() - h) / 2;
+        startx = (renderer.getWidth()  - w) / 2;
+        if (starty < 0) starty = 0;
+        if (startx < 0) startx = 0;
 
-    wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
-    for (int i = 1; i < h - 1; ++i)
-        mvwaddstr(stdscr, starty + i, startx + 1, std::string(w - 2, ' ').c_str());
-    wattroff(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
+        // ── Save area behind dialog ───────────────────────────────────────────
+        if (behind) delwin(behind);
+        behind = newwin(h + 1, w + 1, starty, startx);
+        if (behind)
+            copywin(stdscr, behind, starty, startx, 0, 0, h, w, FALSE);
 
-    // ── Draw wrapped text (starts one row below the top border + margin) ──────
-    for (int i = 0; i < n; ++i)
-        renderer.drawText(startx + 2, starty + 2 + i, lines[i], Renderer::CP_DIALOG);
+        // ── Draw frame ────────────────────────────────────────────────────────
+        renderer.drawShadow(startx, starty, w, h);
+        renderer.drawBoxWithTitle(startx, starty, w, h,
+                                  Renderer::CP_DIALOG, Renderer::DOUBLE,
+                                  " Message ", Renderer::CP_DIALOG_TITLE, A_BOLD);
 
-    // ── Ok button ─────────────────────────────────────────────────────────────
-    std::string ok_text = " &Ok ";
-    int btn_y = starty + h - 3;   // leaves room for shadow + bottom border
+        wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
+        for (int i = 1; i < h - 1; ++i)
+            mvwaddstr(stdscr, starty + i, startx + 1, std::string(w - 2, ' ').c_str());
+        wattroff(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
+
+        // ── Draw wrapped text (one row below the top border + margin) ──────────
+        for (int i = 0; i < n; ++i)
+            renderer.drawText(startx + 2, starty + 2 + i, lines[i], Renderer::CP_DIALOG);
+
+        btn_y = starty + h - 3;   // leaves room for shadow + bottom border
+        btn_x = startx + (w - (int)ok_text.size()) / 2;
+    };
+
+    layoutAndDraw();
 
     nodelay(stdscr, FALSE);
     bool pressed = false;
-    int btn_x = startx + (w - (int)ok_text.size()) / 2;
     while (true) {
         // Clear button + shadow rows before each draw so the pressed shift
         // doesn't leave a ghost of the previous unpressed button behind.
@@ -97,6 +112,12 @@ void MessageDialog::show(Renderer& renderer, const std::string& message) {
         if (pressed) { napms(100); break; }
 
         wint_t ch = renderer.getChar();
+        if (ch == KEY_RESIZE) {
+            renderer.updateDimensions();
+            renderer.repaintBackground();   // redraw the editor behind at the new size
+            layoutAndDraw();   // re-centre, re-wrap and repaint at the new size
+            continue;
+        }
         if (ch == 27) {
             timeout(1);
             wint_t next = renderer.getChar();
@@ -108,8 +129,10 @@ void MessageDialog::show(Renderer& renderer, const std::string& message) {
     }
 
     // ── Restore ───────────────────────────────────────────────────────────────
-    copywin(behind, stdscr, 0, 0, starty, startx, starty + h, startx + w, FALSE);
-    delwin(behind);
+    if (behind) {
+        copywin(behind, stdscr, 0, 0, starty, startx, starty + h, startx + w, FALSE);
+        delwin(behind);
+    }
     nodelay(stdscr, TRUE);
     renderer.showCursor();
 }

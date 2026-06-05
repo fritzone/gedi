@@ -1,5 +1,5 @@
 #include "DialogBase.h"
-#include <ncurses.h>
+#include "curses_compat.h"
 
 // ── UTF-8 append helper (shared by dispatchChar and text_buffer typing) ─────────
 
@@ -27,20 +27,28 @@ static void appendUtf8(std::string& buf, wint_t ch)
 DialogResult DialogBase::run(Renderer& renderer)
 {
     renderer.hideCursor();
-    const int starty = (renderer.getHeight() - h_) / 2;
-    const int startx = (renderer.getWidth()  - w_) / 2;
+    int starty = (renderer.getHeight() - h_) / 2;
+    int startx = (renderer.getWidth()  - w_) / 2;
+    if (starty < 0) starty = 0;
+    if (startx < 0) startx = 0;
 
     WINDOW* behind = newwin(h_ + 1, w_ + 1, starty, startx);
     copywin(stdscr, behind, starty, startx, 0, 0, h_, w_, FALSE);
 
     onInit();
 
-    if (!background_fn_) {
+    // Draw the (static) frame that lives behind the per-frame interior. For
+    // dialogs with a background callback the frame is repainted every loop
+    // iteration instead (see below), so this only covers the modal case.
+    auto drawStaticFrame = [&]() {
         renderer.drawShadow(startx, starty, w_, h_);
         renderer.drawBoxWithTitle(startx, starty, w_, h_,
             Renderer::CP_DIALOG, Renderer::DOUBLE,
             " " + title_ + " ", Renderer::CP_DIALOG_TITLE, A_BOLD);
-    }
+    };
+
+    if (!background_fn_)
+        drawStaticFrame();
 
     nodelay(stdscr, FALSE);
     pressed_             = false;
@@ -74,6 +82,32 @@ DialogResult DialogBase::run(Renderer& renderer)
 
         wint_t ch = renderer.getChar();
         HandleResult hr = HandleResult::CONTINUE;
+
+        // ── Window resize ─────────────────────────────────────────────────────
+        // The backing screen has been blanked and its dimensions changed. Re-centre
+        // the dialog for the new size, recapture the (now blank) backdrop so the
+        // close-time restore stays consistent, and repaint the frame. Without this
+        // the frame is gone and the interior renders at a stale, off-centre spot —
+        // leaving visual garbage on screen.
+        if (ch == KEY_RESIZE) {
+            renderer.updateDimensions();   // refresh cached size from the resized stdscr
+            starty = (renderer.getHeight() - h_) / 2;
+            startx = (renderer.getWidth()  - w_) / 2;
+            if (starty < 0) starty = 0;
+            if (startx < 0) startx = 0;
+            // Relayout + repaint the backdrop at the new size before snapshotting
+            // under the dialog. This recomputes the editor's text-area/scrollbar
+            // bounds (only done in its resize handler), which even background_fn_
+            // dialogs need — otherwise the editor chrome redraws at the old size.
+            renderer.repaintBackground();
+            if (behind) delwin(behind);
+            behind = newwin(h_ + 1, w_ + 1, starty, startx);
+            if (behind)
+                copywin(stdscr, behind, starty, startx, 0, 0, h_, w_, FALSE);
+            if (!background_fn_)
+                drawStaticFrame();
+            continue;
+        }
 
         if (ch == KEY_MOUSE) {
             MEVENT ev;
@@ -112,8 +146,10 @@ DialogResult DialogBase::run(Renderer& renderer)
         if (hr == HandleResult::CLOSE) break;
     }
 
-    copywin(behind, stdscr, 0, 0, starty, startx, starty + h_, startx + w_, FALSE);
-    delwin(behind);
+    if (behind) {
+        copywin(behind, stdscr, 0, 0, starty, startx, starty + h_, startx + w_, FALSE);
+        delwin(behind);
+    }
     nodelay(stdscr, TRUE);
     renderer.showCursor();
     return result_;
@@ -590,6 +626,27 @@ HandleResult DialogBase::dispatchMouse(const MEVENT& ev, int startx, int starty)
         }
     }
 
+    // Tab-bar press: hit-test tab controls across all groups. A tab bar usually
+    // lives in a borderless group, so this is NOT gated on the group box bounds
+    // (unlike the checkbox/spinner hit-tests below). Clicking a tab selects it and
+    // focuses its group, exactly like the Left/Right keys would.
+    if (!groups_.empty() && is_press) {
+        for (int g = 0; g < (int)groups_.size(); ++g) {
+            auto& grp = groups_[g];
+            for (int t = 0; t < (int)grp.tabcontrols.size(); ++t) {
+                int hit = grp.tabcontrols[t].hitTest(startx, starty, ev.x, ev.y);
+                if (hit >= 0) {
+                    grp.tabcontrols[t].active_tab = hit;
+                    group_focus_ = g;
+                    grp.inner_focus = static_cast<int>(
+                        grp.checkboxes.size() + grp.spinners.size() +
+                        grp.comboboxes.size()) + t;
+                    return HandleResult::CONTINUE;
+                }
+            }
+        }
+    }
+
     // Mode A: input field focus on click
     if (groups_.empty() && is_press) {
         for (int i = 0; i < (int)inputs_.size(); ++i) {
@@ -603,49 +660,90 @@ HandleResult DialogBase::dispatchMouse(const MEVENT& ev, int startx, int starty)
         }
     }
 
-    // Mode B: click on a group to focus it; click on checkbox/spinner to activate
+    // Mode B: click on a widget to activate it, else click in a group box to focus
+    // it. Groups can share the same box region (e.g. the Settings "Display" tab,
+    // where the checkbox group and the syntax-highlight RadioList group overlap),
+    // so we must hit-test every group's widgets before letting a bare box click
+    // consume the event — otherwise the first box-matching group swallows clicks
+    // meant for a widget in an overlapping group.
     if (!groups_.empty() && is_press) {
+        int box_focus = -1;   // group whose box contains the click (no widget hit)
+
         for (int g = 0; g < (int)groups_.size(); ++g) {
             const auto& grp = groups_[g];
             int gx1 = startx + grp.box_x;
             int gy1 = starty + grp.box_y;
             int gx2 = gx1 + grp.box_w - 1;
             int gy2 = gy1 + grp.box_h - 1;
-            if (ev.x >= gx1 && ev.x <= gx2 && ev.y >= gy1 && ev.y <= gy2) {
-                group_focus_ = g;
-                // Hit-test checkboxes
-                for (auto& cb : groups_[g].checkboxes) {
-                    int cx = startx + cb.x, cy = starty + cb.y;
-                    if (ev.y == cy && ev.x >= cx && ev.x < cx + 3 + 1 + (int)cb.label.size()) {
-                        cb.value = !cb.value;
+            bool in_box = (grp.box_w > 0 && grp.box_h > 0 &&
+                           ev.x >= gx1 && ev.x <= gx2 && ev.y >= gy1 && ev.y <= gy2);
+            // Only hit-test widgets of groups under the click. A collapsed box
+            // (box_w==0) marks an inactive tab whose widgets must be ignored even
+            // though they still occupy their old coordinates.
+            if (!in_box) continue;
+
+            // Hit-test checkboxes
+            for (auto& cb : groups_[g].checkboxes) {
+                int cx = startx + cb.x, cy = starty + cb.y;
+                if (ev.y == cy && ev.x >= cx && ev.x < cx + 3 + 1 + (int)cb.label.size()) {
+                    group_focus_ = g;
+                    cb.value = !cb.value;
+                    return HandleResult::CONTINUE;
+                }
+            }
+            // Hit-test spinners (< and > arrows)
+            for (auto& sp : groups_[g].spinners) {
+                int sx2 = startx + sp.x, sy2 = starty + sp.y;
+                if (ev.y == sy2 && (ev.x == sx2 || ev.x == sx2 + 4)) {
+                    group_focus_ = g;
+                    if (ev.x == sx2          && sp.value > sp.min_val) --sp.value;
+                    else if (ev.x == sx2 + 4 && sp.value < sp.max_val) ++sp.value;
+                    return HandleResult::CONTINUE;
+                }
+            }
+            // OptionList click
+            if (!groups_[g].optionlists.empty()) {
+                auto& ol = groups_[g].optionlists[0];
+                if (ev.y >= starty + ol.y && ev.y < starty + ol.y + ol.visible_rows) {
+                    auto rows = ol.buildRows();
+                    int row_i   = ev.y - (starty + ol.y);
+                    int abs_row = ol.top_row + row_i;
+                    if (abs_row >= 0 && abs_row < (int)rows.size() && !rows[abs_row].is_group) {
+                        group_focus_ = g;
+                        ol.cursor = rows[abs_row].opt_idx;
+                        auto& opt = ol.options[ol.cursor];
+                        if (opt.is_radio) *opt.i_val = opt.radio_val;
+                        else              *opt.b_val = !*opt.b_val;
                         return HandleResult::CONTINUE;
                     }
                 }
-                // Hit-test spinners (< and > arrows)
-                for (auto& sp : groups_[g].spinners) {
-                    int sx2 = startx + sp.x, sy2 = starty + sp.y;
-                    if (ev.y == sy2) {
-                        if (ev.x == sx2     && sp.value > sp.min_val) --sp.value;
-                        else if (ev.x == sx2 + 4 && sp.value < sp.max_val) ++sp.value;
-                    }
-                }
-                // OptionList click
-                if (!groups_[g].optionlists.empty()) {
-                    auto& ol = groups_[g].optionlists[0];
-                    if (ev.y >= starty + ol.y && ev.y < starty + ol.y + ol.visible_rows) {
-                        auto rows = ol.buildRows();
-                        int row_i   = ev.y - (starty + ol.y);
-                        int abs_row = ol.top_row + row_i;
-                        if (abs_row >= 0 && abs_row < (int)rows.size() && !rows[abs_row].is_group) {
-                            ol.cursor = rows[abs_row].opt_idx;
-                            auto& opt = ol.options[ol.cursor];
-                            if (opt.is_radio) *opt.i_val = opt.radio_val;
-                            else              *opt.b_val = !*opt.b_val;
-                        }
-                    }
-                }
-                return HandleResult::CONTINUE;
             }
+            // RadioList click — select the clicked item (e.g. the theme list and
+            // the syntax-highlighting list in the Settings dialog).
+            for (auto& rl : groups_[g].radiolists) {
+                int top = rl.scrollOffset();
+                for (int i = 0; i < rl.visible_rows; ++i) {
+                    int idx = top + i;
+                    if (idx >= (int)rl.items.size()) break;
+                    int ry = starty + rl.y + i;
+                    int rx = startx + rl.x;
+                    if (ev.y == ry && ev.x >= rx &&
+                        ev.x < rx + 4 + (int)rl.items[idx].size()) {
+                        group_focus_   = g;
+                        rl.cursor_idx   = idx;
+                        rl.selected_idx = idx;
+                        return HandleResult::CONTINUE;
+                    }
+                }
+            }
+
+            if (box_focus < 0) box_focus = g;
+        }
+
+        // No widget was hit — a bare click inside a group box just focuses it.
+        if (box_focus >= 0) {
+            group_focus_ = box_focus;
+            return HandleResult::CONTINUE;
         }
     }
 

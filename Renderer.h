@@ -2,6 +2,7 @@
 #define RENDERER_H
 
 #include "nlohmann/json.hpp"
+#include <functional>
 
 using json = nlohmann::json;
 
@@ -63,6 +64,12 @@ public:
     void clear();
     void refresh();
     void updateDimensions();
+
+    // Register a callback that repaints the application backdrop (the editor)
+    // full-screen. Modal dialogs invoke repaintBackground() after a resize so the
+    // screen behind them is redrawn at the new size instead of staying blank.
+    void setBackgroundRepaint(std::function<void()> fn) { m_background_repaint = std::move(fn); }
+    void repaintBackground() { if (m_background_repaint) m_background_repaint(); }
     void drawText(int x, int y, const std::string& text, int colorId, int flags = 0);
     void drawStyledText(int x, int y, const std::string& text, int colorId);
     void drawButton(int x, int y, const std::string& text, bool selected, bool pressed = false);
@@ -82,6 +89,7 @@ public:
 
 private:
     int m_width = 0, m_height = 0;
+    std::function<void()> m_background_repaint;
     std::map<std::string, int> m_color_map;
     std::map<std::string, int> m_color_pair_map;
     std::map<Renderer::ColorPairID, int> m_style_attributes;

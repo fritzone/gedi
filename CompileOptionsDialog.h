@@ -45,19 +45,21 @@ private:
     HandleResult onKey(wint_t ch) override;
 
     // ── Layout constants ──────────────────────────────────────────────────────
-    static constexpr int W            = 84;
-    static constexpr int H            = 34;
+    // Sized to fit an 80x25 screen (was 84x34). Vertical layout is packed so the
+    // scrollable option list keeps a usable number of rows at this height.
+    static constexpr int W            = 78;
+    static constexpr int H            = 23;
     static constexpr int COMBO_Y      = 2;
     static constexpr int TAB_Y        = 4;
-    static constexpr int OPT_Y        = 6;
-    static constexpr int OPT_ROWS     = H - 20;
+    static constexpr int OPT_Y        = 5;
+    static constexpr int FLAGS_BOX_Y  = H - 9;   // = 14
+    static constexpr int FLAGS_BOX_H  = 3;       // rows 14..16
+    static constexpr int OPT_ROWS     = FLAGS_BOX_Y - OPT_Y;  // = 9 visible rows
     static constexpr int OPT_BOX_H   = OPT_ROWS + 2;
-    static constexpr int FLAGS_BOX_Y  = H - 13;
-    static constexpr int FLAGS_BOX_H  = 3;
-    static constexpr int CMD_BOX_Y    = H - 10;
-    static constexpr int CMD_BOX_H    = 4;
+    static constexpr int CMD_BOX_Y    = H - 6;   // = 17
+    static constexpr int CMD_BOX_H    = 4;       // rows 17..20
     static constexpr int CMD_VIEW_H   = 2;
-    static constexpr int BTN_Y        = H - 4;
+    static constexpr int BTN_Y        = H - 2;   // = 21
 
     Renderer&          renderer_;
     BuildSystem&       buildSystem_;

@@ -1,5 +1,5 @@
 #include "BuildOutputDialog.h"
-#include <ncurses.h>
+#include "curses_compat.h"
 #include <algorithm>
 
 
@@ -46,6 +46,29 @@ void BuildOutputDialog::show(Renderer& renderer, const std::vector<std::string>&
         }
 
         wint_t ch = renderer.getChar();
+        if (ch == KEY_RESIZE) {
+            // Screen was blanked and resized — recompute geometry, recapture the
+            // backdrop and repaint the frame so no stale garbage is left behind.
+            renderer.updateDimensions();
+            renderer.repaintBackground();   // redraw the editor behind at the new size
+            if (behind) delwin(behind);
+            h = renderer.getHeight() - 10;
+            w = renderer.getWidth() - 20;
+            if (h < 15) h = 15;
+            if (w < 60) w = 60;
+            starty = (renderer.getHeight() - h) / 2;
+            startx = (renderer.getWidth()  - w) / 2;
+            if (starty < 0) starty = 0;
+            if (startx < 0) startx = 0;
+            visible_h = h - 6;
+            if (scroll_pos + visible_h > (int)lines.size())
+                scroll_pos = std::max(0, (int)lines.size() - visible_h);
+            behind = newwin(h + 1, w + 1, starty, startx);
+            if (behind) copywin(stdscr, behind, starty, startx, 0, 0, h, w, FALSE);
+            renderer.drawShadow(startx, starty, w, h);
+            renderer.drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Build Output ", Renderer::CP_DIALOG_TITLE, A_BOLD);
+            continue;
+        }
         if (ch == KEY_UP) { if (scroll_pos > 0) scroll_pos--; }
         else if (ch == KEY_DOWN) { if (scroll_pos + visible_h < (int)lines.size()) scroll_pos++; }
         else if (ch == KEY_PPAGE) { scroll_pos -= visible_h; if (scroll_pos < 0) scroll_pos = 0; }
@@ -53,8 +76,10 @@ void BuildOutputDialog::show(Renderer& renderer, const std::vector<std::string>&
         else if (ch == 27 || ch == ' ' || ch == KEY_ENTER || ch == 10 || ch == 13 || tolower(ch) == 'c') pressed = true;
     }
 
-    copywin(behind, stdscr, 0, 0, starty, startx, h, w, FALSE);
-    delwin(behind);
+    if (behind) {
+        copywin(behind, stdscr, 0, 0, starty, startx, h, w, FALSE);
+        delwin(behind);
+    }
     nodelay(stdscr, TRUE);
     
     renderer.showCursor();

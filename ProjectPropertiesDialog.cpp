@@ -1,7 +1,7 @@
 #include "ProjectPropertiesDialog.h"
 #include <algorithm>
 #include <filesystem>
-#include <ncurses.h>
+#include "curses_compat.h"
 
 // ── Constructor ───────────────────────────────────────────────────────────────
 
@@ -357,7 +357,7 @@ void ProjectPropertiesDialog::onDraw(Renderer& renderer, int startx, int starty)
         // Footer hint
         const int footer_y = starty + TGT_BOX_Y + TGT_BOX_H - 1;
         renderer.drawText(inner_x + 2, footer_y,
-                          "Enter=Properties  Del=Remove  Space=CycleType  Ins=Add",
+                          "Enter=Edit Del=Rm Space=Type Ins=Add",
                           Renderer::CP_STATUS_BAR);
     }
 
