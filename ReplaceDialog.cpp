@@ -36,7 +36,7 @@ void ReplaceDialog::onInit()
     setFocus(static_cast<int>(Focus::FIND));
     setButtonRowFocusIndex(static_cast<int>(Focus::BTN_ROW));
 
-    // ── Inputs ────────────────────────────────────────────────────────────────
+    //  Inputs 
     addInput({
         .focus_index = static_cast<int>(Focus::FIND),
         .field_x = 18, .field_y = 2, .field_w = 40,
@@ -52,7 +52,7 @@ void ReplaceDialog::onInit()
         .buffer  = replace_buf_,
     });
 
-    // ── Buttons ───────────────────────────────────────────────────────────────
+    //  Buttons 
     // width=64, margins=4 each side, 3-char gaps between buttons
     // Cols: Find Next(12) gap(3) Replace(10) gap(3) Replace All(14) gap(3) Close(9)
     // x:    4              16-18  19          29-31  32              46-48  49
@@ -92,7 +92,7 @@ void ReplaceDialog::onInit()
         }
     });
 
-    // ── Arrow-key navigation ──────────────────────────────────────────────────
+    //  Arrow-key navigation 
     nav_.link(Direction::DOWN, Focus::FIND,    Focus::REPLACE)
         .link(Direction::UP,   Focus::REPLACE, Focus::FIND)
         .link(Direction::DOWN, Focus::REPLACE, Focus::BTN_ROW)

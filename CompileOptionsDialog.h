@@ -44,7 +44,7 @@ private:
     void onDraw(Renderer& renderer, int startx, int starty) override;
     HandleResult onKey(wint_t ch) override;
 
-    // ── Layout constants ──────────────────────────────────────────────────────
+    //  Layout constants 
     // Sized to fit an 80x25 screen (was 84x34). Vertical layout is packed so the
     // scrollable option list keeps a usable number of rows at this height.
     static constexpr int W            = 78;

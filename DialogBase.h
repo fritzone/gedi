@@ -36,7 +36,7 @@
 
 // HandleResult is defined in Widgets.h (included above)
 
-// ── Flat input descriptor (Mode A) ───────────────────────────────────────────
+//  Flat input descriptor (Mode A) 
 struct InputDescriptor {
     int          focus_index;
     int          field_x, field_y;
@@ -58,11 +58,11 @@ public:
     DialogResult run(Renderer& renderer);
 
 protected:
-    // ── Mandatory hooks ───────────────────────────────────────────────────────
+    //  Mandatory hooks 
     virtual void onInit() = 0;
     virtual void onDraw(Renderer& renderer, int startx, int starty) = 0;
 
-    // ── Optional hooks ────────────────────────────────────────────────────────
+    //  Optional hooks 
     virtual HandleResult onKey(wint_t ch) { (void)ch; return HandleResult::CONTINUE; }
 
     // Called from placeCursor before the default logic runs.
@@ -74,7 +74,7 @@ protected:
     // editor content to stay live while the dialog is open.
     void setBackgroundRefresh(std::function<void()> fn) noexcept { background_fn_ = std::move(fn); }
 
-    // ── Mode A registration ───────────────────────────────────────────────────
+    //  Mode A registration 
     void addInput  (InputDescriptor d) { inputs_.push_back(std::move(d)); }
 
     template<CyclicEnum E>
@@ -84,15 +84,15 @@ protected:
         };
     }
 
-    // ── Shared: register the button row (both modes) ──────────────────────────
+    //  Shared: register the button row (both modes) 
     // In Mode A, the ButtonRow's focus_index in the CyclicEnum determines when
     // Tab reaches it. In Mode B it is always the last Tab stop automatically.
     void addButtons(ButtonRow row) { button_row_ = std::move(row); }
 
-    // ── Mode B registration ───────────────────────────────────────────────────
+    //  Mode B registration 
     void addGroup(FocusGroup g) { groups_.push_back(std::move(g)); }
 
-    // ── Focus management ──────────────────────────────────────────────────────
+    //  Focus management 
     void setFocus     (int i) noexcept { focus_       = i; }
     void setFocusCount(int n) noexcept { focus_count_ = n; }
     int  getFocus     ()const noexcept { return focus_;    }
@@ -127,14 +127,14 @@ protected:
         if (btn) armButton(btn);
     }
 
-    // ── The button row focus index used in Mode A ─────────────────────────────
+    //  The button row focus index used in Mode A 
     // Subclass sets this so the base knows which focus_index == button row.
     void setButtonRowFocusIndex(int i) noexcept { btn_row_focus_index_ = i; }
 
     DialogResult& result() noexcept { return result_; }
 
 private:
-    // ── Rendering ─────────────────────────────────────────────────────────────
+    //  Rendering 
     void drawFrame        (Renderer&, int sx, int sy, bool pressed);
     void clearInterior    (int sx, int sy);
     void drawInputs       (Renderer&, int sx, int sy);
@@ -142,7 +142,7 @@ private:
     void placeCursor      (Renderer&, int sx, int sy);
     void runPressAnimation(Renderer&, int sx, int sy);
 
-    // ── Dispatch — Mode A ─────────────────────────────────────────────────────
+    //  Dispatch — Mode A 
     HandleResult dispatchKey      (wint_t ch);
     HandleResult dispatchAltKey   (wint_t ch);
     HandleResult dispatchArrow    (wint_t ch);
@@ -150,11 +150,11 @@ private:
     HandleResult dispatchBackspace();
     HandleResult dispatchChar     (wint_t ch);
 
-    // ── Dispatch — Mode B ─────────────────────────────────────────────────────
+    //  Dispatch — Mode B 
     HandleResult dispatchGroupKey   (wint_t ch);
     HandleResult dispatchGroupAltKey(wint_t ch);
 
-    // ── Mouse ─────────────────────────────────────────────────────────────────
+    //  Mouse 
     HandleResult dispatchMouse(const MEVENT& ev, int startx, int starty);
 
     bool inGroupButtonRow() const noexcept {
@@ -172,7 +172,7 @@ private:
         pressed_        = true;
     }
 
-    // ── Data ──────────────────────────────────────────────────────────────────
+    //  Data 
     std::string title_;
     int         w_, h_;
 

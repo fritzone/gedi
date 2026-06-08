@@ -293,5 +293,14 @@ int     wget_wch(WINDOW* win, wint_t* wch);
 int     ungetch(int ch);
 int     unget_wch(const wchar_t wch);
 
+// ---- session persistence (graphical build only) ---------------------------
+// Read / restore the SDL window geometry and zoom (scale) so the graphical
+// editor can save and reinstate them across runs.
+void    gui_get_window_state(int* x, int* y, int* w, int* h, float* scale);
+void    gui_set_window_state(int x, int y, int w, int h, float scale);
+
+// Font smoothing toggle (the "Smooth Text" editor setting), graphical build only.
+void    gui_set_smooth_scaling(int on);
+
 #endif // GEDI_GUI
 #endif // GEDI_CURSES_COMPAT_H

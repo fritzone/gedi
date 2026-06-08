@@ -75,7 +75,7 @@ AddFileDialog::AddFileDialog(Renderer& renderer, const std::string& project_dir,
     adjustScroll(file_cursor_, FIELD_W, file_scroll_);
 }
 
-// ── Static factory ────────────────────────────────────────────────────────────
+//  Static factory 
 
 bool AddFileDialog::show(Renderer& renderer, const std::string& project_dir, AddFileInfo& out)
 {
@@ -83,7 +83,7 @@ bool AddFileDialog::show(Renderer& renderer, const std::string& project_dir, Add
     return dlg.run(renderer).accepted();
 }
 
-// ── onInit ────────────────────────────────────────────────────────────────────
+//  onInit 
 
 void AddFileDialog::onInit()
 {
@@ -147,7 +147,7 @@ void AddFileDialog::onInit()
     setGroupBtnFocus(0);
 }
 
-// ── onDraw ────────────────────────────────────────────────────────────────────
+//  onDraw 
 
 void AddFileDialog::onDraw(Renderer& renderer, int sx, int sy)
 {
@@ -183,7 +183,7 @@ void AddFileDialog::onDraw(Renderer& renderer, int sx, int sy)
     }
 }
 
-// ── onPlaceCursor ─────────────────────────────────────────────────────────────
+//  onPlaceCursor 
 
 bool AddFileDialog::onPlaceCursor(Renderer& renderer, int sx, int sy)
 {
@@ -196,7 +196,7 @@ bool AddFileDialog::onPlaceCursor(Renderer& renderer, int sx, int sy)
     return false;
 }
 
-// ── onKey ─────────────────────────────────────────────────────────────────────
+//  onKey 
 
 HandleResult AddFileDialog::onKey(wint_t ch)
 {
@@ -234,7 +234,7 @@ HandleResult AddFileDialog::onKey(wint_t ch)
     return HandleResult::CONTINUE;
 }
 
-// ── onTab ─────────────────────────────────────────────────────────────────────
+//  onTab 
 // Tab cycle: Type → File → Add → Cancel → Type  (Browse skipped; Alt+B only)
 
 bool AddFileDialog::onTab(bool forward)

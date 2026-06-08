@@ -39,7 +39,7 @@ static std::vector<std::string> wrapMessage(const std::string& message, int max_
 }
 
 void MessageDialog::show(Renderer& renderer, const std::string& message) {
-    // ── Layout state (recomputed on resize) ──────────────────────────────────
+    //  Layout state (recomputed on resize) 
     int w = 0, h = 0, n = 0, starty = 0, startx = 0, btn_y = 0, btn_x = 0;
     std::vector<std::string> lines;
     WINDOW* behind = nullptr;
@@ -69,13 +69,13 @@ void MessageDialog::show(Renderer& renderer, const std::string& message) {
         if (starty < 0) starty = 0;
         if (startx < 0) startx = 0;
 
-        // ── Save area behind dialog ───────────────────────────────────────────
+        //  Save area behind dialog 
         if (behind) delwin(behind);
         behind = newwin(h + 1, w + 1, starty, startx);
         if (behind)
             copywin(stdscr, behind, starty, startx, 0, 0, h, w, FALSE);
 
-        // ── Draw frame ────────────────────────────────────────────────────────
+        //  Draw frame 
         renderer.drawShadow(startx, starty, w, h);
         renderer.drawBoxWithTitle(startx, starty, w, h,
                                   Renderer::CP_DIALOG, Renderer::DOUBLE,
@@ -86,7 +86,7 @@ void MessageDialog::show(Renderer& renderer, const std::string& message) {
             mvwaddstr(stdscr, starty + i, startx + 1, std::string(w - 2, ' ').c_str());
         wattroff(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
 
-        // ── Draw wrapped text (one row below the top border + margin) ──────────
+        //  Draw wrapped text (one row below the top border + margin) 
         for (int i = 0; i < n; ++i)
             renderer.drawText(startx + 2, starty + 2 + i, lines[i], Renderer::CP_DIALOG);
 
@@ -128,7 +128,7 @@ void MessageDialog::show(Renderer& renderer, const std::string& message) {
             pressed = true;
     }
 
-    // ── Restore ───────────────────────────────────────────────────────────────
+    //  Restore 
     if (behind) {
         copywin(behind, stdscr, 0, 0, starty, startx, starty + h, startx + w, FALSE);
         delwin(behind);

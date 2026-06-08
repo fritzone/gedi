@@ -12,10 +12,16 @@ static constexpr int CONTENT_H  = H - 7;   // = 15 (rows 4..18)
 static constexpr int BTN_Y      = H - 3;   // = 19
 
 // Widget y-positions inside the content box (dialog-relative)
-// Tab 0 – Editing  (innerCount order: cb[0], cb[1], sp[0])
-static constexpr int ED_SMART_Y = CONTENT_Y + 2;   // inner_focus 0
-static constexpr int ED_WSPC_Y  = CONTENT_Y + 3;   // inner_focus 1
-static constexpr int ED_TABSZ_Y = CONTENT_Y + 5;   // inner_focus 2  (blank gap above)
+// Tab 0 – Editing. innerCount order is all checkboxes then the spinner.
+static constexpr int ED_SMART_Y  = CONTENT_Y + 2;   // inner_focus 0
+static constexpr int ED_WSPC_Y   = CONTENT_Y + 3;   // inner_focus 1
+static constexpr int ED_USETAB_Y = CONTENT_Y + 4;   // inner_focus 2
+#ifdef GEDI_GUI
+static constexpr int ED_SMOOTH_Y = CONTENT_Y + 5;   // inner_focus 3 (graphical only)
+static constexpr int ED_TABSZ_Y  = CONTENT_Y + 7;   // spinner (blank gap above)
+#else
+static constexpr int ED_TABSZ_Y  = CONTENT_Y + 6;   // spinner (blank gap above)
+#endif
 
 // Tab 1 – Display
 static constexpr int DI_LNUM_Y  = CONTENT_Y + 2;   // Show Line Numbers checkbox
@@ -26,8 +32,6 @@ static constexpr int DI_SYNH_Y  = CONTENT_Y + 5;   // radiolist start
 static constexpr int CL_LIST_Y    = CONTENT_Y + 2;
 static constexpr int CL_LIST_ROWS = CONTENT_H - 4; // = 11
 
-// ── Constructor ───────────────────────────────────────────────────────────────
-
 SettingsDialog::SettingsDialog(Renderer& renderer, Config& config,
                                ConfigManager& configManager)
     : DialogBase("Editor Settings", W, H)
@@ -35,7 +39,9 @@ SettingsDialog::SettingsDialog(Renderer& renderer, Config& config,
     , config_(config), configManager_(configManager)
     , temp_smart_indent_    (config.smart_indentation)
     , temp_indent_width_    (config.indentation_width)
+    , temp_use_tab_char_    (config.use_tab_character)
     , temp_show_whitespace_ (config.show_whitespace)
+    , temp_smooth_text_     (config.smooth_text)
     , temp_show_line_numbers_(config.show_line_numbers)
     , temp_syntax_highlight_(std::max(0, std::min(2, config.syntax_highlight)))
     , temp_syntax_hl_cursor_(std::max(0, std::min(2, config.syntax_highlight)))
@@ -55,8 +61,6 @@ SettingsDialog::SettingsDialog(Renderer& renderer, Config& config,
     }
 }
 
-// ── show() ────────────────────────────────────────────────────────────────────
-
 void SettingsDialog::show(Renderer& renderer, Config& config,
                           ConfigManager& configManager,
                           std::function<void()> on_background_refresh)
@@ -67,11 +71,9 @@ void SettingsDialog::show(Renderer& renderer, Config& config,
     dlg.run(renderer);
 }
 
-// ── onInit() ──────────────────────────────────────────────────────────────────
-
 void SettingsDialog::onInit()
 {
-    // ── Group 0: Tab bar ──────────────────────────────────────────────────────
+    // Group 0: Tab bar
     {
         FocusGroup g;
         g.title = ""; g.hotkey = '\0';
@@ -80,20 +82,24 @@ void SettingsDialog::onInit()
         addGroup(std::move(g));
     }
 
-    // ── Group 1: Editing tab ──────────────────────────────────────────────────
+    //  Group 1: Editing tab
     // innerCount order: checkboxes[0], checkboxes[1], spinners[0]
     {
         FocusGroup g;
         g.title = " Editing "; g.hotkey = '\0';
         g.box_x = 2; g.box_y = CONTENT_Y; g.box_w = INNER_W; g.box_h = CONTENT_H;
         g.draw_widgets_manually = true;
-        g.checkboxes.push_back({ "Smart Indent",    temp_smart_indent_,    4, ED_SMART_Y });
-        g.checkboxes.push_back({ "Show Whitespace", temp_show_whitespace_, 4, ED_WSPC_Y  });
-        g.spinners.push_back  ({ "Tab Size",        temp_indent_width_,  1, 16, 4, ED_TABSZ_Y });
+        g.checkboxes.push_back({ "Smart Indent",     temp_smart_indent_,    4, ED_SMART_Y  });
+        g.checkboxes.push_back({ "Show Whitespace",  temp_show_whitespace_, 4, ED_WSPC_Y   });
+        g.checkboxes.push_back({ "Use Tab Character", temp_use_tab_char_,   4, ED_USETAB_Y });
+#ifdef GEDI_GUI
+        g.checkboxes.push_back({ "Smooth Text",       temp_smooth_text_,    4, ED_SMOOTH_Y });
+#endif
+        g.spinners.push_back  ({ "Tab Size",         temp_indent_width_,  1, 16, 4, ED_TABSZ_Y });
         addGroup(std::move(g));
     }
 
-    // ── Group 2: Display tab — checkbox section ───────────────────────────────
+    //  Group 2: Display tab — checkbox section
     {
         FocusGroup g;
         g.title = " Display "; g.hotkey = '\0';
@@ -103,7 +109,7 @@ void SettingsDialog::onInit()
         addGroup(std::move(g));
     }
 
-    // ── Group 3: Display tab — Syntax Highlighting radiolist ──────────────────
+    //  Group 3: Display tab — Syntax Highlighting radiolist
     {
         static std::vector<std::string> hl_items{ "None", "Basic", "Advanced (Clang)" };
         FocusGroup g;
@@ -115,7 +121,7 @@ void SettingsDialog::onInit()
         addGroup(std::move(g));
     }
 
-    // ── Group 4: Colors tab ───────────────────────────────────────────────────
+    //  Group 4: Colors tab
     {
         FocusGroup g;
         g.title = " Colors "; g.hotkey = '\0';
@@ -126,7 +132,7 @@ void SettingsDialog::onInit()
         addGroup(std::move(g));
     }
 
-    // ── Button row ────────────────────────────────────────────────────────────
+    //  Button row
     static constexpr int BTN_SAVE_X   = 16;
     static constexpr int BTN_APPLY_X  = BTN_SAVE_X  + 7 + 2;
     static constexpr int BTN_CANCEL_X = BTN_APPLY_X + 8 + 2;
@@ -166,7 +172,7 @@ void SettingsDialog::onInit()
     setGroupBtnFocus(0);
 }
 
-// ── onDraw() ──────────────────────────────────────────────────────────────────
+//  onDraw()
 
 void SettingsDialog::onDraw(Renderer& renderer, int sx, int sy)
 {
@@ -189,7 +195,7 @@ void SettingsDialog::onDraw(Renderer& renderer, int sx, int sy)
 
     // Draw widgets for the active tab manually
     switch (active) {
-    case 0: {   // ── Editing ──────────────────────────────────────────────────
+    case 0: {   //  Editing
         bool focused = (getFocusedGroup() == GRP_EDITING);
         auto& g = groups()[GRP_EDITING];
         int item = 0;
@@ -199,7 +205,7 @@ void SettingsDialog::onDraw(Renderer& renderer, int sx, int sy)
             sp.draw(renderer, sx, sy, focused && g.inner_focus == item++);
         break;
     }
-    case 1: {   // ── Display ──────────────────────────────────────────────────
+    case 1: {   //  Display
         // Checkbox sub-group
         {
             bool focused = (getFocusedGroup() == GRP_DISPLAY_CB);
@@ -219,7 +225,7 @@ void SettingsDialog::onDraw(Renderer& renderer, int sx, int sy)
         }
         break;
     }
-    case 2: {   // ── Colors ───────────────────────────────────────────────────
+    case 2: {   //  Colors
         bool focused = (getFocusedGroup() == GRP_COLORS);
         auto& g = groups()[GRP_COLORS];
         for (auto& rl : g.radiolists)
@@ -229,7 +235,7 @@ void SettingsDialog::onDraw(Renderer& renderer, int sx, int sy)
     }
 }
 
-// ── onTab() ───────────────────────────────────────────────────────────────────
+//  onTab()
 
 bool SettingsDialog::onTab(bool forward)
 {
@@ -260,13 +266,18 @@ bool SettingsDialog::onTab(bool forward)
     return false;
 }
 
-// ── applySettings() ───────────────────────────────────────────────────────────
+//  applySettings()
 
 void SettingsDialog::applySettings()
 {
     config_.smart_indentation = temp_smart_indent_;
     config_.indentation_width = temp_indent_width_;
+    config_.use_tab_character = temp_use_tab_char_;
     config_.show_whitespace   = temp_show_whitespace_;
+#ifdef GEDI_GUI
+    config_.smooth_text = temp_smooth_text_;
+    gui_set_smooth_scaling(config_.smooth_text ? 1 : 0);   // apply live
+#endif
     config_.show_line_numbers = temp_show_line_numbers_;
     config_.syntax_highlight  = temp_syntax_highlight_;
     config_.color_scheme_name = themes_[temp_theme_selected_];

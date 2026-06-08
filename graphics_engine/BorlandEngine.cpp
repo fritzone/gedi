@@ -128,6 +128,40 @@ void BorlandEngine::zoomOut() {
     }
 }
 
+void BorlandEngine::setSmoothScaling(bool on) {
+    if (on == smooth_scaling) return;
+    smooth_scaling = on;
+    reload_font();   // re-applies SDL_HINT_RENDER_SCALE_QUALITY + rebuilds the atlas
+}
+
+void BorlandEngine::getSessionState(int& win_x, int& win_y, int& win_w, int& win_h, float& scale) {
+    win_x = 0; win_y = 0; win_w = window_w; win_h = window_h;
+    if (window) {
+        SDL_GetWindowPosition(window, &win_x, &win_y);
+        SDL_GetWindowSize(window, &win_w, &win_h);
+    }
+    scale = scale_factor;
+}
+
+void BorlandEngine::applySessionState(int win_x, int win_y, int win_w, int win_h, float scale) {
+    if (scale < 0.5f) scale = 0.5f;
+    scale_factor = scale;
+
+    // Honour the 80x25 floor for the restored zoom level.
+    int min_w = (int)(80 * FONT_CHAR_WIDTH * scale_factor);
+    int min_h = (int)(25 * FONT_CHAR_HEIGHT * scale_factor);
+    if (win_w < min_w) win_w = min_w;
+    if (win_h < min_h) win_h = min_h;
+    window_w = win_w; window_h = win_h;
+
+    if (window) {
+        SDL_SetWindowSize(window, window_w, window_h);
+        SDL_SetWindowPosition(window, win_x, win_y);
+    }
+    updateGridDims();
+    applyMinimumSize();
+}
+
 void BorlandEngine::shutdown() {
     SDL_DestroyTexture(font_texture); SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit();
 }
@@ -235,17 +269,34 @@ void BorlandEngine::draw_mouse_overlay() {
 }
 
 SDL_Texture* BorlandEngine::create_font_texture(SDL_Renderer* ren, const unsigned char* font_data) {
-    SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, FONT_CHAR_WIDTH * FONT_NUM_CHARS, FONT_CHAR_HEIGHT, 32, SDL_PIXELFORMAT_ARGB8888);
+    // Each glyph occupies a padded cell. The glyph itself sits at (PAD,PAD); the
+    // surrounding gutter replicates the glyph's edge pixels so that linear
+    // filtering at the glyph boundary samples the glyph's own edge rather than
+    // bleeding in the neighbouring glyph from the atlas.
+    const int PAD    = FONT_ATLAS_PAD;
+    const int cell_w = FONT_CHAR_WIDTH  + 2 * PAD;   // atlas stride per glyph
+    const int cell_h = FONT_CHAR_HEIGHT + 2 * PAD;
+    const int atlas_w = cell_w * FONT_NUM_CHARS;
+
+    SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, atlas_w, cell_h, 32, SDL_PIXELFORMAT_ARGB8888);
     SDL_LockSurface(surface);
     Uint32* pixels = (Uint32*)surface->pixels;
     Uint32 white = SDL_MapRGBA(surface->format, 255, 255, 255, 255);
     Uint32 transparent = SDL_MapRGBA(surface->format, 0, 0, 0, 0);
+
+    auto clampi = [](int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); };
+
     for (int i = 0; i < FONT_NUM_CHARS; ++i) {
         const unsigned char* glyph = font_data + i * FONT_BYTES_PER_CHAR;
-        for (int r = 0; r < FONT_CHAR_HEIGHT; ++r) {
-            for (int c = 0; c < FONT_CHAR_WIDTH; ++c) {
-                if ((glyph[r] >> (7 - c)) & 1) pixels[r * surface->w + (i * FONT_CHAR_WIDTH + c)] = white;
-                else pixels[r * surface->w + (i * FONT_CHAR_WIDTH + c)] = transparent;
+        int cell_x = i * cell_w;
+        // Fill the whole padded cell, clamping source coords into the glyph so the
+        // gutter rows/cols duplicate the nearest edge pixel.
+        for (int ay = 0; ay < cell_h; ++ay) {
+            int sr = clampi(ay - PAD, 0, FONT_CHAR_HEIGHT - 1);
+            for (int ax = 0; ax < cell_w; ++ax) {
+                int sc = clampi(ax - PAD, 0, FONT_CHAR_WIDTH - 1);
+                bool on = (glyph[sr] >> (7 - sc)) & 1;
+                pixels[ay * atlas_w + (cell_x + ax)] = on ? white : transparent;
             }
         }
     }
@@ -260,7 +311,9 @@ void BorlandEngine::draw_char(unsigned char c, int x, int y, SDL_Color fg, SDL_C
     SDL_Rect d = { x * FONT_CHAR_WIDTH, y * FONT_CHAR_HEIGHT, FONT_CHAR_WIDTH, FONT_CHAR_HEIGHT };
     SDL_SetRenderDrawColor(renderer, bg.r, bg.g, bg.b, bg.a); SDL_RenderFillRect(renderer, &d);
     if (c != ' ' && c != 0) {
-        SDL_Rect s = { c * FONT_CHAR_WIDTH, 0, FONT_CHAR_WIDTH, FONT_CHAR_HEIGHT };
+        // Sample only the inner glyph; the padded gutter absorbs the filter's reach.
+        const int cell_w = FONT_CHAR_WIDTH + 2 * FONT_ATLAS_PAD;
+        SDL_Rect s = { c * cell_w + FONT_ATLAS_PAD, FONT_ATLAS_PAD, FONT_CHAR_WIDTH, FONT_CHAR_HEIGHT };
         SDL_SetTextureColorMod(font_texture, fg.r, fg.g, fg.b); SDL_RenderCopy(renderer, font_texture, &s, &d);
     }
 }

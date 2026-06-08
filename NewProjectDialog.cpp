@@ -7,7 +7,7 @@
 #include "curses_compat.h"
 #include <unistd.h>
 
-// ── UTF-8 helpers ─────────────────────────────────────────────────────────────
+//  UTF-8 helpers 
 
 static void insertUtf8At(std::string& buf, int& pos, wint_t ch)
 {
@@ -66,7 +66,7 @@ static void adjustScroll(int cursor, int field_w, int& scroll)
     if (scroll < 0) scroll = 0;
 }
 
-// ── loadLibraries ──────────────────────────────────────────────────────────────
+//  loadLibraries 
 
 std::vector<LibraryInfo> NewProjectDialog::loadLibraries()
 {
@@ -131,7 +131,7 @@ std::vector<LibraryInfo> NewProjectDialog::loadLibraries()
     }
 }
 
-// ── rebuildFilter ─────────────────────────────────────────────────────────────
+//  rebuildFilter 
 
 void NewProjectDialog::rebuildFilter()
 {
@@ -186,7 +186,7 @@ NewProjectDialog::NewProjectDialog(Renderer& renderer, ProjectTemplate& t)
     adjustScroll(path_cursor_, FIELD_W_PATH, path_scroll_);
 }
 
-// ── Static factory ────────────────────────────────────────────────────────────
+//  Static factory 
 
 bool NewProjectDialog::show(Renderer& renderer, ProjectTemplate& out_template,
                             const std::vector<LibraryInfo>& libs)
@@ -208,11 +208,11 @@ bool NewProjectDialog::show(Renderer& renderer, ProjectTemplate& out_template,
     return res.accepted();
 }
 
-// ── onInit ────────────────────────────────────────────────────────────────────
+//  onInit 
 
 void NewProjectDialog::onInit()
 {
-    // ── Group 0: Project Name ─────────────────────────────────────────────────
+    //  Group 0: Project Name 
     {
         FocusGroup g;
         g.title                = " Project Name ";
@@ -222,7 +222,7 @@ void NewProjectDialog::onInit()
         addGroup(std::move(g));
     }
 
-    // ── Group 1: Location ─────────────────────────────────────────────────────
+    //  Group 1: Location 
     {
         FocusGroup g;
         g.title                = " Location ";
@@ -232,7 +232,7 @@ void NewProjectDialog::onInit()
         addGroup(std::move(g));
     }
 
-    // ── Group 2: Configuration ────────────────────────────────────────────────
+    //  Group 2: Configuration 
     {
         FocusGroup g;
         g.title                = " Configuration ";
@@ -242,7 +242,7 @@ void NewProjectDialog::onInit()
         addGroup(std::move(g));
     }
 
-    // ── Group 3: Libraries ────────────────────────────────────────────────────
+    //  Group 3: Libraries 
     {
         FocusGroup g;
         g.title                = " Libraries ";
@@ -252,7 +252,7 @@ void NewProjectDialog::onInit()
         addGroup(std::move(g));
     }
 
-    // ── Button row ────────────────────────────────────────────────────────────
+    //  Button row 
     addButtons(ButtonRow{
         .buttons = {
             Button{
@@ -295,13 +295,13 @@ void NewProjectDialog::onInit()
     setGroupBtnFocus(0);
 }
 
-// ── onDraw ────────────────────────────────────────────────────────────────────
+//  onDraw 
 
 void NewProjectDialog::onDraw(Renderer& renderer, int startx, int starty)
 {
     const int inner_x = startx + 2;
 
-    // ── Name field ────────────────────────────────────────────────────────────
+    //  Name field 
     {
         const int fy = starty + NAME_BOX_Y + 1;
         adjustScroll(name_cursor_, FIELD_W_NAME, name_scroll_);
@@ -316,7 +316,7 @@ void NewProjectDialog::onDraw(Renderer& renderer, int startx, int starty)
         }
     }
 
-    // ── Path field ────────────────────────────────────────────────────────────
+    //  Path field 
     {
         const int  fy          = starty + PATH_BOX_Y + 1;
         const bool grp_focused = (getFocusedGroup() == GRP_PATH);
@@ -341,7 +341,7 @@ void NewProjectDialog::onDraw(Renderer& renderer, int startx, int starty)
                           chk_focused ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
     }
 
-    // ── Configuration ─────────────────────────────────────────────────────────
+    //  Configuration 
     {
         const int fy         = starty + CFG_BOX_Y + 1;
         bool      grp_focused = (getFocusedGroup() == GRP_CFG);
@@ -379,7 +379,7 @@ void NewProjectDialog::onDraw(Renderer& renderer, int startx, int starty)
                           main_focused ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
     }
 
-    // ── Library list ──────────────────────────────────────────────────────────
+    //  Library list 
     {
         const int lib_x   = startx + LIB_BOX_X + 1;
         const int lib_y0  = starty + LIB_BOX_Y + 1;
@@ -433,7 +433,7 @@ void NewProjectDialog::onDraw(Renderer& renderer, int startx, int starty)
     cfg_combo_.drawDropdown(renderer, startx, starty);
 }
 
-// ── onPlaceCursor ─────────────────────────────────────────────────────────────
+//  onPlaceCursor 
 
 bool NewProjectDialog::onPlaceCursor(Renderer& renderer, int sx, int sy)
 {
@@ -467,13 +467,13 @@ bool NewProjectDialog::onPlaceCursor(Renderer& renderer, int sx, int sy)
     return false;
 }
 
-// ── onKey ─────────────────────────────────────────────────────────────────────
+//  onKey 
 
 HandleResult NewProjectDialog::onKey(wint_t ch)
 {
     int grp = getFocusedGroup();
 
-    // ── Name field ────────────────────────────────────────────────────────────
+    //  Name field 
     if (grp == GRP_NAME) {
         if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
             eraseUtf8Before(m_template.name, name_cursor_);
@@ -493,7 +493,7 @@ HandleResult NewProjectDialog::onKey(wint_t ch)
         return HandleResult::CONTINUE;
     }
 
-    // ── Path field ────────────────────────────────────────────────────────────
+    //  Path field 
     if (grp == GRP_PATH) {
         auto& g = groups()[GRP_PATH];
 
@@ -525,7 +525,7 @@ HandleResult NewProjectDialog::onKey(wint_t ch)
         return HandleResult::CONTINUE;
     }
 
-    // ── Configuration group ───────────────────────────────────────────────────
+    //  Configuration group 
     if (grp == GRP_CFG) {
         auto& g = groups()[GRP_CFG];
 
@@ -553,7 +553,7 @@ HandleResult NewProjectDialog::onKey(wint_t ch)
         }
     }
 
-    // ── Library list ──────────────────────────────────────────────────────────
+    //  Library list 
     if (grp == GRP_LIB) {
         const int count = (int)m_lib_filtered.size();
 
@@ -597,7 +597,7 @@ HandleResult NewProjectDialog::onKey(wint_t ch)
     return HandleResult::CONTINUE;
 }
 
-// ── onTab ─────────────────────────────────────────────────────────────────────
+//  onTab 
 // Custom Tab cycle:
 //   Forward:  Name → Path → Browse → Config → Lib → Create → Cancel → Name
 //   Backward: Name → Cancel → Create → Lib → Config → Browse → Path → Name

@@ -19,7 +19,7 @@ private:
     bool onPlaceCursor(Renderer& renderer, int sx, int sy) override;
     bool onTab(bool forward) override;
 
-    // ── Layout constants ──────────────────────────────────────────────────────
+    //  Layout constants 
     static constexpr int W            = 56;
     static constexpr int H            = 13;
     static constexpr int TYPE_BOX_Y   = 1;

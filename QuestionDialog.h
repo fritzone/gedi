@@ -38,7 +38,7 @@ private:
     // fall-through when no input field is focused.
     HandleResult onKey(wint_t ch) override;
 
-    // ── Per-instance state ────────────────────────────────────────────────────
+    //  Per-instance state 
     std::string question_;
     std::string info_;      // already truncated to fit the dialog width
 };

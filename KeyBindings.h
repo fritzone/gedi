@@ -11,7 +11,7 @@ const int KEY_ALT_OFFSET = 10000;
 #define KEY_ALT(c) (KEY_ALT_OFFSET + (c))
 
 enum class EditorAction {
-    // ── File menu ─────────────────────────────────────────────────────────────
+    //  File menu 
     ACT_NEW,               // File > New / Ctrl+N          — new empty buffer
     ACT_NEW_PROJECT,       // File > New Project...         — creates a new .gproj
     ACT_OPEN_PROJECT,      // File > Open Project...        — opens an existing .gproj
@@ -21,7 +21,7 @@ enum class EditorAction {
     ACT_SAVE_AS,           // File > Save As...             — saves with a new filename
     ACT_EXIT,              // File > Exit / Alt+X           — exits the application
 
-    // ── Edit menu ─────────────────────────────────────────────────────────────
+    //  Edit menu 
     ACT_UNDO,              // Edit > Undo / Alt+BS          — undoes the last edit
     ACT_REDO,              // Edit > Redo / Alt+Y           — redoes the last undone edit
     ACT_CUT,               // Edit > Cut / Ctrl+X           — cuts selection to clipboard
@@ -30,7 +30,7 @@ enum class EditorAction {
     ACT_DELETE,            // Edit > Delete                 — deletes the current selection
     ACT_TOGGLE_COMMENT,    // Edit > Comment Line / Ctrl+/  — toggles // comment on current line
 
-    // ── Search menu ───────────────────────────────────────────────────────────
+    //  Search menu 
     ACT_FIND,              // Search > Find / Ctrl+F        — opens the search bar
     ACT_REPLACE,           // Search > Replace / Ctrl+R     — opens find/replace dialog
     ACT_FIND_NEXT,         // Search > Find Next            — repeats last search forward
@@ -39,30 +39,30 @@ enum class EditorAction {
     ACT_GO_TO_DEFINITION,  // Search > Go To Definition / F12 — jumps to symbol via libclang
     ACT_FIND_REFERENCES,   // Search > Find All References / Shift+F12 — lists every occurrence of token
 
-    // ── Run menu ──────────────────────────────────────────────────────────────
+    //  Run menu 
     ACT_COMPILE,           // Run > Compile / Alt+F9        — builds without running
     ACT_RUN,               // Run > Run / Ctrl+F9           — builds and runs the active target
     ACT_COMPILE_OPTIONS,   // Run > Compile Options...      — opens compiler settings dialog
 
-    // ── Window menu ───────────────────────────────────────────────────────────
+    //  Window menu 
     ACT_TOGGLE_OUTPUT,     // Window > Output Screen / F5   — shows/hides the build output panel
     ACT_NEXT_BUFFER,       // Window > Next Window / F6     — switches to the next open buffer
     ACT_PREV_BUFFER,       // Window > Previous Window / Shift+F6 — switches to previous buffer
     ACT_CLOSE_BUFFER,      // Window > Close Window / Ctrl+W — closes the active buffer
     ACT_TOGGLE_PROJECT_PANEL, // Window > Project Panel / Alt+0 — shows/hides the project panel
 
-    // ── Options menu ──────────────────────────────────────────────────────────
+    //  Options menu 
     ACT_SETTINGS,          // Options > Editor Settings...  — opens the settings dialog
 
-    // ── Help menu ─────────────────────────────────────────────────────────────
+    //  Help menu 
     ACT_HELP,              // Help > View Help / F1         — opens the help viewer
     ACT_ABOUT,             // Help > About                  — shows the about box
 
-    // ── Project actions (no menu entry) ───────────────────────────────────────
+    //  Project actions (no menu entry) 
     ACT_CLOSE_PROJECT,     // File > Close Project          — closes the active project
     ACT_PROJECT_PROPERTIES,// File > Project Properties...  — opens project properties dialog
 
-    // ── Sentinel ──────────────────────────────────────────────────────────────
+    //  Sentinel 
     ACT_UNKNOWN            // returned by getAction() when no binding matches the key
 };
 

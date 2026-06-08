@@ -23,7 +23,7 @@ private:
     bool onPlaceCursor(Renderer& renderer, int sx, int sy) override;
     bool onTab(bool forward) override;
 
-    // ── Layout constants ──────────────────────────────────────────────────────
+    //  Layout constants 
     // Sized to fit an 80x25 screen (was 100x30).
     static constexpr int W           = 78;
     static constexpr int H           = 23;
@@ -71,7 +71,7 @@ private:
     int tgt_scroll_ = 0;
     std::vector<ProjectTarget> tgt_list_; // editable copy
 
-    // ── Library panel ─────────────────────────────────────────────────────────
+    //  Library panel 
     // A flat list combining project-library targets and system libraries,
     // rebuilt whenever the filter or target selection changes.
     struct LibEntry {

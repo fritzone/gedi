@@ -23,6 +23,8 @@ void ConfigManager::loadConfig(Config& config) {
             json data = json::parse(f);
             if (data.contains("smart_indentation")) config.smart_indentation = data["smart_indentation"];
             if (data.contains("indentation_width")) config.indentation_width = data["indentation_width"];
+            if (data.contains("use_tab_character")) config.use_tab_character = data["use_tab_character"];
+            if (data.contains("smooth_text")) config.smooth_text = data["smooth_text"];
             if (data.contains("show_line_numbers")) config.show_line_numbers = data["show_line_numbers"];
             if (data.contains("syntax_highlight")) config.syntax_highlight = data["syntax_highlight"];
             if (data.contains("show_whitespace"))  config.show_whitespace  = data["show_whitespace"];
@@ -45,6 +47,8 @@ void ConfigManager::saveConfig(const Config& config) {
     json j;
     j["smart_indentation"] = config.smart_indentation;
     j["indentation_width"] = config.indentation_width;
+    j["use_tab_character"] = config.use_tab_character;
+    j["smooth_text"] = config.smooth_text;
     j["show_line_numbers"] = config.show_line_numbers;
     j["syntax_highlight"] = config.syntax_highlight;
     j["show_whitespace"]  = config.show_whitespace;
@@ -109,6 +113,8 @@ void ConfigManager::createDefaultConfigFile(const std::string& path) {
     json j;
     j["smart_indentation"] = true;
     j["indentation_width"] = 4;
+    j["use_tab_character"] = false;
+    j["smooth_text"] = true;
     j["show_line_numbers"] = true;
     j["color_scheme"] = "Obsidian";
     j["compile_mode"] = -1;

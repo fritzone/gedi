@@ -21,7 +21,7 @@
 static constexpr int W = 54;
 static constexpr int H = 8;
 
-// ── Constructor ───────────────────────────────────────────────────────────────
+//  Constructor 
 
 QuestionDialog::QuestionDialog(const std::string& question,
                                const std::string& info)
@@ -35,7 +35,7 @@ QuestionDialog::QuestionDialog(const std::string& question,
         info_ = "..." + info_.substr(info_.length() - (max_w - 3));
 }
 
-// ── Static factory ────────────────────────────────────────────────────────────
+//  Static factory 
 
 int QuestionDialog::ask(Renderer&          renderer,
                         const std::string& question,
@@ -47,7 +47,7 @@ int QuestionDialog::ask(Renderer&          renderer,
     return r.as_int("answer").value_or(-1);
 }
 
-// ── onInit ────────────────────────────────────────────────────────────────────
+//  onInit 
 
 void QuestionDialog::onInit()
 {
@@ -58,7 +58,7 @@ void QuestionDialog::onInit()
     setFocus(0);
     setButtonRowFocusIndex(0);
 
-    // ── Button positions — centred, computed from label widths ────────────────
+    //  Button positions — centred, computed from label widths 
     const std::string yes_label  = " &Yes ";
     const std::string no_label   = " &No ";
     const int gap        = 4;
@@ -92,7 +92,7 @@ void QuestionDialog::onInit()
     });
 }
 
-// ── onDraw ────────────────────────────────────────────────────────────────────
+//  onDraw 
 
 void QuestionDialog::onDraw(Renderer& renderer, int startx, int starty)
 {
@@ -102,7 +102,7 @@ void QuestionDialog::onDraw(Renderer& renderer, int startx, int starty)
                           Renderer::CP_DIALOG, A_BOLD);
 }
 
-// ── onKey ─────────────────────────────────────────────────────────────────────
+//  onKey 
 //
 // Reached for any printable character that no input field consumed
 // (dispatchChar fall-through). Handles Y/N direct activation so the user

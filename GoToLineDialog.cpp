@@ -21,7 +21,7 @@ void GoToLineDialog::onInit()
     setFocus(static_cast<int>(Focus::INPUTFIELD));
     setButtonRowFocusIndex(static_cast<int>(Focus::BTN_ROW));
 
-    // ── Input field ───────────────────────────────────────────────────────────
+    //  Input field 
     addInput({
         .focus_index  = static_cast<int>(Focus::INPUTFIELD),
         .field_x = 3, .field_y = 4, .field_w = 44,
@@ -31,7 +31,7 @@ void GoToLineDialog::onInit()
         .numeric_only = true,
     });
 
-    // ── Button row ────────────────────────────────────────────────────────────
+    //  Button row 
     addButtons(ButtonRow{
         .buttons = {
             Button{
@@ -58,7 +58,7 @@ void GoToLineDialog::onInit()
         }
     });
 
-    // ── Arrow-key navigation ──────────────────────────────────────────────────
+    //  Arrow-key navigation 
     nav_.link(Direction::DOWN,  Focus::INPUTFIELD, Focus::BTN_ROW)
         .link(Direction::UP,    Focus::BTN_ROW,    Focus::INPUTFIELD);
     setNavigation(nav_);

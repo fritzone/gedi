@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 struct ProjectTemplate {
     std::string name;
     std::string path;
@@ -34,7 +34,7 @@ private:
     bool onPlaceCursor(Renderer& renderer, int sx, int sy) override;
     bool onTab(bool forward) override;
 
-    // ── Layout constants ──────────────────────────────────────────────────────
+    //  Layout constants 
     // Sized to fit an 80x25 screen (was 100 wide). H=18 already fits at 25 rows.
     static constexpr int W            = 78;
     static constexpr int H            = 18;
@@ -75,24 +75,24 @@ private:
     static constexpr int BTN_IDX_CANCEL = 1;
     static constexpr int BTN_IDX_BROWSE = 2;
 
-    // ── Application references ────────────────────────────────────────────────
+    //  Application references 
     Renderer&        renderer_;
     ProjectTemplate& m_template;
 
-    // ── Text-field cursor/scroll state ────────────────────────────────────────
+    //  Text-field cursor/scroll state 
     int name_cursor_ = 0;   // byte offset into m_template.name
     int name_scroll_ = 0;   // first visible byte offset
     int path_cursor_ = 0;
     int path_scroll_ = 0;
 
-    // ── Config group state (managed manually) ─────────────────────────────────
+    //  Config group state (managed manually) 
     int      bs_cursor_;         // build-system radio cursor
     int      cfg_chk_cursor_ = 0; // checkbox row cursor: 0=init_git, 1=create_main
     ComboBox cfg_combo_;
     std::vector<std::string> standards_;
     int                      std_idx_;
 
-    // ── Library panel state ───────────────────────────────────────────────────
+    //  Library panel state 
     std::vector<LibraryInfo> m_libraries;
     std::vector<bool>        m_lib_selected;
     std::vector<int>         m_lib_filtered;   // indices into m_libraries that pass the filter

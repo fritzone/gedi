@@ -5,7 +5,7 @@ static const char* kTypeKeys[] = {
     "executable", "static_library", "shared_library"
 };
 
-// ── Constructor ───────────────────────────────────────────────────────────────
+//  Constructor 
 
 TargetDialog::TargetDialog(const ProjectTarget& initial, bool is_new)
     : DialogBase(is_new ? "Add Target" : "Target Properties", W, H)
@@ -19,7 +19,7 @@ TargetDialog::TargetDialog(const ProjectTarget& initial, bool is_new)
         }
 }
 
-// ── Static factory ────────────────────────────────────────────────────────────
+//  Static factory 
 
 bool TargetDialog::show(Renderer& renderer, ProjectTarget& target, bool is_new)
 {
@@ -32,7 +32,7 @@ bool TargetDialog::show(Renderer& renderer, ProjectTarget& target, bool is_new)
     return res.accepted();
 }
 
-// ── onInit ────────────────────────────────────────────────────────────────────
+//  onInit 
 
 void TargetDialog::onInit()
 {
@@ -88,7 +88,7 @@ void TargetDialog::onInit()
     setGroupBtnFocus(0);
 }
 
-// ── onDraw ────────────────────────────────────────────────────────────────────
+//  onDraw 
 
 void TargetDialog::onDraw(Renderer& renderer, int startx, int starty)
 {

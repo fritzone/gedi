@@ -26,7 +26,7 @@ static constexpr wint_t KEY_CTRL_DOWN = 525;
 
 enum class HandleResult { CONTINUE, CLOSE };
 
-// ── Button ────────────────────────────────────────────────────────────────────
+//  Button 
 struct Button {
     std::string label;
     int         x, y;
@@ -46,7 +46,7 @@ struct Button {
     }
 };
 
-// ── ButtonRow ─────────────────────────────────────────────────────────────────
+//  ButtonRow 
 struct ButtonRow {
     std::vector<Button> buttons;
     int inner_focus = 0;
@@ -81,7 +81,7 @@ struct ButtonRow {
     }
 };
 
-// ── CheckBox ──────────────────────────────────────────────────────────────────
+//  CheckBox 
 struct CheckBox {
     std::string label;
     bool&       value;
@@ -101,7 +101,7 @@ struct CheckBox {
     }
 };
 
-// ── Spinner ───────────────────────────────────────────────────────────────────
+//  Spinner 
 struct Spinner {
     std::string label;
     int&        value;
@@ -122,7 +122,7 @@ struct Spinner {
     }
 };
 
-// ── RadioList ─────────────────────────────────────────────────────────────────
+//  RadioList 
 struct RadioList {
     std::vector<std::string> items;
     int&  selected_idx;
@@ -155,7 +155,7 @@ struct RadioList {
     }
 };
 
-// ── ComboBox ──────────────────────────────────────────────────────────────────
+//  ComboBox 
 // Displays the selected item between [ ] brackets.
 // Left/Right — cycle items.   Ctrl+Down — open dropdown list.
 // In dropdown: Up/Down navigate; Enter confirms; Esc cancels.
@@ -284,7 +284,7 @@ struct ComboBox {
     }
 };
 
-// ── TabControl ────────────────────────────────────────────────────────────────
+//  TabControl 
 // Horizontal tab bar. Left/Right switch tabs.
 // Draws the tab labels + a separator line below them.
 // The active tab index is publicly readable via activeTab().
@@ -345,7 +345,7 @@ struct TabControl {
     int activeTab() const noexcept { return active_tab; }
 };
 
-// ── OptionList ────────────────────────────────────────────────────────────────
+//  OptionList 
 // A scrollable list of mixed checkboxes and radio-buttons, organised into
 // named groups. This is the widget used by CompileOptionsDialog.
 //
@@ -367,7 +367,7 @@ struct OptionList {
     int x, y;                     // position relative to dialog top-left
     int visible_rows;
 
-    // ── Flat row view (group headers interspersed) ────────────────────────────
+    //  Flat row view (group headers interspersed) 
     struct Row { bool is_group; std::string text; int opt_idx; };
 
     std::vector<Row> buildRows() const {
@@ -434,7 +434,7 @@ struct OptionList {
     void reset() { cursor = 0; top_row = 0; }
 };
 
-// ── FocusGroup ────────────────────────────────────────────────────────────────
+//  FocusGroup 
 struct FocusGroup {
     std::string title;
     char        hotkey = '\0';

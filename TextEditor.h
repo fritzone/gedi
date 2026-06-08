@@ -128,6 +128,11 @@ private:
     void drawEmptyDesktop();
     void drawMainUI();
     void drawTextArea();
+    // Map between document character columns and on-screen visual columns,
+    // expanding tabs to the configured Tab Size (tab stops). Keeps Show
+    // Whitespace, the cursor, mouse hit-testing and scrolling all in agreement.
+    int visualColAt(const std::string& text, int char_idx) const;     // char index -> 0-based visual col
+    int charColAtVisual(const std::string& text, int target_vcol) const; // visual col -> 1-based char col
     void drawMenuBar(int active_menu_id = -1);
     void drawStatusBar();
     void drawScrollbars();

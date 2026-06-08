@@ -4,7 +4,7 @@
 #include <fstream>
 #include <string>
 
-// ── helpers ───────────────────────────────────────────────────────────────────
+//  helpers 
 
 static std::string trim(const std::string& s)
 {
@@ -23,7 +23,7 @@ static std::pair<std::string, std::string> splitKV(const std::string& line)
 
 static bool parseBool(const std::string& v) { return v == "1" || v == "true"; }
 
-// ── GediProject ───────────────────────────────────────────────────────────────
+//  GediProject 
 
 std::string GediProject::projectFilePath() const
 {
@@ -53,7 +53,7 @@ bool GediProject::save() const
             f << "link_target: " << lt << "\n";
     }
 
-    // ── Compiler settings ─────────────────────────────────────────────────────
+    //  Compiler settings 
     const CompilerSettings& cs = compiler_settings;
     f << "\n[compiler_settings]\n";
     f << "cpp_standard: "    << cs.cpp_standard    << "\n";

@@ -1,12 +1,14 @@
 name: gedi
-title: Gedi Text Editor
+title: Garland Turbine
+icon: snap/gui/gedi.png
 base: core22
 version: '0.1'
-summary: A simple yet powerful console-based C++ text editor
+summary: Garland Turbine - A simple yet powerful C++ Gui editor
 description: |
-  gedi is a lightweight and feature-rich text editor
-  that runs in the terminal. It provides syntax highlighting, a build system,
-  a custom help system, and more.
+  Garland Turbine is a lightweight and feature-rich C++ Gui editor.
+  It provides syntax highlighting, a build system,
+  a custom help system, and more. It can run both in the terminal
+  and as a graphical application.
 license: MIT
 contact: https://github.com/fritzone/gedi/issues
 issues: https://github.com/fritzone/gedi/issues
@@ -24,6 +26,7 @@ lint:
 apps:
   gedi:
     command: usr/bin/gedi
+    desktop: snap/gui/gedi.desktop
     plugs:
       - home
       - network
@@ -33,6 +36,34 @@ apps:
       LANG: en_US.UTF-8
       LC_ALL: en_US.UTF-8
       TERMINFO: $SNAP/usr/share/terminfo
+      # Ensure bundled tools are found first
+      PATH: $SNAP/usr/bin:$SNAP/bin:$PATH
+      # Help the bundled compiler find its headers and libraries
+      CPATH: $SNAP/usr/include:$SNAP/usr/include/x86_64-linux-gnu:$SNAP/usr/include/c++/12:$SNAP/usr/include/x86_64-linux-gnu/c++/12
+      LIBRARY_PATH: $SNAP/usr/lib/x86_64-linux-gnu:$SNAP/lib/x86_64-linux-gnu:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12
+      LD_LIBRARY_PATH: $SNAP/usr/lib/x86_64-linux-gnu:$SNAP/lib/x86_64-linux-gnu:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12:$SNAP/usr/lib:$SNAP/lib
+      # Help GCC find its internal components
+      COMPILER_PATH: $SNAP/usr/lib/gcc/x86_64-linux-gnu/12
+      # Help CMake find its modules
+      CMAKE_ROOT: $SNAP/usr/share/cmake-3.22
+
+  gedi-gui:
+    command: usr/bin/gedi-gui
+    desktop: snap/gui/gedi-gui.desktop
+    plugs:
+      - home
+      - network
+      - removable-media
+      - x11
+      - wayland
+      - desktop
+      - desktop-legacy
+      - opengl
+      - audio-playback
+    environment:
+      PYTHONPATH: $SNAP/usr/lib/python3/dist-packages
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
       # Ensure bundled tools are found first
       PATH: $SNAP/usr/bin:$SNAP/bin:$PATH
       # Help the bundled compiler find its headers and libraries
@@ -62,6 +93,7 @@ parts:
       - cmake
       - libncurses-dev
       - libclang-14-dev
+      - libsdl2-dev
     stage-packages:
       - libncursesw6
       - libclang1-14
@@ -78,6 +110,9 @@ parts:
       - libc6-dev
       - libc-dev-bin
       - libstdc++-12-dev
+      - libsdl2-2.0-0
+      - libgl1
+      - libpulse0
     prime:
       - -usr/share/man
       - -usr/share/doc

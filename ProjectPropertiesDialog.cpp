@@ -3,7 +3,7 @@
 #include <filesystem>
 #include "curses_compat.h"
 
-// ── Constructor ───────────────────────────────────────────────────────────────
+//  Constructor 
 
 ProjectPropertiesDialog::ProjectPropertiesDialog(Renderer& renderer,
                                                  GediProject& project,
@@ -36,7 +36,7 @@ ProjectPropertiesDialog::ProjectPropertiesDialog(Renderer& renderer,
     rebuildLibEntries();
 }
 
-// ── Static factory ────────────────────────────────────────────────────────────
+//  Static factory 
 
 bool ProjectPropertiesDialog::show(Renderer& renderer, GediProject& project,
                                    const std::vector<LibraryInfo>& all_libs)
@@ -62,7 +62,7 @@ bool ProjectPropertiesDialog::show(Renderer& renderer, GediProject& project,
     return res.accepted();
 }
 
-// ── rebuildLibEntries ─────────────────────────────────────────────────────────
+//  rebuildLibEntries 
 // Builds the flat visible list used by the library panel. Ordering:
 //   1. Project library targets (static_library / shared_library) — not the focused one itself
 //   2. System libraries already in the project  (marked [X])
@@ -88,7 +88,7 @@ void ProjectPropertiesDialog::rebuildLibEntries()
 
     m_lib_entries_.clear();
 
-    // ── Section 1: project library targets ───────────────────────────────────
+    //  Section 1: project library targets 
     {
         std::vector<LibEntry> sec;
         for (int i = 0; i < (int)tgt_list_.size(); ++i) {
@@ -106,7 +106,7 @@ void ProjectPropertiesDialog::rebuildLibEntries()
         }
     }
 
-    // ── Section 2: system libs in use ────────────────────────────────────────
+    //  Section 2: system libs in use 
     {
         std::vector<LibEntry> sec;
         for (int i = 0; i < (int)m_sys_libs_.size(); ++i) {
@@ -124,7 +124,7 @@ void ProjectPropertiesDialog::rebuildLibEntries()
         }
     }
 
-    // ── Section 3: system libs available ─────────────────────────────────────
+    //  Section 3: system libs available 
     {
         std::vector<LibEntry> sec;
         for (int i = 0; i < (int)m_sys_libs_.size(); ++i) {
@@ -142,7 +142,7 @@ void ProjectPropertiesDialog::rebuildLibEntries()
         }
     }
 
-    // ── Restore / clamp cursor ────────────────────────────────────────────────
+    //  Restore / clamp cursor 
     // Try to keep the cursor on the same label; fall back to first selectable row.
     int new_cur = -1;
     for (int i = 0; i < (int)m_lib_entries_.size(); ++i)
@@ -164,7 +164,7 @@ void ProjectPropertiesDialog::rebuildLibEntries()
     if (m_lib_scroll_ < 0) m_lib_scroll_ = 0;
 }
 
-// ── libEntrySelected / libEntryToggle ─────────────────────────────────────────
+//  libEntrySelected / libEntryToggle 
 
 bool ProjectPropertiesDialog::libEntrySelected(const LibEntry& e) const
 {
@@ -196,7 +196,7 @@ void ProjectPropertiesDialog::libEntryToggle(const LibEntry& e)
     }
 }
 
-// ── onInit ────────────────────────────────────────────────────────────────────
+//  onInit 
 
 void ProjectPropertiesDialog::onInit()
 {
@@ -281,13 +281,13 @@ void ProjectPropertiesDialog::onInit()
     setGroupBtnFocus(1);   // Ok is the default focused button
 }
 
-// ── onDraw ────────────────────────────────────────────────────────────────────
+//  onDraw 
 
 void ProjectPropertiesDialog::onDraw(Renderer& renderer, int startx, int starty)
 {
     const int inner_x = startx + 2;
 
-    // ── Info box (read-only) ──────────────────────────────────────────────────
+    //  Info box (read-only) 
     {
         const int fy1 = starty + INFO_BOX_Y + 1;
         renderer.drawText(inner_x + 2, fy1,
@@ -301,7 +301,7 @@ void ProjectPropertiesDialog::onDraw(Renderer& renderer, int startx, int starty)
                           "Root:  " + root_disp, Renderer::CP_DIALOG);
     }
 
-    // ── Configuration ─────────────────────────────────────────────────────────
+    //  Configuration 
     {
         const int fy = starty + CFG_BOX_Y + 1;
         bool grp_focused = (getFocusedGroup() == GRP_CFG);
@@ -324,7 +324,7 @@ void ProjectPropertiesDialog::onDraw(Renderer& renderer, int startx, int starty)
         cfg_combo_.draw(renderer, startx, starty, grp_focused && (inner_focus == 1));
     }
 
-    // ── Targets box ───────────────────────────────────────────────────────────
+    //  Targets box 
     {
         const int box_inner_x = inner_x + 1;
         const int box_top_y   = starty + TGT_BOX_Y + 1;
@@ -361,7 +361,7 @@ void ProjectPropertiesDialog::onDraw(Renderer& renderer, int startx, int starty)
                           Renderer::CP_STATUS_BAR);
     }
 
-    // ── Library list ──────────────────────────────────────────────────────────
+    //  Library list 
     {
         const int lib_x  = startx + LIB_BOX_X + 1;
         const int lib_y0 = starty + LIB_BOX_Y + 1;
@@ -419,18 +419,18 @@ void ProjectPropertiesDialog::onDraw(Renderer& renderer, int startx, int starty)
     cfg_combo_.drawDropdown(renderer, startx, starty);
 }
 
-// ── onKey ─────────────────────────────────────────────────────────────────────
+//  onKey 
 
 HandleResult ProjectPropertiesDialog::onKey(wint_t ch)
 {
     int grp = getFocusedGroup();
 
-    // ── Info group: no interaction ────────────────────────────────────────────
+    //  Info group: no interaction 
     if (grp == GRP_INFO) {
         return HandleResult::CONTINUE;
     }
 
-    // ── Configuration ─────────────────────────────────────────────────────────
+    //  Configuration 
     if (grp == GRP_CFG) {
         auto& g = groups()[GRP_CFG];
         if (ch == KEY_UP || ch == KEY_DOWN) {
@@ -447,7 +447,7 @@ HandleResult ProjectPropertiesDialog::onKey(wint_t ch)
         return HandleResult::CONTINUE;
     }
 
-    // ── Targets ───────────────────────────────────────────────────────────────
+    //  Targets 
     if (grp == GRP_TGT) {
         const int count   = (int)tgt_list_.size();
         const int old_cur = tgt_cursor_;
@@ -500,7 +500,7 @@ HandleResult ProjectPropertiesDialog::onKey(wint_t ch)
         return HandleResult::CONTINUE;
     }
 
-    // ── Library list ──────────────────────────────────────────────────────────
+    //  Library list 
     if (grp == GRP_LIB) {
         const int n = (int)m_lib_entries_.size();
 
@@ -551,7 +551,7 @@ HandleResult ProjectPropertiesDialog::onKey(wint_t ch)
     return HandleResult::CONTINUE;
 }
 
-// ── onPlaceCursor ─────────────────────────────────────────────────────────────
+//  onPlaceCursor 
 
 bool ProjectPropertiesDialog::onPlaceCursor(Renderer& renderer, int sx, int sy)
 {
@@ -568,7 +568,7 @@ bool ProjectPropertiesDialog::onPlaceCursor(Renderer& renderer, int sx, int sy)
     return false;
 }
 
-// ── onTab ─────────────────────────────────────────────────────────────────────
+//  onTab 
 
 bool ProjectPropertiesDialog::onTab(bool /*forward*/)
 {

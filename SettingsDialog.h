@@ -29,7 +29,9 @@ private:
     // Editing tab
     bool temp_smart_indent_;
     int  temp_indent_width_;
+    bool temp_use_tab_char_;
     bool temp_show_whitespace_;
+    bool temp_smooth_text_;       // graphical build only
 
     // Display tab
     bool temp_show_line_numbers_;

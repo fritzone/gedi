@@ -1,11 +1,71 @@
 #include "BuildSystem.h"
 #include <cstdio>
+#include <cstdint>
 #include <sstream>
 #include <regex>
 #include <filesystem>
 #include <sys/wait.h>
 
-BuildSystem::BuildSystem(const Config& config, std::filesystem::path exe_dir) 
+// The SDL build renders a fixed VGA/CP437 character grid, so it cannot display the
+// Unicode glyphs GCC/Clang put in diagnostics (curly quotes, em dashes, the box-
+// drawing used for caret underlines, …). Those show up as '?'. In the graphical
+// build we (a) run the compiler under a C locale so GCC emits plain ASCII, and
+// (b) transliterate any remaining Unicode in the captured output to ASCII. The
+// text build keeps the original UTF-8 (a real terminal renders it fine).
+#ifdef GEDI_GUI
+static std::string asciiForCodepoint(uint32_t cp) {
+    switch (cp) {
+        case 0x2018: case 0x2019: case 0x201B: return "'";    // ' ' ‛
+        case 0x201C: case 0x201D: case 0x201F: return "\"";   // " " ‟
+        case 0x2013: case 0x2014: case 0x2015: case 0x2212: return "-";  // – — ― −
+        case 0x2026:                            return "...";  // …
+        case 0x2192:                            return "->";   // →
+        case 0x2190:                            return "<-";   // ←
+        case 0x2191:                            return "^";    // ↑
+        case 0x2193:                            return "v";    // ↓
+        case 0x00A0:                            return " ";    // non-breaking space
+        case 0x2022: case 0x00B7:               return "*";    // • ·
+        case 0x2500: case 0x2501:               return "-";    //  ━
+        case 0x2502: case 0x2503:               return "|";    // │ ┃
+        case 0x250C: case 0x2510: case 0x2514: case 0x2518:
+        case 0x251C: case 0x2524: case 0x252C: case 0x2534:
+        case 0x253C:                            return "+";    // box corners / junctions
+        default:                                return "?";
+    }
+}
+
+static std::string asciifyForGui(const std::string& in) {
+    std::string out;
+    out.reserve(in.size());
+    size_t i = 0, n = in.size();
+    while (i < n) {
+        unsigned char c = (unsigned char)in[i];
+        if (c < 0x80) { out += (char)c; ++i; continue; }
+        int len; uint32_t cp;
+        if      ((c & 0xE0) == 0xC0) { len = 2; cp = c & 0x1F; }
+        else if ((c & 0xF0) == 0xE0) { len = 3; cp = c & 0x0F; }
+        else if ((c & 0xF8) == 0xF0) { len = 4; cp = c & 0x07; }
+        else { out += '?'; ++i; continue; }              // invalid lead byte
+        if (i + (size_t)len > n) { out += '?'; ++i; continue; }
+        bool ok = true;
+        for (int k = 1; k < len; ++k) {
+            unsigned char cc = (unsigned char)in[i + k];
+            if ((cc & 0xC0) != 0x80) { ok = false; break; }
+            cp = (cp << 6) | (cc & 0x3F);
+        }
+        if (!ok) { out += '?'; ++i; continue; }
+        out += asciiForCodepoint(cp);
+        i += len;
+    }
+    return out;
+}
+static const char* kLocalePrefix = "LC_ALL=C ";
+#else
+static inline std::string asciifyForGui(const std::string& in) { return in; }
+static const char* kLocalePrefix = "";
+#endif
+
+BuildSystem::BuildSystem(const Config& config, std::filesystem::path exe_dir)
     : m_config(config), m_exe_dir(exe_dir) {}
 
 CompilationResult BuildSystem::runCompilationProcess(EditorBuffer& buffer) {
@@ -34,7 +94,7 @@ CompilationResult BuildSystem::runCompilationProcess(EditorBuffer& buffer) {
 
     std::string full_compiler_output_str;
     char buffer_arr[512];
-    FILE* compile_pipe = popen((result.full_command + " 2>&1").c_str(), "r");
+    FILE* compile_pipe = popen((kLocalePrefix + result.full_command + " 2>&1").c_str(), "r");
     if (compile_pipe) {
         while (fgets(buffer_arr, sizeof(buffer_arr), compile_pipe) != NULL)
             full_compiler_output_str += buffer_arr;
@@ -42,8 +102,8 @@ CompilationResult BuildSystem::runCompilationProcess(EditorBuffer& buffer) {
     int compile_status = compile_pipe ? pclose(compile_pipe) : -1;
     result.success = (compile_status == 0);
 
-    // Add compiler output to output_lines for display
-    std::istringstream ss(full_compiler_output_str);
+    // Add compiler output to output_lines for display (ASCII-only in the GUI build)
+    std::istringstream ss(asciifyForGui(full_compiler_output_str));
     std::string line;
     while (std::getline(ss, line))
         result.output_lines.push_back(line);
@@ -98,8 +158,6 @@ std::string BuildSystem::settingsToFlags(const CompilerSettings& s)
     return f;
 }
 
-// ── buildProjectPreview ───────────────────────────────────────────────────────
-
 std::string BuildSystem::buildProjectPreview(const GediProject& project, const CompilerSettings& s)
 {
     const std::string& root = project.root;
@@ -153,7 +211,7 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
         result.output_lines.push_back("> " + cmd);
         char buf[512];
         std::string out;
-        FILE* p = popen(cmd.c_str(), "r");
+        FILE* p = popen((kLocalePrefix + cmd).c_str(), "r");
         if (!p) {
             result.output_lines.push_back("  [failed to start process]");
             return false;
@@ -161,7 +219,7 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
         while (fgets(buf, sizeof(buf), p))
             out += buf;
         int status = pclose(p);
-        std::istringstream ss(out);
+        std::istringstream ss(asciifyForGui(out));
         std::string ln;
         while (std::getline(ss, ln))
             result.output_lines.push_back(ln);

@@ -78,9 +78,71 @@ static unsigned char uni_to_cp437(wchar_t c) {
         case 0x2588: return 0xDB; case 0x2580: return 0xDF; case 0x2584: return 0xDC;
         case 0x258C: return 0xDD; case 0x2590: return 0xDE;
         case 0x2591: return 0xB0; case 0x2592: return 0xB1; case 0x2593: return 0xB2;
+        //  Latin letters in the (patched) VGA font 
+        // Western-European letters at their original CP437 positions:
+        case 0x00C7: return 0x80; case 0x00FC: return 0x81; // Ç ü
+        case 0x00E9: return 0x82; case 0x00E2: return 0x83; // é â
+        case 0x00E4: return 0x84; case 0x00E0: return 0x85; // ä à
+        case 0x00E5: return 0x86; case 0x00E7: return 0x87; // å ç
+        case 0x00EA: return 0x88; case 0x00EB: return 0x89; // ê ë
+        case 0x00E8: return 0x8A; case 0x00EF: return 0x8B; // è ï
+        case 0x00EE: return 0x8C; case 0x00EC: return 0x8D; // î ì
+        case 0x00C4: return 0x8E; case 0x00C5: return 0x8F; // Ä Å
+        case 0x00C9: return 0x90; case 0x00E6: return 0x91; // É æ
+        case 0x00C6: return 0x92; case 0x00F4: return 0x93; // Æ ô
+        case 0x00F6: return 0x94; case 0x00F2: return 0x95; // ö ò
+        case 0x00FB: return 0x96; case 0x00F9: return 0x97; // û ù
+        case 0x00FF: return 0x98; case 0x00D6: return 0x99; // ÿ Ö
+        case 0x00DC: return 0x9A;                            // Ü
+        case 0x00E1: return 0xA0; case 0x00ED: return 0xA1; // á í
+        case 0x00F3: return 0xA2; case 0x00FA: return 0xA3; // ó ú
+        case 0x00F1: return 0xA4; case 0x00D1: return 0xA5; // ñ Ñ
+        case 0x00BF: return 0xA8; case 0x00A1: return 0xAD; // ¿ ¡
+        case 0x00AB: return 0xAE; case 0x00BB: return 0xAF; // « »
+        case 0x00DF: return 0xE1; case 0x00B5: return 0xE6; // ß µ
+        // International letters synthesised from Uni2-VGA16 into repurposed slots
+        // (currency / Greek / math glyphs the editor never used). Covers Nordic,
+        // Portuguese, Icelandic, Polish, Czech, Slovak, Croatian, Slovenian,
+        // Hungarian, Romanian, Turkish, Baltic + the euro sign.
+        case 0x00F8: return 0x9B; case 0x00D8: return 0x9C; // ø Ø
+        case 0x00E3: return 0x9D; case 0x00F5: return 0x9E; // ã õ
+        case 0x00C3: return 0x9F; case 0x00D5: return 0xA6; // Ã Õ
+        case 0x00F0: return 0xA7; case 0x00D0: return 0xA9; // ð Ð
+        case 0x00FE: return 0xAA; case 0x00DE: return 0xAB; // þ Þ
+        case 0x00FD: return 0xAC; case 0x00DD: return 0xE0; // ý Ý
+        case 0x0142: return 0xE2; case 0x0141: return 0xE3; // ł Ł
+        case 0x0105: return 0xE4; case 0x0119: return 0xE5; // ą ę
+        case 0x0107: return 0xE7; case 0x0144: return 0xE8; // ć ń
+        case 0x015B: return 0xE9; case 0x017A: return 0xEA; // ś ź
+        case 0x017C: return 0xEB; case 0x010D: return 0xEC; // ż č
+        case 0x0161: return 0xED; case 0x017E: return 0xEE; // š ž
+        case 0x011B: return 0xEF; case 0x0159: return 0xF0; // ě ř
+        case 0x016F: return 0xF1; case 0x0151: return 0xF2; // ů ő
+        case 0x0171: return 0xF3; case 0x0103: return 0xF4; // ű ă
+        case 0x0219: return 0xF5; case 0x021B: return 0xF6; // ș ț
+        case 0x011F: return 0xF7; case 0x0131: return 0xF8; // ğ ı
+        case 0x0130: return 0xF9; case 0x015F: return 0xFB; // İ ş
+        case 0x0111: return 0xFC; case 0x0110: return 0xFD; // đ Đ
+        case 0x20AC: return 0xFE;                            // €
+        // Letters with no dedicated glyph → closest ASCII so they stay readable
+        // (mostly uppercase Extended-A whose lowercase forms got real glyphs).
+        case 0x0153: return 'o';  case 0x0152: return 'O';  // œ Œ
+        case 0x0104: return 'A';  case 0x0118: return 'E';  // Ą Ę
+        case 0x0106: return 'C';  case 0x0143: return 'N';  // Ć Ń
+        case 0x015A: return 'S';  case 0x0179: return 'Z';  // Ś Ź
+        case 0x017B: return 'Z';  case 0x010C: return 'C';  // Ż Č
+        case 0x0160: return 'S';  case 0x017D: return 'Z';  // Š Ž
+        case 0x011A: return 'E';  case 0x0158: return 'R';  // Ě Ř
+        case 0x016E: return 'U';  case 0x0150: return 'O';  // Ů Ő
+        case 0x0170: return 'U';  case 0x0102: return 'A';  // Ű Ă
+        case 0x0218: return 'S';  case 0x021A: return 'T';  // Ș Ț
+        case 0x011E: return 'G';  case 0x015E: return 'S';  // Ğ Ş
+        // smart quotes / dashes occasionally pasted in
+        case 0x2018: case 0x2019: return '\'';
+        case 0x201C: case 0x201D: return '"';
+        case 0x2013: case 0x2014: return '-';
         // misc
         case 0x00B7: return 0xFA; // middle dot (show-whitespace space marker)
-        case 0x00B0: return 0xF8; // degree
         case 0x2022: return 0x07; // bullet
         case 0x2190: return 0x1B; // left arrow
         case 0x2192: return 0x1A; // right arrow
@@ -393,6 +455,23 @@ int endwin() {
     SDL_StopTextInput();
     g_eng.shutdown();
     return OK;
+}
+
+// ---- session persistence ---------------------------------------------------
+void gui_get_window_state(int* x, int* y, int* w, int* h, float* scale) {
+    int wx, wy, ww, wh; float sc;
+    g_eng.getSessionState(wx, wy, ww, wh, sc);
+    if (x) *x = wx; if (y) *y = wy; if (w) *w = ww; if (h) *h = wh;
+    if (scale) *scale = sc;
+}
+
+void gui_set_window_state(int x, int y, int w, int h, float scale) {
+    g_eng.applySessionState(x, y, w, h, scale);
+    resize_to_engine();   // sync stdscr + COLS/LINES to the restored grid
+}
+
+void gui_set_smooth_scaling(int on) {
+    g_eng.setSmoothScaling(on != 0);
 }
 
 int cbreak()                 { return OK; }

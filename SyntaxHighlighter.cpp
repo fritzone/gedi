@@ -195,7 +195,7 @@ std::vector<SyntaxToken> SyntaxHighlighter::parseLine(EditorBuffer& buffer, cons
 
     // Check for preprocessor directives or comments (lines starting with #)
     size_t first_char_pos = line.find_first_not_of(" \t");
-    if (buffer.syntax_type != EditorBuffer::PRIMAL && buffer.syntax_type != EditorBuffer::ST_CMAKE && first_char_pos != std::string::npos && line[first_char_pos] == '#') {
+    if (buffer.syntax_type != EditorBuffer::PRIMAL && buffer.syntax_type != EditorBuffer::ST_CMAKE && buffer.syntax_type != EditorBuffer::ST_MAKEFILE && first_char_pos != std::string::npos && line[first_char_pos] == '#') {
         i = first_char_pos;
         tokens.push_back({line.substr(0, i), Renderer::CP_DEFAULT_TEXT}); // Add leading whitespace
 
@@ -235,7 +235,7 @@ std::vector<SyntaxToken> SyntaxHighlighter::parseLine(EditorBuffer& buffer, cons
             break; // Rest of the line is a comment
         }
 
-        if(buffer.syntax_type == EditorBuffer::PRIMAL || buffer.syntax_type == EditorBuffer::ST_CMAKE) {
+        if(buffer.syntax_type == EditorBuffer::PRIMAL || buffer.syntax_type == EditorBuffer::ST_CMAKE || buffer.syntax_type == EditorBuffer::ST_MAKEFILE) {
             if (line.substr(i, 1) == "#") {
                 tokens.push_back({line.substr(i), Renderer::CP_SYNTAX_COMMENT});
                 break; // Rest of the line is a comment

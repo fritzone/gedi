@@ -29,6 +29,19 @@
 #include <sstream>
 
 
+//  UTF-8 byte helpers 
+// The buffer stores text as UTF-8. cursor_col / char indices are byte offsets, so
+// editing and rendering must step over whole multi-byte sequences (otherwise
+// accented characters — ø, ä, é … — get split into bytes and corrupted).
+static inline int utf8Len(unsigned char lead) {
+    if (lead < 0x80)          return 1;
+    if ((lead & 0xE0) == 0xC0) return 2;
+    if ((lead & 0xF0) == 0xE0) return 3;
+    if ((lead & 0xF8) == 0xF0) return 4;
+    return 1;   // invalid lead byte → treat as a single byte
+}
+static inline bool utf8IsCont(unsigned char b) { return (b & 0xC0) == 0x80; }
+
 // Build a flat vector of line strings from a buffer's linked list.
 static std::vector<std::string> snapshot_lines(const EditorBuffer& buf) {
     std::vector<std::string> snap;
@@ -151,9 +164,33 @@ void TextEditor::saveSession() {
         entry["line"]               = buf.current_line_num;
         entry["col"]                = buf.cursor_col;
         entry["first_visible_line"] = fv_num;
+        entry["hscroll"]            = buf.horizontal_scroll_offset;
+        entry["insert_mode"]        = buf.insert_mode;
         buffers.push_back(entry);
     }
     session["buffers"] = buffers;
+
+#ifdef GEDI_GUI
+    // Graphical build: also persist window geometry and zoom. (Font smoothing is a
+    // persistent preference stored in config.json, not session state.)
+    {
+        int wx, wy, ww, wh; float sc;
+        gui_get_window_state(&wx, &wy, &ww, &wh, &sc);
+        json g;
+        g["win_x"] = wx;  g["win_y"] = wy;
+        g["win_w"] = ww;  g["win_h"] = wh;
+        g["scale"] = sc;
+        session["gui"] = g;
+    }
+#else
+    // Text build: preserve any window state written by the graphical build so it
+    // isn't lost when the two are used alternately.
+    {
+        json prev = m_configManager->loadSession();
+        if (prev.contains("gui")) session["gui"] = prev["gui"];
+    }
+#endif
+
     m_configManager->saveSession(session);
 }
 
@@ -176,6 +213,7 @@ void TextEditor::restoreSession() {
                 int line_num = entry.value("line", 1);
                 int col      = entry.value("col", 1);
                 int fv_num   = entry.value("first_visible_line", 1);
+                int hscroll  = entry.value("hscroll", 1);
 
                 m_bufferManager->addBuffer();
                 currentBuffer().filename = filename;
@@ -199,6 +237,8 @@ void TextEditor::restoreSession() {
                     else break;
                 }
 
+                currentBuffer().horizontal_scroll_offset = std::max(1, hscroll);
+                currentBuffer().insert_mode = entry.value("insert_mode", true);
                 update_cursor_and_scroll();
             }
         } catch (...) {
@@ -290,6 +330,26 @@ void TextEditor::run(int argc, char* argv[]) {
     m_text_area_start_y = 2;
     m_text_area_end_x = m_renderer->getWidth() - 3;
     m_text_area_end_y = m_renderer->getHeight() - 4;
+
+#ifdef GEDI_GUI
+    // Apply the font-smoothing preference from config before drawing.
+    gui_set_smooth_scaling(m_config.smooth_text ? 1 : 0);
+
+    // Restore the graphical window state (zoom, size, position) before any layout
+    // happens, so the grid and text-area bounds match the restored window.
+    {
+        json sess = m_configManager->loadSession();
+        if (sess.contains("gui")) {
+            const auto& g = sess["gui"];
+            int ww = g.value("win_w", 0), wh = g.value("win_h", 0);
+            int wx = g.value("win_x", 0), wy = g.value("win_y", 0);
+            float sc = g.value("scale", 1.5f);
+            if (ww > 0 && wh > 0)
+                gui_set_window_state(wx, wy, ww, wh, sc);
+        }
+    }
+    handleResize();   // recompute text-area / scrollbar bounds for the restored grid
+#endif
 
     if (argc < 2) {
         restoreSession();
@@ -644,13 +704,22 @@ void TextEditor::drawTextArea() {
                 tokens = SyntaxHighlighter::parseLine(buffer, p->text, *m_renderer);
             }
 
-            int screen_x = m_text_area_start_x + m_gutter_width;
+            const int tab_w     = std::max(1, m_config.indentation_width);
+            const int text_left = m_text_area_start_x + m_gutter_width;
+            const int base_vcol = visualColAt(p->text, buffer.horizontal_scroll_offset - 1);
+            int vcol = 0;   // running 0-based visual column from the start of the line
             size_t token_idx = 0;
             size_t token_char_offset = 0;
 
-            for (size_t char_idx = 0; char_idx < p->text.length(); ++char_idx) {
+            for (size_t char_idx = 0; char_idx < p->text.length(); ) {
                 int current_col = char_idx + 1;
+                char raw = p->text[char_idx];
+                int blen = utf8Len((unsigned char)raw);          // bytes in this character
+                if (char_idx + blen > p->text.length()) blen = 1;
+                int cell_w = (raw == '\t') ? (tab_w - (vcol % tab_w)) : 1;  // visual width
+
                 if (current_col >= buffer.horizontal_scroll_offset) {
+                    int screen_x = text_left + (vcol - base_vcol);
                     if (screen_x > m_text_area_end_x) break;
 
                     bool is_char_selected = p->selected && (current_col >= p->selection_start_col && current_col < p->selection_end_col);
@@ -699,21 +768,67 @@ void TextEditor::drawTextArea() {
                         }
                     }
 
-                    char raw = p->text[char_idx];
-                    if (m_config.show_whitespace && !is_char_selected && (raw == ' ' || raw == '\t')) {
-                        const char* marker = (raw == ' ') ? "\xc2\xb7" : "\xe2\x86\x92"; // · or →
-                        m_renderer->drawText(screen_x, current_screen_y, marker,
+                    if (raw == '\t') {
+                        // Tab spans cell_w columns up to the next tab stop. Clip to
+                        // the right edge of the text area.
+                        int avail = m_text_area_end_x - screen_x + 1;
+                        int span  = std::min(cell_w, avail);
+                        if (is_char_selected) {
+                            m_renderer->drawText(screen_x, current_screen_y,
+                                                 std::string(span, ' '), color, flags);
+                        } else if (m_config.show_whitespace) {
+                            // Leading → arrow, then thin guide dots filling the stop.
+                            std::string vis = "\xe2\x86\x92";          // →
+                            for (int k = 1; k < span; ++k) vis += "\xc2\xb7"; // ·
+                            m_renderer->drawText(screen_x, current_screen_y, vis,
+                                                 Renderer::CP_WHITESPACE, 0);
+                        }
+                        // else: leave the pre-cleared default background showing.
+                    } else if (m_config.show_whitespace && !is_char_selected && raw == ' ') {
+                        m_renderer->drawText(screen_x, current_screen_y, "\xc2\xb7",
                                              Renderer::CP_WHITESPACE, 0);
                     } else {
+                        // Draw the whole UTF-8 sequence as a single cell so accented
+                        // characters render as one glyph (not byte-by-byte garbage).
                         m_renderer->drawText(screen_x, current_screen_y,
-                                             std::string(1, raw), color, flags);
+                                             p->text.substr(char_idx, blen), color, flags);
                     }
-                    screen_x++;
                 }
+                vcol += cell_w;
+                char_idx += blen;
             }
             p = p->next;
         }
     }
+}
+
+// Visual column (0-based) at the start of character index `char_idx`, expanding
+// tabs to the next Tab-Size stop. char_idx may equal the line length (cursor at EOL).
+int TextEditor::visualColAt(const std::string& text, int char_idx) const {
+    int tw = std::max(1, m_config.indentation_width);
+    int vc = 0;
+    int n = std::min(char_idx, (int)text.size());
+    for (int i = 0; i < n; ++i) {
+        unsigned char b = (unsigned char)text[i];
+        if (utf8IsCont(b)) continue;                   // continuation byte: no width
+        vc += (b == '\t') ? (tw - (vc % tw)) : 1;
+    }
+    return vc;
+}
+
+// Inverse of visualColAt: the 1-based (byte) column whose visual span covers
+// `target_vcol`. Clicking anywhere inside a tab or multi-byte char lands on its start.
+int TextEditor::charColAtVisual(const std::string& text, int target_vcol) const {
+    int tw = std::max(1, m_config.indentation_width);
+    int vc = 0;
+    for (int i = 0; i < (int)text.size(); ++i) {
+        unsigned char b = (unsigned char)text[i];
+        if (utf8IsCont(b)) continue;                   // not a character start
+        int w = (b == '\t') ? (tw - (vc % tw)) : 1;
+        if (target_vcol < vc + w) return i + 1;
+        vc += w;
+    }
+    return (int)text.size() + 1;
 }
 
 void TextEditor::drawMenuBar(int active_menu_id) {
@@ -1137,7 +1252,11 @@ void TextEditor::handleMouseEvent() {
         if (mx < m_text_area_start_x + m_gutter_width) {
             col = 1;
         } else {
-            col = mx - m_text_area_start_x - m_gutter_width + 1 + buf.horizontal_scroll_offset;
+            // Convert the clicked screen cell to a visual column (accounting for the
+            // horizontal scroll), then resolve which character occupies it.
+            int target_vcol = (mx - m_text_area_start_x - m_gutter_width)
+                            + visualColAt(click_line->text, buf.horizontal_scroll_offset - 1);
+            col = charColAtVisual(click_line->text, target_vcol);
             if (col < 1) col = 1;
             if (col > (int)click_line->text.length() + 1)
                 col = int(click_line->text.length()) + 1;
@@ -1291,7 +1410,15 @@ void TextEditor::main_loop() {
                 m_renderer->setCursor(1 + strlen("Search: ") + m_search_term.length(), m_renderer->getHeight() - 1);
             } else if (!m_compile_output_visible) {
                 EditorBuffer& buffer = currentBuffer();
-                m_renderer->setCursor(buffer.cursor_col - buffer.horizontal_scroll_offset + m_text_area_start_x + m_gutter_width, buffer.cursor_screen_y);
+                int cur_x = m_text_area_start_x + m_gutter_width;
+                if (buffer.current_line) {
+                    const std::string& t = buffer.current_line->text;
+                    cur_x += visualColAt(t, buffer.cursor_col - 1)
+                           - visualColAt(t, buffer.horizontal_scroll_offset - 1);
+                } else {
+                    cur_x += buffer.cursor_col - buffer.horizontal_scroll_offset;
+                }
+                m_renderer->setCursor(cur_x, buffer.cursor_screen_y);
             }
         }
         m_renderer->refresh();
@@ -1475,11 +1602,17 @@ void TextEditor::update_cursor_and_scroll() {
     int text_area_width = m_text_area_end_x - m_text_area_start_x + 1;
     if (text_area_width <= 0) return;
 
-    if (buffer.cursor_col < buffer.horizontal_scroll_offset) {
+    // Horizontal scroll is tracked as a character column, but visibility must be
+    // judged in visual columns so tab-expanded lines keep the cursor on screen.
+    const std::string& cur_text = buffer.current_line->text;
+    int cur_vcol   = visualColAt(cur_text, buffer.cursor_col - 1);
+    int first_vcol = visualColAt(cur_text, buffer.horizontal_scroll_offset - 1);
+    if (cur_vcol < first_vcol) {
         buffer.horizontal_scroll_offset = buffer.cursor_col;
     }
-    else if (buffer.cursor_col >= buffer.horizontal_scroll_offset + text_area_width) {
-        buffer.horizontal_scroll_offset = buffer.cursor_col - text_area_width + 1;
+    else if (cur_vcol - first_vcol >= text_area_width) {
+        buffer.horizontal_scroll_offset =
+            charColAtVisual(cur_text, cur_vcol - text_area_width + 1);
     }
 }
 
@@ -1838,7 +1971,7 @@ void TextEditor::GoToDefinition() {
         }
     }
 
-    // ── Fast path: check pre-built definition indices of all open buffers ────────
+    //  Fast path: check pre-built definition indices of all open buffers 
     // ClangHighlighter populates SemanticCache::definition_map for each buffer
     // after every open/save. If the symbol has a unique definition across those
     // maps, we can jump immediately without spawning a new clang parse.
@@ -2402,7 +2535,12 @@ void TextEditor::process_key(wint_t ch) {
         }
         return;
     }
-    if (ch >= 128 && ch < 256) { char base_char = tolower(ch & 0x7F); if (base_char == 'f' || base_char == 'e' || base_char == 's' || base_char == 'v' || base_char == 'b' || base_char == 'w' || base_char == 'o' || base_char == 'h' || base_char == 'x') { HandleAltKey(base_char); return; } }
+    // NOTE: we deliberately do NOT treat bytes 128–255 as 8-bit "Meta+key" here.
+    // That legacy encoding collides with Latin-1/UTF-8 code points: e.g. ø=0xF8
+    // would be read as Alt+x (exit), æ=0xE6 as Alt+f, å=0xE5 as Alt+e, ö=0xF6 as
+    // Alt+v — breaking Norwegian/German/etc. keyboards. Alt is delivered via the
+    // ESC-prefix path above (and push_alt() in the SDL build), so these code points
+    // fall through to normal character insertion below.
 
     if (currentBufferIdx() == -1) return;
 
@@ -2440,8 +2578,8 @@ void TextEditor::process_key(wint_t ch) {
     case KEY_CTRL_W: CloseWindow(); break;
     case KEY_UP: if (buffer.current_line->prev) { buffer.cursor_screen_y--; buffer.current_line = buffer.current_line->prev; buffer.current_line_num--; } break;
     case KEY_DOWN: if (buffer.current_line->next) { buffer.cursor_screen_y++; buffer.current_line = buffer.current_line->next; buffer.current_line_num++; } break;
-    case KEY_LEFT: if (buffer.cursor_col > 1) { buffer.cursor_col--; } else if (buffer.current_line->prev) { buffer.cursor_screen_y--; buffer.current_line = buffer.current_line->prev; buffer.current_line_num--; buffer.cursor_col = buffer.current_line->text.length() + 1; } break;
-    case KEY_RIGHT: if (buffer.cursor_col <= (int)buffer.current_line->text.length()) { buffer.cursor_col++; } else if (buffer.current_line->next) { buffer.cursor_screen_y++; buffer.current_line = buffer.current_line->next; buffer.current_line_num++; buffer.cursor_col = 1; } break;
+    case KEY_LEFT: if (buffer.cursor_col > 1) { buffer.cursor_col--; while (buffer.cursor_col > 1 && utf8IsCont((unsigned char)buffer.current_line->text[buffer.cursor_col - 1])) buffer.cursor_col--; } else if (buffer.current_line->prev) { buffer.cursor_screen_y--; buffer.current_line = buffer.current_line->prev; buffer.current_line_num--; buffer.cursor_col = buffer.current_line->text.length() + 1; } break;
+    case KEY_RIGHT: if (buffer.cursor_col <= (int)buffer.current_line->text.length()) { buffer.cursor_col += utf8Len((unsigned char)buffer.current_line->text[buffer.cursor_col - 1]); if (buffer.cursor_col > (int)buffer.current_line->text.length() + 1) buffer.cursor_col = (int)buffer.current_line->text.length() + 1; } else if (buffer.current_line->next) { buffer.cursor_screen_y++; buffer.current_line = buffer.current_line->next; buffer.current_line_num++; buffer.cursor_col = 1; } break;
     case KEY_HOME: buffer.cursor_col = 1; break;
     case KEY_END: buffer.cursor_col = buffer.current_line->text.length() + 1; break;
     case KEY_PPAGE: { int h = m_text_area_end_y - m_text_area_start_y + 1; for(int i=0;i<h && buffer.current_line->prev; ++i) {buffer.cursor_screen_y--; buffer.current_line=buffer.current_line->prev; buffer.current_line_num--;} } break;
@@ -2453,8 +2591,8 @@ void TextEditor::process_key(wint_t ch) {
 
     case KEY_SR: if (!buffer.selecting) { buffer.selecting = true; buffer.selection_anchor_line = buffer.current_line; buffer.selection_anchor_col = buffer.cursor_col; buffer.selection_anchor_linenum = buffer.current_line_num; } if (buffer.current_line->prev) { buffer.cursor_screen_y--; buffer.current_line = buffer.current_line->prev; buffer.current_line_num--; } UpdateSelection(); break;
     case KEY_SF: if (!buffer.selecting) { buffer.selecting = true; buffer.selection_anchor_line = buffer.current_line; buffer.selection_anchor_col = buffer.cursor_col; buffer.selection_anchor_linenum = buffer.current_line_num; } if (buffer.current_line->next) { buffer.cursor_screen_y++; buffer.current_line = buffer.current_line->next; buffer.current_line_num++; } UpdateSelection(); break;
-    case KEY_SLEFT: if (!buffer.selecting) { buffer.selecting = true; buffer.selection_anchor_line = buffer.current_line; buffer.selection_anchor_col = buffer.cursor_col; buffer.selection_anchor_linenum = buffer.current_line_num; } if (buffer.cursor_col > 1) { buffer.cursor_col--; } else if (buffer.current_line->prev) { buffer.cursor_screen_y--; buffer.current_line = buffer.current_line->prev; buffer.current_line_num--; buffer.cursor_col = buffer.current_line->text.length() + 1; } UpdateSelection(); break;
-    case KEY_SRIGHT: if (!buffer.selecting) { buffer.selecting = true; buffer.selection_anchor_line = buffer.current_line; buffer.selection_anchor_col = buffer.cursor_col; buffer.selection_anchor_linenum = buffer.current_line_num; } if (buffer.cursor_col <= (int)buffer.current_line->text.length()) { buffer.cursor_col++; } else if (buffer.current_line->next) { buffer.cursor_screen_y++; buffer.current_line = buffer.current_line->next; buffer.current_line_num++; buffer.cursor_col = 1; } UpdateSelection(); break;
+    case KEY_SLEFT: if (!buffer.selecting) { buffer.selecting = true; buffer.selection_anchor_line = buffer.current_line; buffer.selection_anchor_col = buffer.cursor_col; buffer.selection_anchor_linenum = buffer.current_line_num; } if (buffer.cursor_col > 1) { buffer.cursor_col--; while (buffer.cursor_col > 1 && utf8IsCont((unsigned char)buffer.current_line->text[buffer.cursor_col - 1])) buffer.cursor_col--; } else if (buffer.current_line->prev) { buffer.cursor_screen_y--; buffer.current_line = buffer.current_line->prev; buffer.current_line_num--; buffer.cursor_col = buffer.current_line->text.length() + 1; } UpdateSelection(); break;
+    case KEY_SRIGHT: if (!buffer.selecting) { buffer.selecting = true; buffer.selection_anchor_line = buffer.current_line; buffer.selection_anchor_col = buffer.cursor_col; buffer.selection_anchor_linenum = buffer.current_line_num; } if (buffer.cursor_col <= (int)buffer.current_line->text.length()) { buffer.cursor_col += utf8Len((unsigned char)buffer.current_line->text[buffer.cursor_col - 1]); if (buffer.cursor_col > (int)buffer.current_line->text.length() + 1) buffer.cursor_col = (int)buffer.current_line->text.length() + 1; } else if (buffer.current_line->next) { buffer.cursor_screen_y++; buffer.current_line = buffer.current_line->next; buffer.current_line_num++; buffer.cursor_col = 1; } UpdateSelection(); break;
     case KEY_SHOME: if (!buffer.selecting) { buffer.selecting = true; buffer.selection_anchor_line = buffer.current_line; buffer.selection_anchor_col = buffer.cursor_col; buffer.selection_anchor_linenum = buffer.current_line_num; } buffer.cursor_col = 1; UpdateSelection(); break;
     case KEY_SEND: if (!buffer.selecting) { buffer.selecting = true; buffer.selection_anchor_line = buffer.current_line; buffer.selection_anchor_col = buffer.cursor_col; buffer.selection_anchor_linenum = buffer.current_line_num; } buffer.cursor_col = buffer.current_line->text.length() + 1; UpdateSelection(); break;
     case KEY_SPREVIOUS: if (!buffer.selecting) { buffer.selecting = true; buffer.selection_anchor_line = buffer.current_line; buffer.selection_anchor_col = buffer.cursor_col; buffer.selection_anchor_linenum = buffer.current_line_num; } { int h = m_text_area_end_y - m_text_area_start_y + 1; for(int i=0;i<h && buffer.current_line->prev; ++i) {buffer.cursor_screen_y--; buffer.current_line=buffer.current_line->prev; buffer.current_line_num--;} } UpdateSelection(); break;
@@ -2475,14 +2613,18 @@ void TextEditor::process_key(wint_t ch) {
         }
         else
         {
-            std::string spaces_to_insert(m_config.indentation_width, ' ');
-
             if (cursor_idx > (int)line_text.length()) {
                 cursor_idx = line_text.length();
             }
 
-            buffer.current_line->text.insert(cursor_idx, spaces_to_insert);
-            buffer.cursor_col += m_config.indentation_width;
+            if (m_config.use_tab_character) {
+                buffer.current_line->text.insert(cursor_idx, 1, '\t');
+                buffer.cursor_col += 1;
+            } else {
+                buffer.current_line->text.insert(cursor_idx,
+                    std::string(m_config.indentation_width, ' '));
+                buffer.cursor_col += m_config.indentation_width;
+            }
             buffer.changed = true;
         }
         break;
@@ -2514,7 +2656,9 @@ void TextEditor::process_key(wint_t ch) {
 
             size_t last_char_pos = effective_line.find_last_not_of(" \t");
             if (last_char_pos != std::string::npos && effective_line[last_char_pos] == '{') {
-                indent_str += std::string(m_config.indentation_width, ' ');
+                indent_str += m_config.use_tab_character
+                                ? std::string(1, '\t')
+                                : std::string(m_config.indentation_width, ' ');
             }
         }
 
@@ -2533,7 +2677,7 @@ void TextEditor::process_key(wint_t ch) {
     }
 
     case KEY_BACKSPACE: case 127: case 8:
-        if (buffer.cursor_col > 1) { buffer.current_line->text.erase(buffer.cursor_col - 2, 1); buffer.cursor_col--; buffer.changed = true; }
+        if (buffer.cursor_col > 1) { int from = buffer.cursor_col - 2; while (from > 0 && utf8IsCont((unsigned char)buffer.current_line->text[from])) --from; buffer.current_line->text.erase(from, (buffer.cursor_col - 1) - from); buffer.cursor_col = from + 1; buffer.changed = true; }
         else if (buffer.current_line->prev) {
             Line* to_delete = buffer.current_line; buffer.cursor_col = buffer.current_line->prev->text.length() + 1;
             buffer.current_line->prev->text += buffer.current_line->text; buffer.cursor_screen_y--; buffer.current_line = buffer.current_line->prev; buffer.current_line_num--;
@@ -2546,7 +2690,9 @@ void TextEditor::process_key(wint_t ch) {
         if (buffer.selecting) {
             DeleteSelection();
         } else if (buffer.cursor_col <= (int)buffer.current_line->text.length()) {
-            buffer.current_line->text.erase(buffer.cursor_col - 1, 1); buffer.changed = true;
+            int del = utf8Len((unsigned char)buffer.current_line->text[buffer.cursor_col - 1]);
+            if (buffer.cursor_col - 1 + del > (int)buffer.current_line->text.length()) del = 1;
+            buffer.current_line->text.erase(buffer.cursor_col - 1, del); buffer.changed = true;
         } else if (buffer.current_line->next) {
             Line* to_delete = buffer.current_line->next; buffer.current_line->text += to_delete->text;
             buffer.current_line->next = to_delete->next; if(to_delete->next) to_delete->next->prev = buffer.current_line;
@@ -2565,18 +2711,22 @@ void TextEditor::process_key(wint_t ch) {
             if (ch == ')' || ch == ']' || ch == '}') {
                 handleSmartBlockClose(ch);
             } else {
-                // Standard character insertion
+                // Standard character insertion (UTF-8 aware)
                 std::string utf8_char = wchar_to_utf8(ch);
+                std::string& t = currentBuffer().current_line->text;
+                int idx = currentBuffer().cursor_col - 1;
                 if (currentBuffer().insert_mode) {
-                    currentBuffer().current_line->text.insert(currentBuffer().cursor_col - 1, utf8_char);
+                    t.insert(idx, utf8_char);
                 } else {
-                    if (currentBuffer().cursor_col <= (int)currentBuffer().current_line->text.length()) {
-                        currentBuffer().current_line->text.replace(currentBuffer().cursor_col - 1, 1, utf8_char);
+                    if (idx < (int)t.length()) {
+                        int existing = utf8Len((unsigned char)t[idx]);
+                        if (idx + existing > (int)t.length()) existing = 1;
+                        t.replace(idx, existing, utf8_char);
                     } else {
-                        currentBuffer().current_line->text += utf8_char;
+                        t += utf8_char;
                     }
                 }
-                currentBuffer().cursor_col++;
+                currentBuffer().cursor_col += (int)utf8_char.length();
                 currentBuffer().changed = true;
             }
         }
@@ -2585,7 +2735,7 @@ void TextEditor::process_key(wint_t ch) {
 }
 
 
-// ── Project helpers ───────────────────────────────────────────────────────────
+//  Project helpers 
 
 static bool addFileToCMakeLists(const std::string& cmake_path, const std::string& new_file)
 {
@@ -2672,7 +2822,7 @@ void TextEditor::CreateNewProject()
     root /= temp.name;
 
     try {
-        // ── Directory ──────────────────────────────────────────────────────────
+        //  Directory 
         if (temp.create_project_dir) {
             if (std::filesystem::exists(root)) {
                 if (msgwin_yesno("Directory already exists. Overwrite contents?",
@@ -2690,7 +2840,7 @@ void TextEditor::CreateNewProject()
             root = temp.path;
         }
 
-        // ── Source file (main.cpp, optional) ──────────────────────────────────
+        //  Source file (main.cpp, optional) 
         const std::filesystem::path srcFile = root / "main.cpp";
         if (temp.create_main) {
             std::ofstream s(srcFile);
@@ -2701,11 +2851,11 @@ void TextEditor::CreateNewProject()
               << "}\n";
         }
 
-        // ── Build file ────────────────────────────────────────────────────────
+        //  Build file 
         std::filesystem::path buildFile;
 
         if (temp.build_system == 0) {
-            // ── CMakeLists.txt ────────────────────────────────────────────────
+            //  CMakeLists.txt 
             buildFile = root / "CMakeLists.txt";
 
             std::string std_num = temp.cpp_standard;
@@ -2750,7 +2900,7 @@ void TextEditor::CreateNewProject()
             }
 
         } else if (temp.build_system == 1) {
-            // ── Makefile ──────────────────────────────────────────────────────
+            //  Makefile 
             buildFile = root / "Makefile";
 
             std::string cxxflags = "-std=" + temp.cpp_standard + " -Wall -Wextra";
@@ -2783,7 +2933,7 @@ void TextEditor::CreateNewProject()
                << ".PHONY: all clean\n";
 
         } else {
-            // ── meson.build ───────────────────────────────────────────────────
+            //  meson.build 
             buildFile = root / "meson.build";
 
             std::ofstream mb(buildFile);
@@ -2817,7 +2967,7 @@ void TextEditor::CreateNewProject()
             mb << ")\n";
         }
 
-        // ── Git init (optional) ───────────────────────────────────────────────
+        //  Git init (optional) 
         if (temp.init_git) {
             std::string cmd = "git -C \"" + root.string() + "\" init -q 2>/dev/null";
             auto t = std::system(cmd.c_str());
@@ -2834,7 +2984,7 @@ void TextEditor::CreateNewProject()
             }
         }
 
-        // ── .gproj project file ───────────────────────────────────────────────
+        //  .gproj project file 
         const char* bs_names[] = {"cmake", "make", "meson"};
         m_project              = GediProject{};
         m_project.name         = temp.name;
@@ -2852,7 +3002,7 @@ void TextEditor::CreateNewProject()
         m_project.libraries    = temp.selected_libraries;
         m_project.save();
 
-        // ── Open source + build file in the editor ────────────────────────────
+        //  Open source + build file in the editor 
         if (temp.create_main) {
             m_bufferManager->addBuffer();
             currentBuffer().filename = srcFile.string();

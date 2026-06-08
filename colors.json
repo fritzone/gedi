@@ -271,7 +271,7 @@
                 "bg": "blue"
             },
             "string": {
-                "fg": "brightyellow",
+                "fg": "brightgreen",
                 "bg": "blue"
             },
             "number": {
@@ -592,7 +592,7 @@
                 "bg": "black"
             },
             "string": {
-                "fg": "white",
+                "fg": "brightwhite",
                 "bg": "black",
                 "bold": true
             },
@@ -1079,7 +1079,7 @@
                 "bg": "black"
             },
             "string": {
-                "fg": "green",
+                "fg": "brightgreen",
                 "bg": "black",
                 "bold": true
             },

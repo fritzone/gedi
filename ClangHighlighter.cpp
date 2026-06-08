@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-// ── cursor-kind → ColorPairID ─────────────────────────────────────────────────
+//  cursor-kind → ColorPairID 
 
 static int kindToColor(CXCursorKind k)
 {
@@ -89,7 +89,7 @@ static int colorForToken(CXTokenKind tokKind, CXCursor cursor, const std::string
     return kindToColor(ck);
 }
 
-// ── background thread ─────────────────────────────────────────────────────────
+//  background thread 
 
 void ClangHighlighter::requestHighlight(EditorBuffer& buffer, BuildSystem* build)
 {
@@ -110,7 +110,7 @@ void ClangHighlighter::requestHighlight(EditorBuffer& buffer, BuildSystem* build
     cache->dirty.store(false);
     int my_version = ++cache->version;
 
-    // ── Main-thread work: only the cheap stuff ────────────────────────────────
+    //  Main-thread work: only the cheap stuff 
     // Snapshot buffer content while we're on the main thread (the user might
     // start editing before the thread finishes, and we want a consistent view).
     std::string content;
@@ -131,7 +131,7 @@ void ClangHighlighter::requestHighlight(EditorBuffer& buffer, BuildSystem* build
                  my_version,
                  build]() mutable
     {
-        // ── Thread: slow I/O happens here, not on the main thread ─────────────
+        //  Thread: slow I/O happens here, not on the main thread 
         std::vector<std::string> args_str =
             build ? build->getClangArguments(abs_path, settings_snap)
                   : std::vector<std::string>{};

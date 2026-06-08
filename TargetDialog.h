@@ -16,7 +16,7 @@ private:
     void onInit() override;
     void onDraw(Renderer& renderer, int startx, int starty) override;
 
-    // ── Layout ────────────────────────────────────────────────────────────────
+    //  Layout 
     static constexpr int W            = 50;
     static constexpr int H            = 14;
     static constexpr int NAME_FIELD_X = 3;

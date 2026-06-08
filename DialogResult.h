@@ -25,14 +25,14 @@
 
 class DialogResult {
 public:
-    // ── State ─────────────────────────────────────────────────────────────────
+    //  State 
     void accept()  noexcept { accepted_ = true; }
     void cancel()  noexcept { accepted_ = false; }
 
     [[nodiscard]] bool accepted() const noexcept { return accepted_; }
     [[nodiscard]] bool cancelled() const noexcept { return !accepted_; }
 
-    // ── Field storage ─────────────────────────────────────────────────────────
+    //  Field storage 
     void set(const std::string& name, const std::string& value) {
         fields_[name] = value;
     }

@@ -6,7 +6,7 @@
 #include <vector>
 #include <sys/stat.h>
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 struct FileEntry {
     std::string name;
     bool        is_directory = false;
@@ -17,23 +17,23 @@ struct FileEntry {
     std::string group;
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 // A file-type filter entry shown in the "Type:" combo at the bottom of the
 // open/save dialog.  pattern is a glob string (e.g. "*.gproj"); empty or "*"
 // means "all files".
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 struct FilterEntry {
     std::string label;    // e.g. "Project Files (*.gproj)"
     std::string pattern;  // e.g. "*.gproj"  (empty / "*" = all files)
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 // FileBrowser — three modal browser dialogs sharing one implementation.
 //
 //   open()            — select an existing file; returns full path or ""
 //   save()            — choose a filename to save to; returns full path or ""
 //   selectDirectory() — select a directory; returns full path or ""
-// ─────────────────────────────────────────────────────────────────────────────
+// 
 class FileBrowser {
 public:
     // title   — dialog title (default: "Open File")
@@ -57,11 +57,11 @@ private:
                            const std::string& title,
                            const std::vector<FilterEntry>& filters);
 
-    // ── Directory helpers ─────────────────────────────────────────────────────
+    //  Directory helpers 
     static std::vector<FileEntry> readDirectory(const std::string& path);
     static void sortEntries(std::vector<FileEntry>& entries);
 
-    // ── Drawing helpers ───────────────────────────────────────────────────────
+    //  Drawing helpers 
     static void drawFrame       (Renderer&, int x, int y, int w, int h,
                                  const std::string& title);
     static void drawPathHeader  (Renderer&, int x, int y, int w,

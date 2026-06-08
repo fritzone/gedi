@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=Gedi
+Name=Garland Turbine
 Comment=A simple yet powerful console-based C++ text editor
 Exec=gedi %F
-Icon=gedi
+Icon=gedi_1.0
 Terminal=true
 Categories=Development;TextEditor;
 Keywords=Text;Editor;C++;Terminal;

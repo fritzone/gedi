@@ -1,7 +1,7 @@
 #include "DialogBase.h"
 #include "curses_compat.h"
 
-// ── UTF-8 append helper (shared by dispatchChar and text_buffer typing) ─────────
+//  UTF-8 append helper (shared by dispatchChar and text_buffer typing) 
 
 static void appendUtf8(std::string& buf, wint_t ch)
 {
@@ -22,7 +22,7 @@ static void appendUtf8(std::string& buf, wint_t ch)
 // DialogBase.cpp
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// ── Entry point ───────────────────────────────────────────────────────────────
+//  Entry point 
 
 DialogResult DialogBase::run(Renderer& renderer)
 {
@@ -83,7 +83,7 @@ DialogResult DialogBase::run(Renderer& renderer)
         wint_t ch = renderer.getChar();
         HandleResult hr = HandleResult::CONTINUE;
 
-        // ── Window resize ─────────────────────────────────────────────────────
+        //  Window resize 
         // The backing screen has been blanked and its dimensions changed. Re-centre
         // the dialog for the new size, recapture the (now blank) backdrop so the
         // close-time restore stays consistent, and repaint the frame. Without this
@@ -155,7 +155,7 @@ DialogResult DialogBase::run(Renderer& renderer)
     return result_;
 }
 
-// ── Rendering ─────────────────────────────────────────────────────────────────
+//  Rendering 
 
 void DialogBase::drawFrame(Renderer& renderer, int sx, int sy, bool pressed)
 {
@@ -244,7 +244,7 @@ void DialogBase::runPressAnimation(Renderer& renderer, int sx, int sy)
     napms(80);
 }
 
-// ── Shared hotkey helper ──────────────────────────────────────────────────────
+//  Shared hotkey helper 
 
 bool DialogBase::tryHotkeyActivate(char lower)
 {
@@ -568,7 +568,7 @@ HandleResult DialogBase::dispatchMouse(const MEVENT& ev, int startx, int starty)
         return (ev.y == by && ev.x >= bx && ev.x < bx + bw);
     };
 
-    // ── Synthesised BUTTON1_CLICKED (press + release in one event) ────────────
+    //  Synthesised BUTTON1_CLICKED (press + release in one event) 
     // With mouseinterval(0) this is rare, but handle it for robustness:
     // treat as an immediate full click bypassing the capture machinery.
     if (is_clicked && !is_press && mouse_capture_btn_ < 0) {
@@ -587,7 +587,7 @@ HandleResult DialogBase::dispatchMouse(const MEVENT& ev, int startx, int starty)
         is_press = true; // treat remainder as a press for focus changes
     }
 
-    // ── Events while a button is captured ────────────────────────────────────
+    //  Events while a button is captured 
     if (mouse_capture_btn_ >= 0) {
         bool still_over = overButton(mouse_capture_btn_);
 
@@ -606,7 +606,7 @@ HandleResult DialogBase::dispatchMouse(const MEVENT& ev, int startx, int starty)
         return HandleResult::CONTINUE;
     }
 
-    // ── No active capture ─────────────────────────────────────────────────────
+    //  No active capture 
     if (!is_press && !is_scroll_up && !is_scroll_dn)
         return HandleResult::CONTINUE;
 

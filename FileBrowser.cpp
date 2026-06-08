@@ -23,7 +23,7 @@
 //   - Which entries are highlighted as selectable
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// ── Public entry points ───────────────────────────────────────────────────────
+//  Public entry points 
 
 std::string FileBrowser::open(Renderer& renderer,
                               const std::string& title,
@@ -49,7 +49,7 @@ std::string FileBrowser::selectDirectory(Renderer& renderer)
     return run(renderer, Mode::SELECT_DIR, "", "Select Directory", {});
 }
 
-// ── Directory helpers ─────────────────────────────────────────────────────────
+//  Directory helpers 
 
 std::vector<FileEntry> FileBrowser::readDirectory(const std::string& path)
 {
@@ -99,7 +99,7 @@ void FileBrowser::sortEntries(std::vector<FileEntry>& entries)
               });
 }
 
-// ── Drawing helpers ───────────────────────────────────────────────────────────
+//  Drawing helpers 
 
 void FileBrowser::drawFrame(Renderer& renderer,
                             int x, int y, int w, int h,
@@ -268,7 +268,7 @@ void FileBrowser::drawFilterCombo(Renderer& renderer,
     renderer.drawText(x + 1 + PREFIX_COLS + content_w, y, suffix, Renderer::CP_DIALOG);
 }
 
-// ── Focus constants ───────────────────────────────────────────────────────────
+//  Focus constants 
 // FB_FILTER is skipped when there is no filter combo (!has_filter_combo).
 // FB_INPUT  is skipped in SELECT_DIR mode.
 namespace {
@@ -280,19 +280,19 @@ constexpr int FB_CANCEL = 4;
 constexpr int FB_COUNT  = 5;
 }
 
-// ── Core implementation ───────────────────────────────────────────────────────
+//  Core implementation 
 
 std::string FileBrowser::run(Renderer& renderer, Mode mode,
                              const std::string& initial_filename,
                              const std::string& title,
                              const std::vector<FilterEntry>& filters)
 {
-    // ── Mode flags ────────────────────────────────────────────────────────────
+    //  Mode flags 
     const bool dirs_only        = (mode == Mode::SELECT_DIR);
     const bool has_input        = (mode != Mode::SELECT_DIR);
     const bool has_filter_combo = !filters.empty() && has_input;
 
-    // ── Window size ───────────────────────────────────────────────────────────
+    //  Window size 
     // Base size; add 2 rows when filter combo is shown so the list keeps its depth.
     int h = std::min(20, std::max(16, renderer.getHeight() - 10));
     if (has_filter_combo)
@@ -305,13 +305,13 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
     copywin(stdscr, behind, starty, startx, 0, 0, h, w, FALSE);
     nodelay(stdscr, FALSE);
 
-    // ── Mode-specific strings ─────────────────────────────────────────────────
+    //  Mode-specific strings 
     const std::string ok_text     = (mode == Mode::OPEN) ? " &Open "
                                   : (mode == Mode::SAVE) ? " &Save " : " &Select ";
     const std::string can_text    = " &Cancel ";
     const std::string input_label = (mode == Mode::SAVE) ? "Save:" : "File:";
 
-    // ── State ─────────────────────────────────────────────────────────────────
+    //  State 
     char cwd_buf[1024];
     auto c = getcwd(cwd_buf, sizeof(cwd_buf));
     (void)c;
@@ -339,7 +339,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
     int  btn_capture      = -1;
     bool btn_hover_pressed = false;
 
-    // ── Layout ───────────────────────────────────────────────────────────────
+    //  Layout 
     // Fixed overhead per row-group:
     //   borders(2) + path(1) + gap(1) + gap-after-list(1) + btn(1) + gap(1) = 7
     //   + input(1) + gap(1)  = 2 if has_input
@@ -353,7 +353,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
     const int filter_y     = has_filter_combo ? input_y + 2 : -1;
     const int btn_y        = starty + h - 3;
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    //  Helpers 
     auto next_focus = [&](int f, int step) -> int {
         do {
             f = (f + step + FB_COUNT) % FB_COUNT;
@@ -367,7 +367,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
             filename_buf = ents[selection].name;
     };
 
-    // ── Type-ahead search state ───────────────────────────────────────────────
+    //  Type-ahead search state 
     std::string type_search;
     auto type_search_clock = std::chrono::steady_clock::now();
 
@@ -439,7 +439,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
         }
     };
 
-    // ── Main loop ─────────────────────────────────────────────────────────────
+    //  Main loop 
     while (true) {
         // Auto-clear type-ahead search after 1.5 s of inactivity
         if (!type_search.empty()) {
@@ -477,7 +477,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
         if (selection >= (int)entries.size()) selection = (int)entries.size() - 1;
         if (selection < 0) selection = 0;
 
-        // ── Draw ──────────────────────────────────────────────────────────────
+        //  Draw 
         drawFrame     (renderer, startx, starty, w, h, title);
         drawPathHeader(renderer, startx, starty, w, current_path, type_search);
         drawFileList  (renderer, startx + 1, starty + 3, list_w, visible_rows,
@@ -514,7 +514,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
 
         if (pressed) { napms(100); break; }
 
-        // ── Input ─────────────────────────────────────────────────────────────
+        //  Input 
         wint_t ch = renderer.getChar();
 
         // ESC / Alt-hotkey
@@ -536,7 +536,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
         }
 
         switch (ch) {
-        // ── Tab / Shift-Tab ───────────────────────────────────────────────────
+        //  Tab / Shift-Tab 
         case 9:
             type_search.clear();
             focus = next_focus(focus, +1);
@@ -546,7 +546,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
             focus = next_focus(focus, -1);
             break;
 
-        // ── Arrow keys ────────────────────────────────────────────────────────
+        //  Arrow keys 
         case KEY_UP:
             if (focus == FB_LIST) {
                 type_search.clear();
@@ -597,7 +597,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
             }
             break;
 
-        // ── Page / Home / End ─────────────────────────────────────────────────
+        //  Page / Home / End 
         case KEY_PPAGE:
             if (focus == FB_LIST && !entries.empty()) {
                 type_search.clear();
@@ -636,7 +636,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
             }
             break;
 
-        // ── Mouse ─────────────────────────────────────────────────────────────
+        //  Mouse 
         case KEY_MOUSE: {
             MEVENT ev;
             if (getmouse(&ev) != OK) break;
@@ -669,7 +669,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
                 break;
             }
 
-            // ── Button capture: release and drag-motion ───────────────────────
+            //  Button capture: release and drag-motion 
             if (btn_capture >= 0) {
                 if (is_release || is_clicked) {
                     // Fire only if released over the same button that was pressed.
@@ -761,7 +761,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
             break;
         }
 
-        // ── Backspace ─────────────────────────────────────────────────────────
+        //  Backspace 
         case KEY_BACKSPACE: case 127: case 8:
             if (focus == FB_LIST && !type_search.empty()) {
                 type_search.pop_back();
@@ -774,7 +774,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
             }
             break;
 
-        // ── Enter ─────────────────────────────────────────────────────────────
+        //  Enter 
         case KEY_ENTER: case 10: case 13:
             if (focus == FB_CANCEL) {
                 pressed = true;
@@ -797,7 +797,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
             }
             break;
 
-        // ── Printable: type-ahead in list; type into filename field otherwise ──
+        //  Printable: type-ahead in list; type into filename field otherwise 
         default:
             if (focus == FB_LIST && ch > 31 && ch < KEY_MIN) {
                 type_search += wchar_to_utf8(ch);
@@ -810,7 +810,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
         }
     }
 
-    // ── Restore ───────────────────────────────────────────────────────────────
+    //  Restore 
     copywin(behind, stdscr, 0, 0, starty, startx, starty + h, startx + w, FALSE);
     delwin(behind);
     nodelay(stdscr, TRUE);

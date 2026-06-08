@@ -56,6 +56,14 @@ public:
     void zoomIn();
     void zoomOut();
 
+    // Set font smoothing (linear vs nearest texture filtering) and rebuild the
+    // atlas if it changed. Driven by the "Smooth Text" editor setting.
+    void setSmoothScaling(bool on);
+
+    // Session persistence: read / restore window geometry and zoom.
+    void getSessionState(int& win_x, int& win_y, int& win_w, int& win_h, float& scale);
+    void applySessionState(int win_x, int win_y, int win_w, int win_h, float scale);
+
     // Configuration Toggles
     void toggleSmoothScaling();
     void toggleResizable();

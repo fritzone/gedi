@@ -9,6 +9,10 @@ inline const int FONT_CHAR_WIDTH = 8;
 inline const int FONT_CHAR_HEIGHT = 16;
 inline const int FONT_NUM_CHARS = 256;
 inline const int FONT_BYTES_PER_CHAR = 16;
+// Transparent gutter around each glyph in the texture atlas, filled by
+// duplicating the glyph's edge pixels. Prevents linear-filtered scaling from
+// sampling neighbouring glyphs (which showed up as vertical "zombie" lines).
+inline const int FONT_ATLAS_PAD = 1;
 
 // Borland Color Constants
 #define BLACK         0
