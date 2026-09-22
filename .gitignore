@@ -1,0 +1,14 @@
+build/
+build-*/
+CMakeFiles/
+CMakeCache.txt
+
+# Vendored Windows binaries (SDL2 runtime/import libs, prebuilt libclang).
+# Too large to push; kept on disk locally, fetched/rebuilt per machine.
+# Headers, license text and the libclang.def stay tracked.
+sdl2/bin/*.dll
+sdl2/lib/*.dll
+sdl2/lib/*.lib
+sdl2/lib/*.pdb
+thirdparty/llvm/bin/*.dll
+thirdparty/llvm/lib/*.lib

@@ -1,4 +1,5 @@
 #include "DependencyChecker.h"
+#include "platform_compat.h"
 #include "nlohmann/json.hpp"
 
 #include <cstdio>
@@ -9,6 +10,12 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 using json = nlohmann::json;
 
 // ---------------------------------------------------------------------------
@@ -17,7 +24,11 @@ using json = nlohmann::json;
 
 static std::string which(const std::string& name)
 {
+#ifdef _WIN32
+    std::string cmd = "where " + name + " 2>NUL";
+#else
     std::string cmd = "which " + name + " 2>/dev/null";
+#endif
     char buf[512];
     FILE* p = popen(cmd.c_str(), "r");
     if (!p) return {};
@@ -25,11 +36,12 @@ static std::string which(const std::string& name)
     if (fgets(buf, sizeof(buf), p))
         result = buf;
     pclose(p);
-    if (!result.empty() && result.back() == '\n')
+    while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
         result.pop_back();
     return result;
 }
 
+#ifndef _WIN32
 // Read a single key from /etc/os-release (unquoted value).
 static std::string osReleaseField(const std::string& key)
 {
@@ -74,40 +86,55 @@ static Distro detectDistro()
     }
     return Distro::Unknown;
 }
+#endif // !_WIN32
 
 static void printInstallInstructions(const std::vector<std::string>& missing)
 {
-    fprintf(stderr, "\nThe following tools are required but were not found:\n");
+    std::string msg = "\nThe following tools are required but were not found:\n";
     for (const auto& m : missing)
-        fprintf(stderr, "  - %s\n", m.c_str());
-    fprintf(stderr, "\nPlease install them using your package manager:\n\n");
+        msg += "  - " + m + "\n";
+    msg += "\nPlease install them using your package manager:\n\n";
 
+#ifdef _WIN32
+    msg += "  Install a C++ compiler: either the \"Desktop development with C++\"\n"
+           "  workload of Visual Studio (provides cl.exe), or MinGW-w64 (provides\n"
+           "  g++.exe), and make sure it is on PATH.\n"
+           "  Install Python 3 from https://python.org and make sure python.exe is on PATH.\n";
+#else
     Distro d = detectDistro();
     switch (d) {
         case Distro::Debian:
-            fprintf(stderr, "  sudo apt update\n");
-            fprintf(stderr, "  sudo apt install build-essential pkg-config python3\n");
+            msg += "  sudo apt update\n  sudo apt install build-essential pkg-config python3\n";
             break;
         case Distro::Fedora:
-            fprintf(stderr, "  sudo dnf install gcc gcc-c++ pkgconf-pkg-config python3\n");
+            msg += "  sudo dnf install gcc gcc-c++ pkgconf-pkg-config python3\n";
             break;
         case Distro::Arch:
-            fprintf(stderr, "  sudo pacman -S base-devel pkgconf python\n");
+            msg += "  sudo pacman -S base-devel pkgconf python\n";
             break;
         case Distro::Suse:
-            fprintf(stderr, "  sudo zypper install gcc gcc-c++ pkg-config python3\n");
+            msg += "  sudo zypper install gcc gcc-c++ pkg-config python3\n";
             break;
         case Distro::Alpine:
-            fprintf(stderr, "  sudo apk add build-base pkgconf python3\n");
+            msg += "  sudo apk add build-base pkgconf python3\n";
             break;
         default:
-            fprintf(stderr, "  Install a C/C++ compiler (gcc or clang), pkg-config, and python3\n");
-            fprintf(stderr, "  using your distribution's package manager.\n");
+            msg += "  Install a C/C++ compiler (gcc or clang), pkg-config, and python3\n"
+                   "  using your distribution's package manager.\n";
             break;
     }
-    fprintf(stderr, "\nAfter installing, run gedi again.\n");
-    fprintf(stderr, "To start gedi anyway and skip this check permanently, run:\n");
-    fprintf(stderr, "  gedi --ignore-dependencies\n\n");
+#endif
+    msg += "\nAfter installing, run gedi again.\n"
+           "To start gedi anyway and skip this check permanently, run:\n"
+           "  gedi --ignore-dependencies\n\n";
+
+    fprintf(stderr, "%s", msg.c_str());
+
+#ifdef _WIN32
+    // gedi-gui has no console window, so stderr is otherwise invisible —
+    // make sure the user actually sees why the app didn't start.
+    MessageBoxA(nullptr, msg.c_str(), "gedi - missing dependencies", MB_OK | MB_ICONERROR);
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -116,8 +143,14 @@ static void printInstallInstructions(const std::vector<std::string>& missing)
 
 std::string DependencyChecker::toolchainPath()
 {
+#ifdef _WIN32
+    const char* home = getenv("USERPROFILE");
+    if (!home) home = getenv("TEMP");
+    if (!home) home = "C:\\Windows\\Temp";
+#else
     const char* home = getenv("HOME");
     if (!home) home = "/tmp";
+#endif
     return std::string(home) + "/.config/gedi/toolchain.json";
 }
 
@@ -166,6 +199,31 @@ bool DependencyChecker::check(Toolchain& out, bool ignore)
     // First run (or incomplete toolchain file): probe the system.
     Toolchain t;
 
+#ifdef _WIN32
+    // Prefer MSVC (cl.exe) if present, otherwise fall back to a MinGW g++/gcc.
+    t.cxx = which("cl");
+    t.cc  = t.cxx;
+    if (t.cxx.empty()) {
+        t.cxx = which("g++");
+        t.cc  = which("gcc");
+    }
+
+    t.clang     = which("clang");
+    t.clang_cxx = which("clang++");
+
+    // pkg-config isn't part of the Windows toolchain; leave it unset.
+    t.pkg_config.clear();
+
+    // Python: prefer python, fall back to python3
+    t.python3 = which("python");
+    if (t.python3.empty()) t.python3 = which("python3");
+
+    std::vector<std::string> missing;
+    if (t.cxx.empty())
+        missing.push_back("C++ compiler (MSVC cl.exe or MinGW g++)");
+    if (t.python3.empty())
+        missing.push_back("python");
+#else
     // C compiler: prefer gcc, fall back to cc
     t.cc = which("gcc");
     if (t.cc.empty()) t.cc = which("cc");
@@ -195,6 +253,7 @@ bool DependencyChecker::check(Toolchain& out, bool ignore)
         missing.push_back("pkg-config");
     if (t.python3.empty())
         missing.push_back("python3");
+#endif
 
     if (!missing.empty()) {
         fprintf(stderr,

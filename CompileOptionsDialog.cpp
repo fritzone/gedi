@@ -2,7 +2,13 @@
 #include "BuildSystem.h"
 #include "utils.h"
 #include "curses_compat.h"
+#include "platform_compat.h"
 #include <cstdio>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 static std::vector<OptionList::Option> buildOptions(const CompilerSettings& s, int tab)
 {
@@ -159,13 +165,26 @@ void CompileOptionsDialog::onInit()
                 .on_activate = [this]() -> HandleResult {
                     std::string cmd;
                     if (project_) {
-                        cmd = BuildSystem::buildProjectPreview(*project_, temp_);
+                        cmd = buildSystem_.buildProjectPreview(*project_, temp_);
                     } else {
                         std::string base = buildSystem_.guessCompileCommand(filename_);
                         cmd = buildSystem_.get_full_compile_command(base, temp_);
                     }
+#ifdef _WIN32
+                    if (OpenClipboard(nullptr)) {
+                        EmptyClipboard();
+                        HGLOBAL hmem = GlobalAlloc(GMEM_MOVEABLE, cmd.size() + 1);
+                        if (hmem) {
+                            memcpy(GlobalLock(hmem), cmd.c_str(), cmd.size() + 1);
+                            GlobalUnlock(hmem);
+                            SetClipboardData(CF_TEXT, hmem);
+                        }
+                        CloseClipboard();
+                    }
+#else
                     FILE* p = popen("xclip -selection clipboard -i", "w");
                     if (p) { fputs(cmd.c_str(), p); pclose(p); }
+#endif
                     return HandleResult::CONTINUE;
                 }
             },
@@ -209,7 +228,7 @@ void CompileOptionsDialog::onDraw(Renderer& renderer, int startx, int starty)
     // Command preview (project mode or per-file mode)
     std::string cmd;
     if (project_) {
-        cmd = BuildSystem::buildProjectPreview(*project_, temp_);
+        cmd = buildSystem_.buildProjectPreview(*project_, temp_);
     } else {
         std::string base = buildSystem_.guessCompileCommand(filename_);
         cmd = buildSystem_.get_full_compile_command(base, temp_);

@@ -4,16 +4,48 @@ project(gedi CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# The sources are UTF-8 without a BOM and embed literal Unicode characters in
+# wide-string literals (box-drawing glyphs, etc.). GCC/Clang assume UTF-8 source
+# by default; MSVC assumes the active ANSI code page unless told otherwise, which
+# silently corrupts those literals. /utf-8 sets both the source and execution
+# character sets to UTF-8, matching Linux behaviour.
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 # ---------------------------------------------------------------------------
 #  Dependencies common to both flavours
 # ---------------------------------------------------------------------------
 # libclang (semantic highlighting / go-to-definition)
-find_path(CLANG_INCLUDE_DIR clang-c/Index.h)
-find_library(CLANG_LIBRARY NAMES clang libclang)
+#
+# On Windows there is no system-wide libclang install, so we vendor a
+# prebuilt one (DLL + hand-generated import lib + headers) under thirdparty/llvm.
+if(WIN32)
+    set(GEDI_LLVM_ROOT "${CMAKE_SOURCE_DIR}/thirdparty/llvm" CACHE PATH "Root of the prebuilt libclang used on Windows")
+endif()
+find_path(CLANG_INCLUDE_DIR clang-c/Index.h HINTS ${GEDI_LLVM_ROOT}/include)
+find_library(CLANG_LIBRARY NAMES clang libclang HINTS ${GEDI_LLVM_ROOT}/lib)
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(Clang DEFAULT_MSG CLANG_LIBRARY CLANG_INCLUDE_DIR)
 if(NOT CLANG_FOUND)
-    message(FATAL_ERROR "libclang not found. Please install libclang-dev or equivalent.")
+    message(FATAL_ERROR "libclang not found. Please install libclang-dev (Linux) or populate thirdparty/llvm (Windows).")
+endif()
+if(WIN32)
+    find_file(CLANG_DLL NAMES libclang.dll HINTS ${GEDI_LLVM_ROOT}/bin)
+endif()
+
+# On Windows, gedi-gui vendors its own SDL2 (no system package available).
+if(WIN32)
+    set(GEDI_SDL2_ROOT "${CMAKE_SOURCE_DIR}/sdl2" CACHE PATH "Root of the prebuilt SDL2 used on Windows")
+    if(EXISTS "${GEDI_SDL2_ROOT}/include/SDL2/SDL.h")
+        set(SDL2_FOUND TRUE)
+        set(SDL2_INCLUDE_DIRS "${GEDI_SDL2_ROOT}/include")
+        find_library(SDL2_LIBRARY NAMES SDL2 HINTS "${GEDI_SDL2_ROOT}/lib")
+        set(SDL2_LIBRARIES ${SDL2_LIBRARY})
+        set(SDL2_RUNTIME_DLLS
+            "${GEDI_SDL2_ROOT}/lib/SDL2.dll"
+        )
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
@@ -50,6 +82,7 @@ set(GEDI_COMMON_SOURCES
     utils.cpp
     DialogBase.cpp
     DependencyChecker.cpp
+    platform_compat.cpp
 )
 
 # Helper that copies the runtime data files next to a freshly built target.
@@ -84,7 +117,9 @@ endif()
 #  Re-uses every shared source but swaps the ncurses backend for the
 #  curses_compat emulation layer running on top of the SDL BorlandEngine.
 # ===========================================================================
-find_package(SDL2)
+if(NOT SDL2_FOUND)
+    find_package(SDL2)
+endif()
 if(SDL2_FOUND)
     add_executable(gedi-gui
         ${GEDI_COMMON_SOURCES}
@@ -94,6 +129,17 @@ if(SDL2_FOUND)
     target_compile_definitions(gedi-gui PRIVATE GEDI_GUI)
     target_include_directories(gedi-gui PRIVATE ${CLANG_INCLUDE_DIR} ${SDL2_INCLUDE_DIRS})
     target_link_libraries(gedi-gui ${CLANG_LIBRARY} ${SDL2_LIBRARIES})
+
+    # It's a graphical app: run it under the Windows subsystem so no console
+    # window is allocated. The code is written against a plain int main(argc,argv),
+    # so keep that as the actual entry point (mainCRTStartup) rather than requiring
+    # a WinMain — only the subsystem (no console) changes.
+    if(WIN32)
+        set_target_properties(gedi-gui PROPERTIES WIN32_EXECUTABLE TRUE)
+        if(MSVC)
+            set_target_properties(gedi-gui PROPERTIES LINK_FLAGS "/ENTRY:mainCRTStartup")
+        endif()
+    endif()
     copy_data_files(gedi-gui colors.json config.json help.hlp)
     # The VGA font lives in graphics_engine/; copy it next to the binary.
     add_custom_command(TARGET gedi-gui POST_BUILD
@@ -103,6 +149,23 @@ if(SDL2_FOUND)
         COMMENT "Copying VGA9.F16 to gedi-gui build directory")
     install(TARGETS gedi-gui DESTINATION bin)
     install(FILES graphics_engine/VGA9.F16 DESTINATION share/gedi)
+
+    # Windows has no system libclang/SDL2 — drop the vendored DLLs next to the
+    # freshly built executable so it runs without extra PATH setup.
+    if(WIN32)
+        if(CLANG_DLL)
+            add_custom_command(TARGET gedi-gui POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CLANG_DLL} $<TARGET_FILE_DIR:gedi-gui>
+                COMMENT "Copying libclang.dll to gedi-gui build directory")
+        endif()
+        foreach(_dll ${SDL2_RUNTIME_DLLS})
+            if(EXISTS ${_dll})
+                add_custom_command(TARGET gedi-gui POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_dll} $<TARGET_FILE_DIR:gedi-gui>
+                    COMMENT "Copying ${_dll} to gedi-gui build directory")
+            endif()
+        endforeach()
+    endif()
 else()
     message(WARNING "SDL2 not found — skipping the graphical 'gedi-gui' target. Install libsdl2-dev to enable it.")
 endif()

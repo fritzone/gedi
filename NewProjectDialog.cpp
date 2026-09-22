@@ -5,7 +5,7 @@
 #include <cstdio>
 #include <filesystem>
 #include "curses_compat.h"
-#include <unistd.h>
+#include "platform_compat.h"
 
 // ── UTF-8 helpers ─────────────────────────────────────────────────────────────
 
@@ -81,7 +81,11 @@ std::vector<LibraryInfo> NewProjectDialog::loadLibraries()
     };
 
     char exe_buf[PATH_MAX] = {};
+#ifdef _WIN32
+    if (win_self_exe_path(exe_buf, sizeof(exe_buf)) > 0) {
+#else
     if (readlink("/proc/self/exe", exe_buf, PATH_MAX - 1) > 0) {
+#endif
         fs::path exe_dir = fs::path(exe_buf).parent_path();
         try_path(exe_dir / "librarian.py");
         try_path(exe_dir / "../share/gedi/librarian.py");
@@ -92,7 +96,11 @@ std::vector<LibraryInfo> NewProjectDialog::loadLibraries()
 
     if (script.empty()) return {};
 
+#ifdef _WIN32
+    FILE* fp = popen(("python \"" + script + "\" 2>NUL").c_str(), "r");
+#else
     FILE* fp = popen(("python3 " + script + " 2>/dev/null").c_str(), "r");
+#endif
     if (!fp) return {};
 
     std::string output;

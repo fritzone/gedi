@@ -20,8 +20,19 @@
 #include <thread>
 #include <chrono>
 #include <iostream>
+#include "platform_compat.h"
+#ifdef _WIN32
+// Not <conio.h>: its deprecated getch()/ungetch() aliases collide with the
+// identically-named functions curses_compat.h declares for the GUI build.
+extern "C" int _getch(void);
+#include <io.h>
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#else
 #include <termios.h>
 #include <unistd.h>
+#endif
 #include <cstdio>
 #include <regex>
 #include <algorithm>
@@ -567,7 +578,7 @@ void TextEditor::drawMainUI() {
             !currentBuffer().is_new_file) {
             auto rel = std::filesystem::path(currentBuffer().filename)
                            .lexically_relative(m_project.root);
-            if (!rel.empty() && rel.native().substr(0, 2) != "..")
+            if (!rel.empty() && rel.generic_string().substr(0, 2) != "..")
                 proj_badge = " · " + m_project.name;   // " · ProjectName"
         }
 
@@ -1649,8 +1660,21 @@ void TextEditor::HandleCopy() {
         p = p->next;
     }
 
+#ifdef _WIN32
+    if (OpenClipboard(nullptr)) {
+        EmptyClipboard();
+        HGLOBAL hmem = GlobalAlloc(GMEM_MOVEABLE, text_to_copy.size() + 1);
+        if (hmem) {
+            memcpy(GlobalLock(hmem), text_to_copy.c_str(), text_to_copy.size() + 1);
+            GlobalUnlock(hmem);
+            SetClipboardData(CF_TEXT, hmem);
+        }
+        CloseClipboard();
+    }
+#else
     FILE* pipe = popen("xclip -selection clipboard -i", "w");
     if (pipe) { fputs(text_to_copy.c_str(), pipe); pclose(pipe); }
+#endif
 }
 
 void TextEditor::HandleCut() {
@@ -1664,12 +1688,24 @@ void TextEditor::HandlePaste() {
     CreateUndoPoint(currentBuffer());
     EditorBuffer& buffer = currentBuffer();
     std::string pasted_text;
+#ifdef _WIN32
+    if (OpenClipboard(nullptr)) {
+        HANDLE hmem = GetClipboardData(CF_TEXT);
+        if (hmem) {
+            const char* data = static_cast<const char*>(GlobalLock(hmem));
+            if (data) pasted_text = data;
+            GlobalUnlock(hmem);
+        }
+        CloseClipboard();
+    }
+#else
     FILE* pipe = popen("xclip -selection clipboard -o", "r");
     if (pipe) {
         char buf[128];
         while (fgets(buf, sizeof(buf), pipe) != nullptr) { pasted_text += buf; }
         pclose(pipe);
     }
+#endif
 
     if (pasted_text.empty()) return;
 
@@ -2819,7 +2855,11 @@ void TextEditor::CreateNewProject()
 
         // ── Git init (optional) ───────────────────────────────────────────────
         if (temp.init_git) {
+#ifdef _WIN32
+            std::string cmd = "git -C \"" + root.string() + "\" init -q 2>NUL";
+#else
             std::string cmd = "git -C \"" + root.string() + "\" init -q 2>/dev/null";
+#endif
             auto t = std::system(cmd.c_str());
             (void)t;
 
@@ -3850,6 +3890,9 @@ void TextEditor::ShowOutputScreen() {
 
     std::cout << "\033[2J\033[H" << m_output_content << std::flush;
 
+#ifdef _WIN32
+    _getch();
+#else
     struct termios old_tio, new_tio;
     tcgetattr(STDIN_FILENO, &old_tio);
     new_tio = old_tio;
@@ -3859,6 +3902,7 @@ void TextEditor::ShowOutputScreen() {
     getchar();
 
     tcsetattr(STDIN_FILENO, TCSANOW, &old_tio);
+#endif
 
     reset_prog_mode();
     refresh();
@@ -3909,10 +3953,20 @@ CompilationResult TextEditor::runCompilationProcess() {
         if (buffer.is_new_file) {
             auto dot = buffer.filename.rfind('.');
             std::string ext = (dot != std::string::npos) ? buffer.filename.substr(dot) : ".cpp";
+#ifdef _WIN32
+            char tmp_dir[MAX_PATH];
+            GetTempPathA(sizeof(tmp_dir), tmp_dir);
+            std::string tmpl = std::string(tmp_dir) + "gedi_XXXXXX";
+#else
             std::string tmpl = "/tmp/gedi_XXXXXX";
+#endif
             int fd = mkstemp(tmpl.data());
             if (fd != -1) {
+#ifdef _WIN32
+                _close(fd);
+#else
                 close(fd);
+#endif
                 temp_src = tmpl + ext;
                 std::rename(tmpl.c_str(), temp_src.c_str());
                 std::ofstream out(temp_src);
@@ -3988,44 +4042,56 @@ void TextEditor::compileAndRun() {
     touchwin(stdscr);
     refresh();
 
-    // 4. Show the final scrollable results dialog
-    showScrollableOutputDialog(result.output_lines);
-
-    // 5. Proceed based on the result
-    if (result.success) {
-        const std::string& exe = result.executable_name;
-        if (exe.empty() || !std::filesystem::exists(exe)) {
-            msgwin("Build succeeded.\nExecutable not found at:\n" +
-                   (exe.empty() ? "(unknown)" : exe) +
-                   "\n\nRun the program manually from a terminal.");
-            m_compile_output_visible = true;
-            m_renderer->hideCursor();
-            return;
-        }
-
-        def_prog_mode();
-        endwin();
-
-        std::string temp_output_file = "tedit_run_output.tmp";
-        std::string run_cmd = (exe[0] == '/') ? "\"" + exe + "\"" : ("./" + exe);
-        run_cmd += " > " + temp_output_file + " 2>&1";
-        auto t = system(run_cmd.c_str());
-        (void)t;
-
-        std::ifstream run_output_stream(temp_output_file);
-        m_output_content = std::string((std::istreambuf_iterator<char>(run_output_stream)), std::istreambuf_iterator<char>());
-        run_output_stream.close();
-        remove(temp_output_file.c_str());
-        if (!result.temp_exe.empty()) std::remove(result.temp_exe.c_str());
-        m_output_content += "\n\n--- Press any key to return to the editor. ---";
-
-        reset_prog_mode();
-        refresh();
-        m_output_screen_visible = true;
-    } else {
+    // 4. On failure, show the scrollable build log so the user can see what
+    // went wrong. On success, skip straight to running the program — no
+    // intermediate dialogs to dismiss first.
+    if (!result.success) {
+        showScrollableOutputDialog(result.output_lines);
         m_compile_output_visible = true;
         m_renderer->hideCursor();
+        return;
     }
+
+    const std::string& exe = result.executable_name;
+    if (exe.empty() || !std::filesystem::exists(exe)) {
+        showScrollableOutputDialog(result.output_lines);
+        msgwin("Build succeeded.\nExecutable not found at:\n" +
+               (exe.empty() ? "(unknown)" : exe) +
+               "\n\nRun the program manually from a terminal.");
+        m_compile_output_visible = true;
+        m_renderer->hideCursor();
+        return;
+    }
+
+    def_prog_mode();
+    endwin();
+
+    std::string temp_output_file = "tedit_run_output.tmp";
+#ifdef _WIN32
+    // Runs the program directly (no shell), so no console window ever flashes
+    // on screen — the program's output only ever appears in gedi's own output
+    // screen below.
+    run_process_captured(exe, temp_output_file);
+#else
+    bool is_absolute = exe[0] == '/';
+    std::string run_cmd = is_absolute ? "\"" + exe + "\"" : ("./" + exe);
+    run_cmd += " > " + temp_output_file + " 2>&1";
+    auto t = system(run_cmd.c_str());
+    (void)t;
+#endif
+
+    std::ifstream run_output_stream(temp_output_file);
+    m_output_content = std::string((std::istreambuf_iterator<char>(run_output_stream)), std::istreambuf_iterator<char>());
+    run_output_stream.close();
+    remove(temp_output_file.c_str());
+    if (!result.temp_exe.empty()) std::remove(result.temp_exe.c_str());
+    if (m_output_content.empty())
+        m_output_content = "(the program produced no output)\n";
+    m_output_content += "\n\n--- Press any key to return to the editor. ---";
+
+    reset_prog_mode();
+    refresh();
+    m_output_screen_visible = true;
 }
 
 void TextEditor::compileOnly() {

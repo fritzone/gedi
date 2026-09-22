@@ -1,12 +1,44 @@
 #include "BuildSystem.h"
+#include "platform_compat.h"
 #include <cstdio>
+#include <cctype>
 #include <sstream>
 #include <regex>
 #include <filesystem>
-#include <sys/wait.h>
 
-BuildSystem::BuildSystem(const Config& config, std::filesystem::path exe_dir) 
+BuildSystem::BuildSystem(const Config& config, std::filesystem::path exe_dir)
     : m_config(config), m_exe_dir(exe_dir) {}
+
+bool BuildSystem::isMsvcCompiler(const std::string& compilerPath) {
+    std::string p = compilerPath;
+    if (p.size() >= 2 && p.front() == '"' && p.back() == '"')
+        p = p.substr(1, p.size() - 2);
+    std::string stem = std::filesystem::path(p).stem().string();
+    for (auto& c : stem) c = (char)std::tolower((unsigned char)c);
+    return stem == "cl";
+}
+
+// First whitespace-delimited (quote-aware) token of a shell command line —
+// the compiler executable.
+static std::string firstCommandToken(const std::string& cmd) {
+    if (cmd.empty()) return "";
+    if (cmd.front() == '"') {
+        size_t end = cmd.find('"', 1);
+        if (end != std::string::npos) return cmd.substr(1, end - 1);
+    }
+    size_t sp = cmd.find(' ');
+    return (sp == std::string::npos) ? cmd : cmd.substr(0, sp);
+}
+
+// "c++17" -> "/std:c++17" for cl.exe, "-std=c++17" for GCC/Clang. cl.exe has
+// no dialect switch below C++14, so older standards just take the compiler's
+// default rather than passing something it will reject.
+static std::string stdFlag(const std::string& cpp_standard, bool msvc) {
+    if (!msvc) return "-std=" + cpp_standard;
+    if (cpp_standard == "c++98" || cpp_standard == "c++03" || cpp_standard == "c++11")
+        return "";
+    return "/std:" + cpp_standard;
+}
 
 CompilationResult BuildSystem::runCompilationProcess(EditorBuffer& buffer) {
     CompilationResult result;
@@ -25,9 +57,18 @@ CompilationResult BuildSystem::runCompilationProcess(EditorBuffer& buffer) {
     result.output_lines.push_back("> " + result.full_command);
 
     size_t o_pos = result.full_command.find("-o ");
+    size_t fe_pos = result.full_command.find("/Fe:");
     if (o_pos != std::string::npos) {
         std::string temp = result.full_command.substr(o_pos + 3);
         result.executable_name = temp.substr(0, temp.find(' '));
+    } else if (fe_pos != std::string::npos) {
+        std::string temp = result.full_command.substr(fe_pos + 4);
+        if (!temp.empty() && temp.front() == '"') {
+            size_t end = temp.find('"', 1);
+            result.executable_name = temp.substr(1, end == std::string::npos ? std::string::npos : end - 1);
+        } else {
+            result.executable_name = temp.substr(0, temp.find(' '));
+        }
     } else {
         result.executable_name = "a.out";
     }
@@ -51,9 +92,41 @@ CompilationResult BuildSystem::runCompilationProcess(EditorBuffer& buffer) {
     return result;
 }
 
-std::string BuildSystem::settingsToFlags(const CompilerSettings& s)
+std::string BuildSystem::settingsToFlags(const CompilerSettings& s, bool msvc)
 {
     std::string f;
+
+    if (msvc) {
+        // cl.exe has no per-warning switches matching GCC's -W* catalogue; a
+        // request for any of them just bumps the overall warning level.
+        bool any_extra_warn = s.wextra || s.wconversion || s.wsign_conversion || s.wshadow ||
+            s.wnon_virtual_dtor || s.wold_style_cast || s.woverloaded_virtual ||
+            s.wnull_dereference || s.wdouble_promotion || s.wformat_2 ||
+            s.wcast_align || s.wcast_qual || s.wswitch_enum || s.wundef ||
+            s.wredundant_decls || s.wlogical_op || s.wuseless_cast || s.weffcxx;
+        f += (s.wall || any_extra_warn) ? "/W4 " : "/W3 ";
+        if (s.wpedantic) f += "/permissive- ";
+        if (s.werror)    f += "/WX ";
+
+        if (s.debug_symbols) f += "/Zi ";
+        if (s.optimization_level == 0)      f += "/Od ";
+        else if (s.optimization_level == 1) f += "/O2 ";
+        else if (s.optimization_level == 2) f += "/Ox ";
+
+        f += s.fno_exceptions ? "" : "/EHsc ";
+        if (s.fno_rtti)             f += "/GR- ";
+        if (s.fsanitize_address_ub) f += "/fsanitize=address ";
+
+        // No cl.exe equivalent for these GCC/Clang-specific options, so they're
+        // intentionally dropped rather than passed through broken:
+        // -flto, -march/-mtune=native, -fvisibility=hidden, -fstrict-aliasing,
+        // -fsanitize=leak/pointer-compare/pointer-subtract, -Wl,...
+
+        if (!s.optional_flags.empty()) f += s.optional_flags + " ";
+        if (!f.empty() && f.back() == ' ') f.pop_back();
+        return f;
+    }
+
     if (s.debug_symbols)         f += "-g ";
     if (s.optimization_level==0) f += "-O0 ";
     else if (s.optimization_level==1) f += "-O2 ";
@@ -100,7 +173,7 @@ std::string BuildSystem::settingsToFlags(const CompilerSettings& s)
 
 // ── buildProjectPreview ───────────────────────────────────────────────────────
 
-std::string BuildSystem::buildProjectPreview(const GediProject& project, const CompilerSettings& s)
+std::string BuildSystem::buildProjectPreview(const GediProject& project, const CompilerSettings& s) const
 {
     const std::string& root = project.root;
     std::string std_num = s.cpp_standard;
@@ -113,7 +186,8 @@ std::string BuildSystem::buildProjectPreview(const GediProject& project, const C
     else if (s.optimization_level == 2) bt = "Release";
     else bt = "Debug";
 
-    std::string flags = settingsToFlags(s);
+    bool msvc = isMsvcCompiler(m_config.toolchain.cxx);
+    std::string flags = settingsToFlags(s, msvc);
 
     if (project.build_system == "cmake") {
         std::string build_dir = root + "/build";
@@ -138,6 +212,28 @@ std::string BuildSystem::buildProjectPreview(const GediProject& project, const C
              + "CXXFLAGS=\"" + cxxflags + "\" ninja -C \"" + build_dir + "\"";
     }
     return "(unknown build system: " + project.build_system + ")";
+}
+
+// After a successful build, search the build tree for the produced executable
+// rather than assuming a fixed layout: CMake's default generator on Windows
+// (Visual Studio) puts binaries in a per-config subdirectory (build/Debug/...)
+// that can't be predicted up front, and the binary needs a .exe suffix there.
+static std::string findBuiltExecutable(const std::string& search_root, const std::string& name) {
+#ifdef _WIN32
+    std::string target = name + ".exe";
+#else
+    std::string target = name;
+#endif
+    std::error_code ec;
+    if (!std::filesystem::exists(search_root, ec)) return "";
+    auto it  = std::filesystem::recursive_directory_iterator(
+        search_root, std::filesystem::directory_options::skip_permission_denied, ec);
+    auto end = std::filesystem::recursive_directory_iterator();
+    for (; !ec && it != end; it.increment(ec)) {
+        if (it->is_regular_file(ec) && it->path().filename() == target)
+            return it->path().string();
+    }
+    return "";
 }
 
 CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
@@ -182,7 +278,8 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
     std::string std_num = cs.cpp_standard;
     if (std_num.rfind("c++", 0) == 0) std_num = std_num.substr(3);
 
-    std::string extra_flags = settingsToFlags(cs);
+    bool msvc = isMsvcCompiler(m_config.toolchain.cxx);
+    std::string extra_flags = settingsToFlags(cs, msvc);
 
     if (project.build_system == "cmake") {
         // Locate or create build directory
@@ -242,6 +339,14 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
     result.success = run_cmd(build_cmd);
     result.output_lines.push_back("");
     result.output_lines.push_back(result.success ? "=== Build successful ===" : "=== Build failed ===");
+
+    if (result.success) {
+        // Replace the pre-build guess with the actual binary location — the
+        // guess doesn't account for per-config output subdirectories (CMake's
+        // Visual Studio generator) or the platform's executable suffix.
+        std::string found = findBuiltExecutable(build_dir, project.name);
+        if (!found.empty()) result.executable_name = found;
+    }
     return result;
 }
 
@@ -340,8 +445,13 @@ std::string BuildSystem::guessCompileCommand(const std::string& filename) {
     if (!std::filesystem::exists(cguess_path))
         cguess_path = "/usr/local/lib/python3/dist-packages/gedi/cguess.py";
 
+#ifdef _WIN32
+    const std::string python = m_config.toolchain.python3.empty() ? "python" : m_config.toolchain.python3;
+    std::string cguess_cmd = "\"" + python + "\" \"" + cguess_path + "\" \"" + filename + "\" 2>NUL";
+#else
     const std::string python = m_config.toolchain.python3.empty() ? "python3" : m_config.toolchain.python3;
     std::string cguess_cmd = "\"" + python + "\" \"" + cguess_path + "\" \"" + filename + "\" 2>/dev/null";
+#endif
     char buffer_arr[512];
     std::string full_cguess_output;
 
@@ -362,7 +472,11 @@ std::string BuildSystem::guessCompileCommand(const std::string& filename) {
     // Fallback: use the toolchain-discovered C++ compiler, or g++ if unknown.
     if (result.empty()) {
         const std::string cxx = m_config.toolchain.cxx.empty() ? "g++" : m_config.toolchain.cxx;
-        result = "\"" + cxx + "\" \"" + filename + "\" -o \"" + filename.substr(0, filename.find_last_of('.')) + "\"";
+        std::string stem = filename.substr(0, filename.find_last_of('.'));
+        if (isMsvcCompiler(cxx))
+            result = "\"" + cxx + "\" \"" + filename + "\" /Fe:\"" + stem + ".exe\"";
+        else
+            result = "\"" + cxx + "\" \"" + filename + "\" -o \"" + stem + "\"";
     }
 
     {
@@ -405,58 +519,25 @@ std::vector<std::string> BuildSystem::getClangArguments(const std::string& filen
 std::string BuildSystem::get_full_compile_command(const std::string& base_command, const CompilerSettings& settings) {
     if (base_command.empty()) return "";
 
-    std::string flags;
-    flags += "-std=" + settings.cpp_standard + " ";
+    bool msvc = isMsvcCompiler(firstCommandToken(base_command));
 
-    if (settings.debug_symbols) flags += "-g ";
-    if (settings.optimization_level == 0) flags += "-O0 ";
-    else if (settings.optimization_level == 1) flags += "-O2 ";
-    else if (settings.optimization_level == 2) flags += "-O3 ";
+    std::string flags = stdFlag(settings.cpp_standard, msvc);
+    std::string rest  = settingsToFlags(settings, msvc);
+    if (!rest.empty()) flags += (flags.empty() ? "" : " ") + rest;
+    if (flags.empty()) return base_command;
 
-    if (settings.wall)     flags += "-Wall ";
-    if (settings.wextra)   flags += "-Wextra ";
-    if (settings.wpedantic) flags += "-Wpedantic ";
-    if (settings.werror)   flags += "-Werror ";
+    // Split right after the compiler token, not on the first bare space — a
+    // Windows compiler path like "C:\Program Files\...\cl.exe" is itself
+    // quoted and contains spaces, so naively splitting on the first space
+    // would cut the command in half mid-path.
+    size_t token_end;
+    if (base_command.front() == '"') {
+        size_t close = base_command.find('"', 1);
+        token_end = (close == std::string::npos) ? base_command.size() : close + 1;
+    } else {
+        size_t sp = base_command.find(' ');
+        token_end = (sp == std::string::npos) ? base_command.size() : sp;
+    }
 
-    if (settings.wconversion)        flags += "-Wconversion ";
-    if (settings.wsign_conversion)   flags += "-Wsign-conversion ";
-    if (settings.wshadow)            flags += "-Wshadow ";
-    if (settings.wnon_virtual_dtor)  flags += "-Wnon-virtual-dtor ";
-    if (settings.wold_style_cast)    flags += "-Wold-style-cast ";
-    if (settings.woverloaded_virtual) flags += "-Woverloaded-virtual ";
-    if (settings.wnull_dereference)  flags += "-Wnull-dereference ";
-    if (settings.wdouble_promotion)  flags += "-Wdouble-promotion ";
-    if (settings.wformat_2)          flags += "-Wformat=2 ";
-
-    if (settings.fno_omit_frame_pointer)  flags += "-fno-omit-frame-pointer ";
-    if (settings.fsanitize_address_ub)    flags += "-fsanitize=address,undefined ";
-    if (settings.fsanitize_leak)          flags += "-fsanitize=leak ";
-    if (settings.flto)                    flags += "-flto ";
-    if (settings.march_native)            flags += "-march=native ";
-    if (settings.mtune_native)            flags += "-mtune=native ";
-
-    if (settings.wcast_align)         flags += "-Wcast-align ";
-    if (settings.wcast_qual)          flags += "-Wcast-qual ";
-    if (settings.wswitch_enum)        flags += "-Wswitch-enum ";
-    if (settings.wundef)              flags += "-Wundef ";
-    if (settings.wredundant_decls)    flags += "-Wredundant-decls ";
-    if (settings.wlogical_op)         flags += "-Wlogical-op ";
-    if (settings.wuseless_cast)       flags += "-Wuseless-cast ";
-    if (settings.weffcxx)             flags += "-Weffc++ ";
-
-    if (settings.fno_exceptions)          flags += "-fno-exceptions ";
-    if (settings.fno_rtti)                flags += "-fno-rtti ";
-    if (settings.fvisibility_hidden)      flags += "-fvisibility=hidden ";
-    if (settings.fstrict_aliasing)        flags += "-fstrict-aliasing ";
-    if (settings.fsanitize_pointer_compare)  flags += "-fsanitize=pointer-compare ";
-    if (settings.fsanitize_pointer_subtract) flags += "-fsanitize=pointer-subtract ";
-    if (settings.wl_as_needed)            flags += "-Wl,--as-needed ";
-    if (settings.wl_o1)                   flags += "-Wl,-O1 ";
-
-    if (!settings.optional_flags.empty())
-        flags += settings.optional_flags + " ";
-
-    size_t compiler_pos = base_command.find(' ');
-    if (compiler_pos == std::string::npos) return base_command + " " + flags;
-    return base_command.substr(0, compiler_pos) + " " + flags + " " + base_command.substr(compiler_pos + 1);
+    return base_command.substr(0, token_end) + " " + flags + base_command.substr(token_end);
 }

@@ -234,8 +234,26 @@ void BorlandEngine::draw_mouse_overlay() {
     draw_char(c.character_code, mouse_grid_x - 1, mouse_grid_y - 1, fg, bg);
 }
 
+// Glyphs are packed side by side in one texture row. When smooth_scaling is on,
+// SDL_RenderCopy samples with linear filtering; scaled up, that reads half a
+// texel past each source rect's edge, bleeding in the neighbouring glyph's
+// pixels (visible as a faint vertical seam through every character, most
+// obvious against a solid button background).
+//
+// A 1px gutter between cells gives the sampler somewhere harmless to read
+// instead — but leaving that gutter blank breaks the box-drawing and block
+// characters, which are *meant* to butt up against their neighbour with no
+// gap (a horizontal line, a shaded scrollbar track, etc). So instead of
+// blank, each gutter column is a copy of the glyph's own edge column: real
+// VGA hardware did the equivalent for its 9-pixel-wide cells, duplicating
+// column 8 into column 9 for the line-drawing range so strokes stayed
+// unbroken from cell to cell. Blending an edge pixel with a copy of itself
+// is a no-op, so this fixes the bleed without leaving a seam.
+static constexpr int kGlyphPad = 1;
+static constexpr int kGlyphStride = FONT_CHAR_WIDTH + 2 * kGlyphPad;
+
 SDL_Texture* BorlandEngine::create_font_texture(SDL_Renderer* ren, const unsigned char* font_data) {
-    SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, FONT_CHAR_WIDTH * FONT_NUM_CHARS, FONT_CHAR_HEIGHT, 32, SDL_PIXELFORMAT_ARGB8888);
+    SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, kGlyphStride * FONT_NUM_CHARS, FONT_CHAR_HEIGHT, 32, SDL_PIXELFORMAT_ARGB8888);
     SDL_LockSurface(surface);
     Uint32* pixels = (Uint32*)surface->pixels;
     Uint32 white = SDL_MapRGBA(surface->format, 255, 255, 255, 255);
@@ -243,9 +261,12 @@ SDL_Texture* BorlandEngine::create_font_texture(SDL_Renderer* ren, const unsigne
     for (int i = 0; i < FONT_NUM_CHARS; ++i) {
         const unsigned char* glyph = font_data + i * FONT_BYTES_PER_CHAR;
         for (int r = 0; r < FONT_CHAR_HEIGHT; ++r) {
-            for (int c = 0; c < FONT_CHAR_WIDTH; ++c) {
-                if ((glyph[r] >> (7 - c)) & 1) pixels[r * surface->w + (i * FONT_CHAR_WIDTH + c)] = white;
-                else pixels[r * surface->w + (i * FONT_CHAR_WIDTH + c)] = transparent;
+            Uint32* row = pixels + r * surface->w + i * kGlyphStride;
+            for (int c = 0; c < FONT_CHAR_WIDTH; ++c)
+                row[kGlyphPad + c] = ((glyph[r] >> (7 - c)) & 1) ? white : transparent;
+            for (int p = 0; p < kGlyphPad; ++p) {
+                row[p]                                       = row[kGlyphPad];
+                row[kGlyphPad + FONT_CHAR_WIDTH + p]          = row[kGlyphPad + FONT_CHAR_WIDTH - 1];
             }
         }
     }
@@ -260,7 +281,7 @@ void BorlandEngine::draw_char(unsigned char c, int x, int y, SDL_Color fg, SDL_C
     SDL_Rect d = { x * FONT_CHAR_WIDTH, y * FONT_CHAR_HEIGHT, FONT_CHAR_WIDTH, FONT_CHAR_HEIGHT };
     SDL_SetRenderDrawColor(renderer, bg.r, bg.g, bg.b, bg.a); SDL_RenderFillRect(renderer, &d);
     if (c != ' ' && c != 0) {
-        SDL_Rect s = { c * FONT_CHAR_WIDTH, 0, FONT_CHAR_WIDTH, FONT_CHAR_HEIGHT };
+        SDL_Rect s = { c * kGlyphStride + kGlyphPad, 0, FONT_CHAR_WIDTH, FONT_CHAR_HEIGHT };
         SDL_SetTextureColorMod(font_texture, fg.r, fg.g, fg.b); SDL_RenderCopy(renderer, font_texture, &s, &d);
     }
 }

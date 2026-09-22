@@ -98,6 +98,8 @@ void MessageDialog::show(Renderer& renderer, const std::string& message) {
 
     nodelay(stdscr, FALSE);
     bool pressed = false;
+    bool btn_captured = false;   // mouse button pressed down on the OK button
+    bool hover_pressed = false;  // visual pressed state while captured
     while (true) {
         // Clear button + shadow rows before each draw so the pressed shift
         // doesn't leave a ghost of the previous unpressed button behind.
@@ -106,7 +108,7 @@ void MessageDialog::show(Renderer& renderer, const std::string& message) {
         mvwaddstr(stdscr, btn_y + 1, startx + 1, std::string(w - 2, ' ').c_str());
         wattroff(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
 
-        renderer.drawButton(btn_x, btn_y, ok_text, true, pressed);
+        renderer.drawButton(btn_x, btn_y, ok_text, true, pressed || hover_pressed);
         renderer.refresh();
 
         if (pressed) { napms(100); break; }
@@ -116,6 +118,36 @@ void MessageDialog::show(Renderer& renderer, const std::string& message) {
             renderer.updateDimensions();
             renderer.repaintBackground();   // redraw the editor behind at the new size
             layoutAndDraw();   // re-centre, re-wrap and repaint at the new size
+            continue;
+        }
+        if (ch == KEY_MOUSE) {
+            // Always drain the mouse-event queue, even for events we don't act
+            // on — otherwise unconsumed events pile up while this dialog is
+            // open and desync every click the editor receives after it closes.
+            MEVENT ev;
+            if (getmouse(&ev) != OK) continue;
+
+            bool is_press   = (ev.bstate & BUTTON1_PRESSED)   != 0;
+            bool is_release = (ev.bstate & BUTTON1_RELEASED)  != 0;
+            bool is_clicked = (ev.bstate & BUTTON1_CLICKED)   != 0;
+
+            auto overOK = [&] {
+                return ev.y == btn_y && ev.x >= btn_x && ev.x < btn_x + (int)ok_text.size();
+            };
+
+            if (btn_captured) {
+                if (is_release || is_clicked) {
+                    if (overOK()) pressed = true;
+                    btn_captured  = false;
+                    hover_pressed = false;
+                } else {
+                    hover_pressed = overOK();
+                }
+            } else if (is_press) {
+                if (overOK()) { btn_captured = true; hover_pressed = true; }
+            } else if (is_clicked && overOK()) {
+                pressed = true;
+            }
             continue;
         }
         if (ch == 27) {
