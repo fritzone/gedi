@@ -23,7 +23,10 @@ void BuildOutputDialog::show(Renderer& renderer, const std::vector<std::string>&
     int visible_h = h - 6;
     nodelay(stdscr, FALSE);
 
+    const std::string close_text = " &Close ";
     bool pressed = false;
+    bool btn_captured = false;   // mouse button pressed down on the Close button
+    bool hover_pressed = false;  // visual pressed state while captured
     while (true) {
         wattron(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
         for (int i = 1; i < h - 1; ++i) mvwaddstr(stdscr, starty + i, startx + 1, std::string(w - 2, ' ').c_str());
@@ -37,7 +40,9 @@ void BuildOutputDialog::show(Renderer& renderer, const std::vector<std::string>&
             }
         }
 
-        renderer.drawButton(startx + (w - 10) / 2, starty + h - 3, " &Close ", true, pressed);
+        int btn_x = startx + (w - 10) / 2;
+        int btn_y = starty + h - 3;
+        renderer.drawButton(btn_x, btn_y, close_text, true, pressed || hover_pressed);
         renderer.refresh();
 
         if (pressed) {
@@ -46,6 +51,40 @@ void BuildOutputDialog::show(Renderer& renderer, const std::vector<std::string>&
         }
 
         wint_t ch = renderer.getChar();
+        if (ch == KEY_MOUSE) {
+            // Always drain the mouse-event queue, even for events we don't act
+            // on — otherwise unconsumed events pile up while this dialog is
+            // open and desync every click the editor receives after it closes.
+            MEVENT ev;
+            if (getmouse(&ev) != OK) continue;
+
+            bool is_press     = (ev.bstate & BUTTON1_PRESSED)  != 0;
+            bool is_release   = (ev.bstate & BUTTON1_RELEASED) != 0;
+            bool is_clicked   = (ev.bstate & BUTTON1_CLICKED)  != 0;
+            bool is_scroll_up = (ev.bstate & BUTTON4_PRESSED)  != 0;
+            bool is_scroll_dn = (ev.bstate & BUTTON5_PRESSED)  != 0;
+
+            auto overClose = [&] {
+                return ev.y == btn_y && ev.x >= btn_x && ev.x < btn_x + (int)close_text.size();
+            };
+
+            if (is_scroll_up) { if (scroll_pos > 0) scroll_pos--; }
+            else if (is_scroll_dn) { if (scroll_pos + visible_h < (int)lines.size()) scroll_pos++; }
+            else if (btn_captured) {
+                if (is_release || is_clicked) {
+                    if (overClose()) pressed = true;
+                    btn_captured  = false;
+                    hover_pressed = false;
+                } else {
+                    hover_pressed = overClose();
+                }
+            } else if (is_press) {
+                if (overClose()) { btn_captured = true; hover_pressed = true; }
+            } else if (is_clicked && overClose()) {
+                pressed = true;
+            }
+            continue;
+        }
         if (ch == KEY_RESIZE) {
             // Screen was blanked and resized — recompute geometry, recapture the
             // backdrop and repaint the frame so no stale garbage is left behind.

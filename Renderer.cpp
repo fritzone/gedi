@@ -2,8 +2,10 @@
 #include "Renderer.h"
 
 #include "curses_compat.h"
+#ifndef GEDI_GUI
 #include <termios.h>
 #include <unistd.h>
+#endif
 #include <csignal>
 
 #include <fstream>

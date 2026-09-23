@@ -1,10 +1,5 @@
 #include "utils.h"
-
-#include <dirent.h>
-#include <pwd.h>      // For getpwuid() to get user names
-#include <grp.h>      // For getgrgid() to get group names
-#include <unistd.h>
-#include <sys/stat.h>
+#include "platform_compat.h"
 
 #include <chrono>
 #include <cctype>

@@ -2,9 +2,9 @@
 #define FILEBROWSER_H
 
 #include "Renderer.h"
+#include "platform_compat.h"
 #include <string>
 #include <vector>
-#include <sys/stat.h>
 
 // 
 struct FileEntry {

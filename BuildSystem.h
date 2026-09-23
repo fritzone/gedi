@@ -47,11 +47,18 @@ public:
     std::string guessCompileCommand(const std::string& filename);
     std::string get_full_compile_command(const std::string& base_command, const CompilerSettings& settings);
 
-    // Convert CompilerSettings to a flat flags string (e.g. "-g -O0 -Wall -Wextra")
-    static std::string settingsToFlags(const CompilerSettings& s);
+    // Convert CompilerSettings to a flat flags string. Produces GCC/Clang-style
+    // flags (e.g. "-g -O0 -Wall -Wextra") or, when msvc is true, cl.exe-style
+    // flags (e.g. "/Zi /Od /W4") — the two option languages are not
+    // interchangeable, and handing GCC flags to cl.exe fails hard (e.g. it
+    // parses "-Wextra" as "/W" with a non-numeric argument).
+    static std::string settingsToFlags(const CompilerSettings& s, bool msvc);
+
+    // True if the given compiler path/name refers to MSVC's cl.exe.
+    static bool isMsvcCompiler(const std::string& compilerPath);
 
     // Human-readable build command preview used by the Build Options dialog
-    static std::string buildProjectPreview(const GediProject& project, const CompilerSettings& settings);
+    std::string buildProjectPreview(const GediProject& project, const CompilerSettings& settings) const;
 
 private:
     Config m_config;

@@ -2,12 +2,7 @@
 #include "utils.h"
 
 #include "curses_compat.h"
-#include <dirent.h>
-#include <sys/stat.h>
-#include <fnmatch.h>
-#include <pwd.h>
-#include <grp.h>
-#include <unistd.h>
+#include "platform_compat.h"
 #include <algorithm>
 #include <chrono>
 #include <string>
