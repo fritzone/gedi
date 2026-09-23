@@ -473,12 +473,51 @@ void gui_set_window_state(int x, int y, int w, int h, float scale) {
     resize_to_engine();   // sync stdscr + COLS/LINES to the restored grid
 }
 
-void gui_set_smooth_scaling(int on) {
-    g_eng.setSmoothScaling(on != 0);
+void gui_set_render_mode(int mode) {
+    g_eng.setRenderMode(mode);
 }
 
 void gui_set_rounded_corners(int on) {
     g_eng.setRoundedCorners(on != 0);
+}
+
+// Foreground / background colour of a curses colour pair, as an RGB from the
+// VGA palette.
+static SDL_Color pair_fg_color(int pair) {
+    int nf = (pair >= 0 && pair < 256) ? g_pair_fg[pair] : COLOR_WHITE;
+    return PALETTE[kNcursesToVga[nf & 0x0f]];
+}
+static SDL_Color pair_bg_color(int pair) {
+    int nb = (pair >= 0 && pair < 256) ? g_pair_bg[pair] : COLOR_BLACK;
+    return PALETTE[kNcursesToVga[nb & 0x0f]];
+}
+static int color_dist2(SDL_Color a, SDL_Color b) {
+    int dr = a.r - b.r, dg = a.g - b.g, db = a.b - b.b;
+    return dr * dr + dg * dg + db * db;
+}
+
+int gui_show_image_overlay(const char* path, int cell_x, int cell_y, int cell_w, int cell_h,
+                           int body_pair, int accent_pair) {
+    // body_pair < 0 means "no tint" — show the image with its own colours.
+    bool tint = body_pair >= 0;
+    SDL_Color body   = tint ? pair_fg_color(body_pair)   : SDL_Color{ 255, 255, 255, 255 };
+    SDL_Color accent = tint ? pair_fg_color(accent_pair) : SDL_Color{ 255, 255, 255, 255 };
+    if (tint) {
+        // The body colour is the dialog's own text colour, so it always reads on
+        // the dialog background. The accent (title colour) does not always — some
+        // schemes would put e.g. white "++" on a white dialog. If the accent is too
+        // close to the dialog background to stand out, fall back to the body colour.
+        SDL_Color dlg_bg = pair_bg_color(body_pair);
+        const int MIN_D2 = 170 * 170;   // ~min RGB distance for a usable accent
+        if (color_dist2(accent, dlg_bg) < MIN_D2)
+            accent = body;
+    }
+    return g_eng.setImageOverlay(path ? path : "", cell_x, cell_y, cell_w, cell_h,
+                                 tint, body, accent) ? 1 : 0;
+}
+
+void gui_hide_image_overlay(void) {
+    g_eng.clearImageOverlay();
 }
 
 void gui_set_font(const char* path) {

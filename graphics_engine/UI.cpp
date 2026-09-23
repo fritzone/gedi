@@ -30,7 +30,7 @@ std::string getHelpText(int menu, int item) {
     if (menu == -1) return "F1-Help | View help on using the environment";
 
     if (menu == M_SYSTEM) {
-        if (item == 0) return "Toggle between retro (pixelated) and smooth graphics";
+        if (item == 0) return "Cycle text rendering: Pixelated / Smooth / Sharp";
         if (item == 1) return "Toggle whether the application window can be resized";
     }
 
@@ -44,7 +44,7 @@ void processMenuAction() {
 
     if (currentMenuIndex == M_SYSTEM) {
         if (currentItemIndex == 0) {
-            eng.toggleSmoothScaling();
+            eng.cycleRenderMode();
         } else if (currentItemIndex == 1) {
             eng.toggleResizable();
         } else {
@@ -107,8 +107,8 @@ void defaultMenu(void) {
     drawMenuBox(1, 2, 28, 4, 0);
     int w = 26;
 
-    const char* smoothText = eng.smooth_scaling ? "Smooth graphics [ON]" : "Smooth graphics [OFF]";
-    drawMenuItem(0, 2, 2, w, smoothText, "", 'g');
+    std::string smoothText = std::string("Text: ") + VgaTextEngine::renderModeName(eng.render_mode);
+    drawMenuItem(0, 2, 2, w, smoothText.c_str(), "", 'g');
 
     const char* resText = eng.is_resizable ? "Window Resizable [ON]" : "Window Resizable [OFF]";
     drawMenuItem(1, 2, 3, w, resText, "", 'R');

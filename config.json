@@ -46,7 +46,7 @@
     "show_line_numbers": false,
     "show_whitespace": true,
     "smart_indentation": true,
-    "smooth_text": false,
+    "text_render_mode": 0,
     "syntax_highlight": 2,
     "use_tab_character": true
 }

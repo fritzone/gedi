@@ -2,7 +2,11 @@
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
+#include <cmath>
 #include <algorithm>
+#ifdef GEDI_HAVE_SDL_IMAGE
+#include <SDL2/SDL_image.h>
+#endif
 
 const SDL_Color PALETTE[16] = {
     {0x00, 0x00, 0x00, 0xFF}, {0x00, 0x00, 0xA8, 0xFF}, {0x00, 0xA8, 0x00, 0xFF}, {0x00, 0xA8, 0xA8, 0xFF},
@@ -40,10 +44,26 @@ void VgaTextEngine::reload_font() {
     }
     for (SDL_Texture* t : font_registry) if (t) SDL_DestroyTexture(t);
     font_registry.clear();
-    if (smooth_scaling) {
-        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
-    } else {
-        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
+    // Derive the atlas rasterisation parameters + texture filtering from the mode.
+    //   PIXELATED: nearest filter, 1x binary atlas.
+    //   SMOOTH:    linear filter, 1x binary atlas (wide, soft antialiasing).
+    //   SHARP:     linear filter, supersampled coverage atlas (crisp antialiasing).
+    // SHARP uses a 3x supersample: the glyph strip stays within the 8192px texture
+    // width every GPU supports ((8*3+2)*256 = 6656) while giving a ~1/3-pixel edge.
+    switch (render_mode) {
+        case RENDER_PIXELATED:
+            SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");   // nearest
+            atlas_ss_ = 1; atlas_aa_ = false;
+            break;
+        case RENDER_SHARP:
+            SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");   // linear
+            atlas_ss_ = 3; atlas_aa_ = true;
+            break;
+        case RENDER_SMOOTH:
+        default:
+            SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");   // linear
+            atlas_ss_ = 1; atlas_aa_ = false;
+            break;
     }
     unsigned char font_data[FONT_NUM_CHARS * FONT_BYTES_PER_CHAR];
     FILE* font_file = fopen(font_path.c_str(), "rb");
@@ -103,9 +123,18 @@ void VgaTextEngine::setRoundedCorners(bool on) {
     reload_font();
 }
 
-void VgaTextEngine::toggleSmoothScaling() {
-    smooth_scaling = !smooth_scaling;
+void VgaTextEngine::cycleRenderMode() {
+    render_mode = (render_mode + 1) % RENDER_MODE_COUNT;
     reload_font();
+}
+
+const char* VgaTextEngine::renderModeName(int mode) {
+    switch (mode) {
+        case RENDER_PIXELATED: return "Pixelated";
+        case RENDER_SHARP:     return "Sharp";
+        case RENDER_SMOOTH:    return "Smooth";
+        default:               return "Smooth";
+    }
 }
 
 void VgaTextEngine::toggleResizable() {
@@ -181,9 +210,10 @@ void VgaTextEngine::zoomOut() {
     }
 }
 
-void VgaTextEngine::setSmoothScaling(bool on) {
-    if (on == smooth_scaling) return;
-    smooth_scaling = on;
+void VgaTextEngine::setRenderMode(int mode) {
+    if (mode < 0 || mode >= RENDER_MODE_COUNT) mode = RENDER_SMOOTH;
+    if (mode == render_mode) return;
+    render_mode = mode;
     reload_font();   // re-applies SDL_HINT_RENDER_SCALE_QUALITY + rebuilds the atlas
 }
 
@@ -215,7 +245,122 @@ void VgaTextEngine::applySessionState(int win_x, int win_y, int win_w, int win_h
     applyMinimumSize();
 }
 
+bool VgaTextEngine::setImageOverlay(const std::string& path, int cx, int cy, int cw, int ch,
+                                    bool tint, SDL_Color body, SDL_Color accent) {
+    clearImageOverlay();
+    if (!renderer || path.empty()) return false;
+
+    SDL_Surface* raw = nullptr;
+#ifdef GEDI_HAVE_SDL_IMAGE
+    raw = IMG_Load(path.c_str());
+#endif
+    // Fall back to SDL's built-in BMP loader (always available) so a .bmp still
+    // works even in a build without SDL_image.
+    if (!raw) raw = SDL_LoadBMP(path.c_str());
+    if (!raw) return false;
+
+    const bool src_has_alpha = (raw->format->Amask != 0);
+    SDL_Surface* surf = SDL_ConvertSurfaceFormat(raw, SDL_PIXELFORMAT_ARGB8888, 0);
+    SDL_FreeSurface(raw);
+    if (!surf) return false;
+
+    int img_w = surf->w, img_h = surf->h;
+
+    if (tint && img_w > 0 && img_h > 0) {
+        // Recolour the logo to the active scheme. Each opaque pixel keeps its own
+        // luminance (so the metallic shading survives) but is mapped onto a ramp of
+        // the scheme's colour: a dark shade at the bottom, the colour itself in the
+        // mids, and a white sheen at the highlights. Blue-dominant pixels (the "++")
+        // use the accent colour; everything else uses the body colour.
+        SDL_LockSurface(surf);
+        Uint32* px = (Uint32*)surf->pixels;
+        const int stride = surf->pitch / 4;
+        auto ramp = [](float base, float L, float sheen) {
+            float lo = base * 0.20f;
+            float v  = lo + (base - lo) * L;
+            return v + (255.0f - v) * sheen;
+        };
+        for (int y = 0; y < img_h; ++y) {
+            for (int x = 0; x < img_w; ++x) {
+                Uint32& p = px[y * stride + x];
+                Uint8 r, g, b, a; SDL_GetRGBA(p, surf->format, &r, &g, &b, &a);
+                if (a == 0) continue;   // leave fully-transparent pixels alone
+                float L = (0.299f * r + 0.587f * g + 0.114f * b) / 255.0f;
+                float sheen = (L - 0.82f) / 0.18f;
+                sheen = (sheen < 0 ? 0 : (sheen > 1 ? 1 : sheen)) * 0.5f;
+                bool is_accent = (int)b - (int)std::max(r, g) > 38;
+                const SDL_Color& c = is_accent ? accent : body;
+                Uint8 nr = (Uint8)(ramp(c.r, L, sheen) + 0.5f);
+                Uint8 ng = (Uint8)(ramp(c.g, L, sheen) + 0.5f);
+                Uint8 nb = (Uint8)(ramp(c.b, L, sheen) + 0.5f);
+                p = SDL_MapRGBA(surf->format, nr, ng, nb, a);
+            }
+        }
+        SDL_UnlockSurface(surf);
+    }
+    // A logo shipped as opaque RGB carries a flat background that would otherwise
+    // draw as a solid rectangle on the dialog. When the source has no alpha of its
+    // own (and we are not tinting), key that background (sampled from the four
+    // corners) out to transparent, with a short distance ramp so edges stay smooth.
+    else if (!src_has_alpha && img_w > 0 && img_h > 0) {
+        SDL_LockSurface(surf);
+        Uint32* px = (Uint32*)surf->pixels;
+        const int stride = surf->pitch / 4;
+        auto getrgb = [&](Uint32 p, int& r, int& g, int& b) {
+            Uint8 rr, gg, bb, aa; SDL_GetRGBA(p, surf->format, &rr, &gg, &bb, &aa);
+            r = rr; g = gg; b = bb;
+        };
+        int r0, g0, b0, r1, g1, b1, r2, g2, b2, r3, g3, b3;
+        getrgb(px[0],                               r0, g0, b0);
+        getrgb(px[img_w - 1],                       r1, g1, b1);
+        getrgb(px[(img_h - 1) * stride],            r2, g2, b2);
+        getrgb(px[(img_h - 1) * stride + img_w - 1],r3, g3, b3);
+        const float br = (r0 + r1 + r2 + r3) / 4.0f;
+        const float bg = (g0 + g1 + g2 + g3) / 4.0f;
+        const float bb = (b0 + b1 + b2 + b3) / 4.0f;
+        const float T0 = 18.0f, T1 = 32.0f;   // key <=T0 fully out, >=T1 fully opaque
+        for (int y = 0; y < img_h; ++y) {
+            for (int x = 0; x < img_w; ++x) {
+                Uint32& p = px[y * stride + x];
+                int r, g, b; getrgb(p, r, g, b);
+                float d = std::sqrt((r - br) * (r - br) + (g - bg) * (g - bg) + (b - bb) * (b - bb));
+                Uint8 a = d <= T0 ? 0
+                        : d >= T1 ? 255
+                        : (Uint8)(255.0f * (d - T0) / (T1 - T0) + 0.5f);
+                p = SDL_MapRGBA(surf->format, (Uint8)r, (Uint8)g, (Uint8)b, a);
+            }
+        }
+        SDL_UnlockSurface(surf);
+    }
+
+    overlay_tex_ = SDL_CreateTextureFromSurface(renderer, surf);
+    SDL_FreeSurface(surf);
+    if (!overlay_tex_) return false;
+    SDL_SetTextureBlendMode(overlay_tex_, SDL_BLENDMODE_BLEND);
+
+    // Fit the image inside the cell rectangle (in logical pixels) preserving its
+    // aspect ratio, then centre it there.
+    int box_x = cx * FONT_CHAR_WIDTH;
+    int box_y = cy * FONT_CHAR_HEIGHT;
+    int box_w = cw * FONT_CHAR_WIDTH;
+    int box_h = ch * FONT_CHAR_HEIGHT;
+    if (img_w <= 0 || img_h <= 0) { clearImageOverlay(); return false; }
+
+    float s = std::min((float)box_w / img_w, (float)box_h / img_h);
+    if (s > 1.0f) s = 1.0f;                       // never upscale past native size
+    int dst_w = (int)(img_w * s + 0.5f);
+    int dst_h = (int)(img_h * s + 0.5f);
+    overlay_dst_ = { box_x + (box_w - dst_w) / 2, box_y + (box_h - dst_h) / 2, dst_w, dst_h };
+    return true;
+}
+
+void VgaTextEngine::clearImageOverlay() {
+    if (overlay_tex_) { SDL_DestroyTexture(overlay_tex_); overlay_tex_ = nullptr; }
+    overlay_dst_ = { 0, 0, 0, 0 };
+}
+
 void VgaTextEngine::shutdown() {
+    clearImageOverlay();
     SDL_DestroyTexture(font_texture); SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit();
 }
 
@@ -293,6 +438,10 @@ void VgaTextEngine::render_frame() {
         }
     }
 
+    // Draw the About-box image (if any) on top of the text it was laid over.
+    if (overlay_tex_)
+        SDL_RenderCopy(renderer, overlay_tex_, nullptr, &overlay_dst_);
+
     // NEW: Draw the text-mode mouse cursor on top
     if (mouse_inside_window) {
         draw_mouse_overlay();
@@ -333,30 +482,72 @@ SDL_Texture* VgaTextEngine::create_font_texture(SDL_Renderer* ren, const unsigne
     // surrounding gutter replicates the glyph's edge pixels so that linear
     // filtering at the glyph boundary samples the glyph's own edge rather than
     // bleeding in the neighbouring glyph from the atlas.
+    //
+    // In SHARP mode the glyph is rasterised at atlas_ss_x its native size with a
+    // real antialiased coverage in the alpha channel (see below); otherwise it is
+    // a 1x binary mask (alpha 0 or 255), as the classic pixelated/smooth modes use.
+    const int SS     = atlas_ss_;
     const int PAD    = FONT_ATLAS_PAD;
-    const int cell_w = FONT_CHAR_WIDTH  + 2 * PAD;   // atlas stride per glyph
-    const int cell_h = FONT_CHAR_HEIGHT + 2 * PAD;
+    const int glyph_w = FONT_CHAR_WIDTH  * SS;
+    const int glyph_h = FONT_CHAR_HEIGHT * SS;
+    const int cell_w = glyph_w + 2 * PAD;            // atlas stride per glyph
+    const int cell_h = glyph_h + 2 * PAD;
     const int atlas_w = cell_w * FONT_NUM_CHARS;
 
     SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, atlas_w, cell_h, 32, SDL_PIXELFORMAT_ARGB8888);
     SDL_LockSurface(surface);
     Uint32* pixels = (Uint32*)surface->pixels;
-    Uint32 white = SDL_MapRGBA(surface->format, 255, 255, 255, 255);
-    Uint32 transparent = SDL_MapRGBA(surface->format, 0, 0, 0, 0);
+    // Glyphs are always white; the foreground colour is applied at draw time via
+    // SDL_SetTextureColorMod. Only the alpha (coverage) varies per texel.
+    const Uint32 white_rgb = SDL_MapRGBA(surface->format, 255, 255, 255, 0);
+    const Uint8  Ashift    = surface->format->Ashift;
 
     auto clampi = [](int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); };
+
+    // One source glyph pixel (edge-clamped so the gutter replicates the border).
+    auto bit = [&](const unsigned char* g, int r, int c) -> float {
+        r = clampi(r, 0, FONT_CHAR_HEIGHT - 1);
+        c = clampi(c, 0, FONT_CHAR_WIDTH  - 1);
+        return ((g[r] >> (7 - c)) & 1) ? 1.0f : 0.0f;
+    };
+
+    // SHARP antialiasing: bilinearly sample the 1-bit glyph in source-pixel space
+    // (a coverage that ramps linearly across one source pixel at every edge), then
+    // push it through a steep smoothstep so the ramp collapses to ~1 atlas texel.
+    // That keeps the edge smooth (no jaggies) but crisp and high-contrast, instead
+    // of the whole-source-pixel-wide fuzz plain linear filtering of a binary mask
+    // produces. edge = 0.5/SS makes the antialiased band about one atlas texel wide
+    // regardless of the supersample factor.
+    const float edge = 0.5f / (float)SS;
 
     for (int i = 0; i < FONT_NUM_CHARS; ++i) {
         const unsigned char* glyph = font_data + i * FONT_BYTES_PER_CHAR;
         int cell_x = i * cell_w;
-        // Fill the whole padded cell, clamping source coords into the glyph so the
-        // gutter rows/cols duplicate the nearest edge pixel.
         for (int ay = 0; ay < cell_h; ++ay) {
-            int sr = clampi(ay - PAD, 0, FONT_CHAR_HEIGHT - 1);
             for (int ax = 0; ax < cell_w; ++ax) {
-                int sc = clampi(ax - PAD, 0, FONT_CHAR_WIDTH - 1);
-                bool on = (glyph[sr] >> (7 - sc)) & 1;
-                pixels[ay * atlas_w + (cell_x + ax)] = on ? white : transparent;
+                float cov;
+                if (!atlas_aa_) {
+                    // Binary mask: nearest source pixel, gutter clamped to the edge.
+                    cov = bit(glyph, ay - PAD, ax - PAD);
+                } else {
+                    // Source-pixel coordinate of this atlas texel's centre.
+                    float fx = ((ax - PAD) + 0.5f) / SS - 0.5f;
+                    float fy = ((ay - PAD) + 0.5f) / SS - 0.5f;
+                    int   x0 = (int)std::floor(fx), y0 = (int)std::floor(fy);
+                    float tx = fx - x0, ty = fy - y0;
+                    float c00 = bit(glyph, y0,     x0);
+                    float c10 = bit(glyph, y0,     x0 + 1);
+                    float c01 = bit(glyph, y0 + 1, x0);
+                    float c11 = bit(glyph, y0 + 1, x0 + 1);
+                    cov = (c00 * (1 - tx) + c10 * tx) * (1 - ty)
+                        + (c01 * (1 - tx) + c11 * tx) * ty;
+                    // smoothstep(0.5 - edge, 0.5 + edge, cov)
+                    float t = (cov - (0.5f - edge)) / (2.0f * edge);
+                    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+                    cov = t * t * (3.0f - 2.0f * t);
+                }
+                Uint8 a = (Uint8)(cov * 255.0f + 0.5f);
+                pixels[ay * atlas_w + (cell_x + ax)] = white_rgb | ((Uint32)a << Ashift);
             }
         }
     }
@@ -373,8 +564,14 @@ void VgaTextEngine::draw_char(unsigned char c, int x, int y, SDL_Color fg, SDL_C
     SDL_SetRenderDrawColor(renderer, bg.r, bg.g, bg.b, bg.a); SDL_RenderFillRect(renderer, &d);
     if (c != ' ' && c != 0) {
         // Sample only the inner glyph; the padded gutter absorbs the filter's reach.
-        const int cell_w = FONT_CHAR_WIDTH + 2 * FONT_ATLAS_PAD;
-        SDL_Rect s = { c * cell_w + FONT_ATLAS_PAD, FONT_ATLAS_PAD, FONT_CHAR_WIDTH, FONT_CHAR_HEIGHT };
+        // The glyph is atlas_ss_x native size in the atlas (1x unless SHARP); the GPU
+        // scales that single source rect straight to the destination cell, so the
+        // supersampling is resolved in one linear sample with no double-blur.
+        const int SS     = atlas_ss_;
+        const int glyph_w = FONT_CHAR_WIDTH  * SS;
+        const int glyph_h = FONT_CHAR_HEIGHT * SS;
+        const int cell_w = glyph_w + 2 * FONT_ATLAS_PAD;
+        SDL_Rect s = { c * cell_w + FONT_ATLAS_PAD, FONT_ATLAS_PAD, glyph_w, glyph_h };
         SDL_SetTextureColorMod(tex, fg.r, fg.g, fg.b); SDL_RenderCopy(renderer, tex, &s, &d);
     }
 }

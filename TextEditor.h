@@ -17,7 +17,9 @@
 #include "SearchEngine.h"
 #include "HelpProvider.h"
 #include "BufferManager.h"
+#include "CompletionEngine.h"
 #include "MessageDialog.h"
+#include "AboutDialog.h"
 #include "QuestionDialog.h"
 #include "SettingsDialog.h"
 #include "ReplaceDialog.h"
@@ -63,6 +65,8 @@ private:
     std::unique_ptr<BuildSystem> m_buildSystem;
     std::unique_ptr<HelpProvider> m_helpProvider;
     std::unique_ptr<KeyBindings> m_keyBindings;
+    std::unique_ptr<CompletionEngine> m_completion;   // libclang code completion
+    bool m_batch_input = false;   // true while replaying a paste/escape-seq burst
 
     // Help
     std::vector<std::string> m_help_history;
@@ -197,6 +201,7 @@ private:
     bool isAtSearchMatch();
     void GoToLineDialog();
     void GoToDefinition();
+    void TriggerCompletion();   // libclang code-completion popup (C/C++ buffers)
     void GoToNextWord();
     void GoToPreviousWord();
     void GoToNextParagraph();

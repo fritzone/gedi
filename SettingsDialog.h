@@ -31,7 +31,8 @@ private:
     int  temp_indent_width_;
     bool temp_use_tab_char_;
     bool temp_show_whitespace_;
-    bool temp_smooth_text_;       // graphical build only
+    int  temp_render_mode_;       // graphical build only: 0=Pixelated 1=Smooth 2=Sharp
+    int  temp_render_cursor_;     // graphical build only: radiolist cursor
 
     // Display tab
     bool temp_show_line_numbers_;
@@ -56,4 +57,5 @@ private:
     static constexpr int GRP_DISPLAY_HL   = 3;   // Syntax Highlighting radiolist
     static constexpr int GRP_COLORS       = 4;
     static constexpr int GRP_DISPLAY_FONT = 5;   // Editor font radiolist (graphical only)
+    static constexpr int GRP_EDITING_RENDER = 6; // Text Rendering radiolist (graphical only)
 };

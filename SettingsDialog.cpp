@@ -17,11 +17,12 @@ static constexpr int BTN_Y      = H - 3;   // = 19
 static constexpr int ED_SMART_Y  = CONTENT_Y + 2;   // inner_focus 0
 static constexpr int ED_WSPC_Y   = CONTENT_Y + 3;   // inner_focus 1
 static constexpr int ED_USETAB_Y = CONTENT_Y + 4;   // inner_focus 2
-#ifdef GEDI_GUI
-static constexpr int ED_SMOOTH_Y = CONTENT_Y + 5;   // inner_focus 3 (graphical only)
-static constexpr int ED_TABSZ_Y  = CONTENT_Y + 7;   // spinner (blank gap above)
-#else
 static constexpr int ED_TABSZ_Y  = CONTENT_Y + 6;   // spinner (blank gap above)
+#ifdef GEDI_GUI
+// "Text Rendering" label + radiolist (its own focus group; graphical only).
+static constexpr int ED_RENDER_LY   = CONTENT_Y + 8;
+static constexpr int ED_RENDER_Y    = CONTENT_Y + 9;
+static constexpr int ED_RENDER_ROWS = 3;
 #endif
 
 // Tab 1 – Display
@@ -56,7 +57,8 @@ SettingsDialog::SettingsDialog(Renderer& renderer, Config& config,
     , temp_indent_width_    (config.indentation_width)
     , temp_use_tab_char_    (config.use_tab_character)
     , temp_show_whitespace_ (config.show_whitespace)
-    , temp_smooth_text_     (config.smooth_text)
+    , temp_render_mode_     (std::max(0, std::min(2, config.text_render_mode)))
+    , temp_render_cursor_   (std::max(0, std::min(2, config.text_render_mode)))
     , temp_show_line_numbers_(config.show_line_numbers)
     , temp_rounded_corners_ (config.rounded_corners)
     , temp_syntax_highlight_(std::max(0, std::min(2, config.syntax_highlight)))
@@ -122,9 +124,6 @@ void SettingsDialog::onInit()
         g.checkboxes.push_back({ "Smart Indent",     temp_smart_indent_,    4, ED_SMART_Y  });
         g.checkboxes.push_back({ "Show Whitespace",  temp_show_whitespace_, 4, ED_WSPC_Y   });
         g.checkboxes.push_back({ "Use Tab Character", temp_use_tab_char_,   4, ED_USETAB_Y });
-#ifdef GEDI_GUI
-        g.checkboxes.push_back({ "Smooth Text",       temp_smooth_text_,    4, ED_SMOOTH_Y });
-#endif
         g.spinners.push_back  ({ "Tab Size",         temp_indent_width_,  1, 16, 4, ED_TABSZ_Y });
         addGroup(std::move(g));
     }
@@ -176,6 +175,18 @@ void SettingsDialog::onInit()
                                  DI_FONT_X, DI_FONT_Y, DI_FONT_ROWS });
         addGroup(std::move(g));
     }
+
+    //  Group 6: Editing tab — Text Rendering radiolist
+    {
+        static std::vector<std::string> render_items{ "Pixelated", "Smooth", "Sharp" };
+        FocusGroup g;
+        g.title = " Editing "; g.hotkey = '\0';
+        g.box_x = 2; g.box_y = CONTENT_Y; g.box_w = INNER_W; g.box_h = CONTENT_H;
+        g.draw_widgets_manually = true;
+        g.radiolists.push_back({ render_items, temp_render_mode_, temp_render_cursor_,
+                                 4, ED_RENDER_Y, ED_RENDER_ROWS });
+        addGroup(std::move(g));
+    }
 #endif
 
     //  Button row
@@ -204,7 +215,7 @@ void SettingsDialog::onInit()
                 }
             },
             Button{
-                .label = " &Cancel ",
+                .label = " &Close ",
                 .x = BTN_CANCEL_X, .y = BTN_Y,
                 .on_activate = [this]() -> HandleResult {
                     result().cancel();
@@ -239,7 +250,8 @@ void SettingsDialog::onDraw(Renderer& renderer, int sx, int sy)
     setBox(GRP_DISPLAY_HL, active == 1);
     setBox(GRP_COLORS,     active == 2);
 #ifdef GEDI_GUI
-    setBox(GRP_DISPLAY_FONT, active == 1);
+    setBox(GRP_DISPLAY_FONT,    active == 1);
+    setBox(GRP_EDITING_RENDER,  active == 0);
 #endif
 
     // Draw widgets for the active tab manually
@@ -252,6 +264,16 @@ void SettingsDialog::onDraw(Renderer& renderer, int sx, int sy)
             cb.draw(renderer, sx, sy, focused && g.inner_focus == item++);
         for (auto& sp : g.spinners)
             sp.draw(renderer, sx, sy, focused && g.inner_focus == item++);
+#ifdef GEDI_GUI
+        // Text Rendering label + radiolist (own focus group).
+        renderer.drawText(sx + 4, sy + ED_RENDER_LY, "Text Rendering:",
+                          Renderer::CP_DIALOG);
+        {
+            bool rfocused = (getFocusedGroup() == GRP_EDITING_RENDER);
+            for (auto& rl : groups()[GRP_EDITING_RENDER].radiolists)
+                rl.draw(renderer, sx, sy, rfocused);
+        }
+#endif
         break;
     }
     case 1: {   //  Display
@@ -344,7 +366,8 @@ bool SettingsDialog::onTab(bool forward)
         if (cur == GRP_DISPLAY_CB) { setGroupFocus(GRP_DISPLAY_HL); return true; }
 #ifdef GEDI_GUI
         if (cur == GRP_DISPLAY_HL) { setGroupFocus(GRP_DISPLAY_FONT); return true; }
-        if (cur == GRP_EDITING || cur == GRP_DISPLAY_FONT || cur == GRP_COLORS) {
+        if (cur == GRP_EDITING)    { setGroupFocus(GRP_EDITING_RENDER); return true; }
+        if (cur == GRP_EDITING_RENDER || cur == GRP_DISPLAY_FONT || cur == GRP_COLORS) {
             setGroupFocus(groupCount()); setGroupBtnFocus(0);  return true;
         }
 #else
@@ -354,16 +377,18 @@ bool SettingsDialog::onTab(bool forward)
 #endif
     } else {
         if (inButtonRow()) {
-            if (active == 0) { setGroupFocus(GRP_EDITING);    return true; }
 #ifdef GEDI_GUI
+            if (active == 0) { setGroupFocus(GRP_EDITING_RENDER); return true; }
             if (active == 1) { setGroupFocus(GRP_DISPLAY_FONT); return true; }
 #else
+            if (active == 0) { setGroupFocus(GRP_EDITING);    return true; }
             if (active == 1) { setGroupFocus(GRP_DISPLAY_HL); return true; }
 #endif
             if (active == 2) { setGroupFocus(GRP_COLORS);     return true; }
         }
 #ifdef GEDI_GUI
         if (cur == GRP_DISPLAY_FONT) { setGroupFocus(GRP_DISPLAY_HL); return true; }
+        if (cur == GRP_EDITING_RENDER) { setGroupFocus(GRP_EDITING); return true; }
 #endif
         if (cur == GRP_DISPLAY_HL) { setGroupFocus(GRP_DISPLAY_CB); return true; }
         if (cur == GRP_EDITING || cur == GRP_DISPLAY_CB || cur == GRP_COLORS) {
@@ -382,8 +407,8 @@ void SettingsDialog::applySettings()
     config_.use_tab_character = temp_use_tab_char_;
     config_.show_whitespace   = temp_show_whitespace_;
 #ifdef GEDI_GUI
-    config_.smooth_text = temp_smooth_text_;
-    gui_set_smooth_scaling(config_.smooth_text ? 1 : 0);    // apply live
+    config_.text_render_mode = temp_render_mode_;
+    gui_set_render_mode(config_.text_render_mode);          // apply live
     config_.rounded_corners = temp_rounded_corners_;
     gui_set_rounded_corners(config_.rounded_corners ? 1 : 0);
     if (temp_font_cursor_ >= 0 && temp_font_cursor_ < (int)font_names_.size()) {

@@ -64,8 +64,10 @@ set(GEDI_COMMON_SOURCES
     SearchEngine.cpp
     HelpProvider.cpp
     BufferManager.cpp
+    CompletionEngine.cpp
     KeyBindings.cpp
     MessageDialog.cpp
+    AboutDialog.cpp
     QuestionDialog.cpp
     SettingsDialog.cpp
     ReplaceDialog.cpp
@@ -136,6 +138,20 @@ if(SDL2_FOUND)
         target_link_libraries(gedi-gui ${CLANG_LIBRARY} ${SDL2_LIBRARIES} util)
     endif()
 
+    # Optional SDL2_image: enables loading the About-box logo (a PNG). When it is
+    # not available (e.g. the vendored Windows SDL2 does not ship it) the About box
+    # still works — it just omits the image (or can load a .bmp via core SDL).
+    find_library(SDL2_IMAGE_LIBRARY NAMES SDL2_image)
+    find_path(SDL2_IMAGE_INCLUDE_DIR NAMES SDL2/SDL_image.h HINTS ${SDL2_INCLUDE_DIRS})
+    if(SDL2_IMAGE_LIBRARY AND SDL2_IMAGE_INCLUDE_DIR)
+        target_compile_definitions(gedi-gui PRIVATE GEDI_HAVE_SDL_IMAGE)
+        target_include_directories(gedi-gui PRIVATE ${SDL2_IMAGE_INCLUDE_DIR})
+        target_link_libraries(gedi-gui ${SDL2_IMAGE_LIBRARY})
+        message(STATUS "SDL2_image found — About-box logo (PNG) enabled.")
+    else()
+        message(STATUS "SDL2_image not found — About-box logo will be omitted.")
+    endif()
+
     # It's a graphical app: run it under the Windows subsystem so no console
     # window is allocated. The code is written against a plain int main(argc,argv),
     # so keep that as the actual entry point (mainCRTStartup) rather than requiring
@@ -146,7 +162,7 @@ if(SDL2_FOUND)
             set_target_properties(gedi-gui PROPERTIES LINK_FLAGS "/ENTRY:mainCRTStartup")
         endif()
     endif()
-    copy_data_files(gedi-gui colors.json config.json help.hlp)
+    copy_data_files(gedi-gui colors.json config.json help.hlp icons/gedi_1.0-icon.png)
     # The VGA fonts live in graphics_engine/; copy them next to the binary.
     add_custom_command(TARGET gedi-gui POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -161,6 +177,7 @@ if(SDL2_FOUND)
         COMMENT "Copying VGA fonts to gedi-gui build directory")
     install(TARGETS gedi-gui DESTINATION bin)
     install(FILES graphics_engine/VGA9.F16 DESTINATION share/gedi)
+    install(FILES icons/gedi_1.0-icon.png DESTINATION share/gedi/icons)
 
     # Windows has no system libclang/SDL2 — drop the vendored DLLs next to the
     # freshly built executable so it runs without extra PATH setup.

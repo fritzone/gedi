@@ -314,8 +314,9 @@ int     unget_wch(const wchar_t wch);
 void    gui_get_window_state(int* x, int* y, int* w, int* h, float* scale);
 void    gui_set_window_state(int x, int y, int w, int h, float scale);
 
-// Font smoothing toggle (the "Smooth Text" editor setting), graphical build only.
-void    gui_set_smooth_scaling(int on);
+// Text rendering mode (the "Text Rendering" editor setting), graphical build only.
+// mode: 0 = Pixelated, 1 = Smooth, 2 = Sharp (see enum RenderMode).
+void    gui_set_render_mode(int mode);
 
 // Rounded box-drawing toggle (the "Rounded Corners" editor setting).
 void    gui_set_rounded_corners(int on);
@@ -326,6 +327,18 @@ void    gui_set_font(const char* path);
 // Load a font into the registry and return its id (>=1; 0 for default/empty),
 // so the font picker can draw each entry in its own font via A_FONT(id).
 int     gui_register_font(const char* path);
+
+// About-box image overlay (graphical build only). Loads an image (PNG when the
+// build has SDL_image, else BMP) and draws it aspect-fit + centred over the given
+// cell rectangle, on top of the text, every frame until hidden. Returns 1 if the
+// image was loaded and will be shown, 0 otherwise (missing file / no decoder).
+//
+// body_pair / accent_pair are curses colour-pair ids: the image is recoloured to
+// the current scheme using each pair's foreground colour (body for the artwork,
+// accent for its blue-dominant parts). Pass body_pair < 0 to show it untinted.
+int     gui_show_image_overlay(const char* path, int cell_x, int cell_y, int cell_w, int cell_h,
+                               int body_pair, int accent_pair);
+void    gui_hide_image_overlay(void);
 
 #endif // GEDI_GUI
 #endif // GEDI_CURSES_COMPAT_H

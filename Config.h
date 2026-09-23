@@ -18,7 +18,7 @@ struct Config {
     bool smart_indentation = true;
     int indentation_width = 4;
     bool use_tab_character = false;   // Tab inserts a real '\t' instead of spaces
-    bool smooth_text = true;          // graphical build only: linear-filter the font
+    int  text_render_mode = 1;        // graphical build only: 0=Pixelated 1=Smooth 2=Sharp
     bool rounded_corners = false;     // graphical build only: rounded box-drawing glyphs
     std::string editor_font = "Default";  // graphical build only: editor-text font name
     bool show_line_numbers = true;

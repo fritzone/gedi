@@ -61,8 +61,9 @@ enum class EditorAction {
     //  Project actions (no menu entry) 
     ACT_CLOSE_PROJECT,     // File > Close Project          — closes the active project
     ACT_PROJECT_PROPERTIES,// File > Project Properties...  — opens project properties dialog
+    ACT_AUTOCOMPLETE,      // Edit > code completion / Ctrl+Space — libclang completion popup
 
-    //  Sentinel 
+    //  Sentinel
     ACT_UNKNOWN            // returned by getAction() when no binding matches the key
 };
 
@@ -110,7 +111,8 @@ class KeyBindings {
         ActionMapping{EditorAction::ACT_FIND_REFERENCES,    "find_references"},
         ActionMapping{EditorAction::ACT_TOGGLE_PROJECT_PANEL,"toggle_project_panel"},
         ActionMapping{EditorAction::ACT_CLOSE_PROJECT,      "close_project"},
-        ActionMapping{EditorAction::ACT_PROJECT_PROPERTIES, "project_properties"}
+        ActionMapping{EditorAction::ACT_PROJECT_PROPERTIES, "project_properties"},
+        ActionMapping{EditorAction::ACT_AUTOCOMPLETE,       "autocomplete"}
     };
 
 public:

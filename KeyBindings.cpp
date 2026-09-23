@@ -59,6 +59,7 @@ void KeyBindings::loadDefaults() {
     addBinding(EditorAction::ACT_TOGGLE_PROJECT_PANEL, KEY_ALT('0'), "Alt+0");
     addBinding(EditorAction::ACT_CLOSE_PROJECT, -1, "");
     addBinding(EditorAction::ACT_PROJECT_PROPERTIES, -1, "");
+    addBinding(EditorAction::ACT_AUTOCOMPLETE, CTRL(' '), "Ctrl+Space");
 }
 
 int KeyBindings::getKey(EditorAction action) const {

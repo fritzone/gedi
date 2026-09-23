@@ -5,6 +5,17 @@
 #include <iostream>
 #include "Constants.h"
 
+// How glyphs are rasterised into the font atlas and filtered when scaled.
+//   PIXELATED - nearest-neighbour filtering of a 1x binary atlas: hard, blocky,
+//               retro pixels.
+//   SMOOTH    - linear filtering of the same 1x binary atlas: the antialiasing
+//               ramp spans a whole source pixel (== scale_factor screen pixels),
+//               which looks soft/fuzzy at high scale factors / on hi-DPI.
+//   SHARP     - linear filtering of a supersampled atlas whose alpha holds a true
+//               antialiased coverage, with the edge band compressed to ~1 atlas
+//               texel. Smooth (no jaggies) but a crisp, high-contrast edge.
+enum RenderMode { RENDER_PIXELATED = 0, RENDER_SMOOTH = 1, RENDER_SHARP = 2, RENDER_MODE_COUNT = 3 };
+
 class VgaTextEngine {
 public:
     // Path to the VGA font file; defaults to FONT_FILENAME but may be overridden
@@ -33,7 +44,7 @@ public:
 
     // Config
     float scale_factor = 1.5f;
-    bool smooth_scaling = true;
+    int  render_mode = RENDER_SMOOTH;   // see enum RenderMode
     bool is_resizable = true;
     bool rounded_corners = false;       // overlay box-drawing glyphs from rounded_font_path
     std::string rounded_font_path;      // e.g. SMVGA.F16 (rounded box/corner glyphs)
@@ -61,9 +72,9 @@ public:
     void zoomIn();
     void zoomOut();
 
-    // Set font smoothing (linear vs nearest texture filtering) and rebuild the
-    // atlas if it changed. Driven by the "Smooth Text" editor setting.
-    void setSmoothScaling(bool on);
+    // Set the text rendering mode (see enum RenderMode) and rebuild the atlas if
+    // it changed. Driven by the "Text Rendering" editor setting.
+    void setRenderMode(int mode);
 
     // Use rounded box-drawing glyphs (from rounded_font_path) for the box/corner
     // characters while keeping the main font for everything else. Driven by the
@@ -83,9 +94,27 @@ public:
     void getSessionState(int& win_x, int& win_y, int& win_w, int& win_h, float& scale);
     void applySessionState(int win_x, int win_y, int win_w, int win_h, float scale);
 
+    // Image overlay (used by the About box): load an image and draw it aspect-fit
+    // and centred over the given cell rectangle on top of the text, every frame,
+    // until cleared. Returns false if the image could not be loaded (missing file,
+    // or the build has no image-decoding support).
+    //
+    // When tint is true the image is recoloured to the current colour scheme: each
+    // pixel's luminance is mapped onto a ramp of `body` (neutral areas) or `accent`
+    // (blue-dominant areas, e.g. the "++"), preserving shape, shading and alpha. So
+    // the same logo takes on each scheme's palette instead of its baked-in colours.
+    bool setImageOverlay(const std::string& path, int cx, int cy, int cw, int ch,
+                         bool tint = false,
+                         SDL_Color body = { 255, 255, 255, 255 },
+                         SDL_Color accent = { 255, 255, 255, 255 });
+    void clearImageOverlay();
+
     // Configuration Toggles
-    void toggleSmoothScaling();
+    void cycleRenderMode();     // PIXELATED -> SMOOTH -> SHARP -> PIXELATED ...
     void toggleResizable();
+
+    // Human-readable name of a RenderMode value (for menus / status text).
+    static const char* renderModeName(int mode);
 
     // NEW: Mouse Updates
     void updateMousePos(int x, int y, bool inside);
@@ -107,6 +136,15 @@ public:
     void pixelToGrid(int px, int py, int* gx, int* gy);
 
 private:
+    // Atlas rasterisation parameters, derived from render_mode in reload_font()
+    // and consumed by create_font_texture()/draw_char().
+    int  atlas_ss_ = 1;        // supersample factor (glyph is atlas_ss_x native size)
+    bool atlas_aa_ = false;    // true: alpha is antialiased coverage; false: binary
+
+    // Optional image drawn over the text each frame (About box). Null when unused.
+    SDL_Texture* overlay_tex_ = nullptr;
+    SDL_Rect     overlay_dst_ = { 0, 0, 0, 0 };   // destination in logical pixels
+
     SDL_Texture* create_font_texture(SDL_Renderer* ren, const unsigned char* font_data);
     SDL_Texture* load_font_file(const std::string& path);   // raw .F16 -> texture (or null)
     void draw_char(unsigned char c, int x, int y, SDL_Color fg, SDL_Color bg, SDL_Texture* tex = nullptr);

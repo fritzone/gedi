@@ -333,6 +333,7 @@ void TextEditor::run(int argc, char* argv[]) {
     m_keyBindings->loadFromConfig(m_config.keybindings);
 
     m_buildSystem = std::make_unique<BuildSystem>(m_config, m_exe_dir);
+    m_completion  = std::make_unique<CompletionEngine>();
     m_helpProvider = std::make_unique<HelpProvider>();
     m_bufferManager = std::make_unique<BufferManager>();
 
@@ -354,8 +355,8 @@ void TextEditor::run(int argc, char* argv[]) {
     m_text_area_end_y = m_renderer->getHeight() - 4;
 
 #ifdef GEDI_GUI
-    // Apply the font-smoothing and rounded-corner preferences from config.
-    gui_set_smooth_scaling(m_config.smooth_text ? 1 : 0);
+    // Apply the text-rendering and rounded-corner preferences from config.
+    gui_set_render_mode(m_config.text_render_mode);
     gui_set_rounded_corners(m_config.rounded_corners ? 1 : 0);
     // Apply the selected editor-text font (map saved name → file path).
     {
@@ -1591,7 +1592,11 @@ void TextEditor::main_loop() {
                 wint_t next_ch;
                 while ((next_ch = m_renderer->getChar()) != (wint_t)ERR) { input_buffer.push_back(next_ch); }
                 timeout(-1); nodelay(stdscr, TRUE);
+                // A burst of characters is a paste (or an escape sequence), not
+                // interactive typing — don't pop autocomplete for every '.' in it.
+                m_batch_input = input_buffer.size() > 1;
                 for (wint_t key_press : input_buffer) { process_key(key_press); }
+                m_batch_input = false;
             }
         } else {
             // Idle — check whether a debounced semantic re-highlight is due.
@@ -2308,6 +2313,188 @@ void TextEditor::GoToDefinition() {
     handleResize();
 }
 
+//  Code completion (libclang)
+
+void TextEditor::TriggerCompletion() {
+    if (currentBufferIdx() == -1) return;
+    EditorBuffer& buffer = currentBuffer();
+    if (buffer.read_only || !buffer.current_line) return;
+    if (buffer.syntax_type != EditorBuffer::ST_C_CPP) return;
+    if (m_config.syntax_highlight < 2 || !m_completion) return;   // clang mode only
+
+    // Partial identifier immediately before the cursor (what we complete on).
+    const std::string& line0 = buffer.current_line->text;
+    int cur = buffer.cursor_col - 1;
+    if (cur > (int)line0.size()) cur = (int)line0.size();
+    if (cur < 0) cur = 0;
+    int pstart = cur;
+    while (pstart > 0 && (std::isalnum((unsigned char)line0[pstart - 1]) || line0[pstart - 1] == '_'))
+        --pstart;
+    const int prefix_start_col = pstart + 1;   // 1-based column where the word begins
+
+    // Snapshot everything the worker thread needs.
+    std::string abs_path = get_full_path(buffer.filename);
+    CompilerSettings settings_snap = buffer.compiler_settings;
+    int comp_line = buffer.current_line_num;
+    int comp_col  = buffer.cursor_col;
+    std::string content;
+    content.reserve(static_cast<size_t>(buffer.total_lines) * 60);
+    for (Line* l = buffer.document_head; l; l = l->next) content += l->text + "\n";
+
+    struct CompResult { std::atomic<bool> done{false}; std::vector<CompletionItem> items; };
+    auto result = std::make_shared<CompResult>();
+    BuildSystem*      build  = m_buildSystem.get();
+    CompletionEngine* engine = m_completion.get();
+
+    std::thread([result, engine, build, abs_path, content, settings_snap, comp_line, comp_col]() mutable {
+        std::vector<std::string> args =
+            build ? build->getClangArguments(abs_path, settings_snap) : std::vector<std::string>{};
+        result->items = engine->complete(abs_path, content, args, comp_line, comp_col);
+        result->done.store(true);
+    }).detach();
+
+    // Stay responsive while the (possibly slow first) parse runs.
+    auto show_spin = [&](char s) {
+        int w = m_renderer->getWidth(), h = m_renderer->getHeight();
+        m_renderer->drawText(0, h - 1, std::string(w, ' '), Renderer::CP_STATUS_BAR);
+        m_renderer->drawText(1, h - 1, std::string("Completing... ") + s + "   (Esc to cancel)",
+                             Renderer::CP_STATUS_BAR);
+        m_renderer->refresh();
+    };
+    const char spin[] = { '|', '/', '-', '\\' };
+    int si = 0; bool cancelled = false;
+    show_spin(spin[0]);
+    while (!result->done.load()) {
+        timeout(80); wint_t ch = ERR; wget_wch(stdscr, &ch); timeout(-1);
+        if (ch == 27) { cancelled = true; break; }
+        si = (si + 1) % 4; show_spin(spin[si]);
+    }
+    if (cancelled) { handleResize(); drawEditorState(); m_renderer->refresh(); return; }
+
+    auto& items = result->items;
+    if (items.empty()) {
+        handleResize(); drawEditorState();
+        int h = m_renderer->getHeight();
+        m_renderer->drawText(1, h - 1, "No completions.", Renderer::CP_STATUS_BAR);
+        m_renderer->refresh();
+        return;
+    }
+
+    //  Interactive filtered popup
+    int sel = 0, top = 0;
+    const int MAX_ROWS = 10;
+    std::vector<const CompletionItem*> filtered;
+
+    auto currentWord = [&]() -> std::string {
+        const std::string& ln = currentBuffer().current_line->text;
+        int ps = prefix_start_col - 1, cc = currentBuffer().cursor_col - 1;
+        if (ps < 0) ps = 0;
+        if (cc > (int)ln.size()) cc = (int)ln.size();
+        if (cc < ps) cc = ps;
+        return ln.substr(ps, cc - ps);
+    };
+    auto refilter = [&]() {
+        std::string w = currentWord();
+        for (auto& c : w) c = (char)std::tolower((unsigned char)c);
+        filtered.clear();
+        for (auto& it : items) {
+            if (w.empty()) { filtered.push_back(&it); continue; }
+            if (it.insert.size() < w.size()) continue;
+            bool ok = true;
+            for (size_t k = 0; k < w.size(); ++k)
+                if ((char)std::tolower((unsigned char)it.insert[k]) != w[k]) { ok = false; break; }
+            if (ok) filtered.push_back(&it);
+        }
+        if (sel >= (int)filtered.size()) sel = (int)filtered.size() - 1;
+        if (sel < 0) sel = 0;
+        if (sel < top) top = sel;
+        if (sel >= top + MAX_ROWS) top = sel - MAX_ROWS + 1;
+        if (top < 0) top = 0;
+    };
+    refilter();
+    if (filtered.empty()) { handleResize(); drawEditorState(); m_renderer->refresh(); return; }
+
+    nodelay(stdscr, FALSE); timeout(-1);
+    bool accept = false;
+    while (true) {
+        drawEditorState();   // repaint editor (+ any chars typed while filtering)
+
+        int rows = std::min((int)filtered.size(), MAX_ROWS);
+        int width = 16;
+        for (auto* it : filtered) width = std::max(width, (int)it->display.size());
+        width = std::min(width, 52) + 2;
+
+        int anchor_x = m_text_area_start_x + m_gutter_width +
+                       (prefix_start_col - currentBuffer().horizontal_scroll_offset);
+        int anchor_y = currentBuffer().cursor_screen_y + 1;
+        if (anchor_x + width > m_renderer->getWidth()) anchor_x = m_renderer->getWidth() - width;
+        if (anchor_x < 0) anchor_x = 0;
+        if (anchor_y + rows > m_renderer->getHeight() - 1)
+            anchor_y = currentBuffer().cursor_screen_y - rows;   // not enough room below → above
+        if (anchor_y < m_text_area_start_y) anchor_y = m_text_area_start_y;
+
+        m_renderer->drawShadow(anchor_x, anchor_y, width, rows);
+        for (int i = 0; i < rows; ++i) {
+            int idx = top + i;
+            std::string disp = filtered[idx]->display;
+            if ((int)disp.size() > width - 2) disp = disp.substr(0, width - 2);
+            disp.resize(width - 2, ' ');
+            int cp = (idx == sel) ? Renderer::CP_MENU_SELECTED : Renderer::CP_LIST_BOX;
+            m_renderer->drawText(anchor_x, anchor_y + i, " " + disp + " ", cp);
+        }
+        // "more items" markers
+        if (top > 0)
+            m_renderer->drawText(anchor_x + width - 1, anchor_y, "\xe2\x86\x91", Renderer::CP_LIST_BOX);
+        if (top + rows < (int)filtered.size())
+            m_renderer->drawText(anchor_x + width - 1, anchor_y + rows - 1, "\xe2\x86\x93", Renderer::CP_LIST_BOX);
+        m_renderer->refresh();
+
+        wint_t ch = m_renderer->getChar();
+        if (ch == 27) break;
+        else if (ch == KEY_UP)    { if (sel > 0) { --sel; if (sel < top) top = sel; } }
+        else if (ch == KEY_DOWN)  { if (sel < (int)filtered.size() - 1) { ++sel; if (sel >= top + MAX_ROWS) top = sel - MAX_ROWS + 1; } }
+        else if (ch == KEY_PPAGE) { sel = std::max(0, sel - MAX_ROWS); if (sel < top) top = sel; }
+        else if (ch == KEY_NPAGE) { sel = std::min((int)filtered.size() - 1, sel + MAX_ROWS); if (sel >= top + MAX_ROWS) top = sel - MAX_ROWS + 1; }
+        else if (ch == KEY_ENTER || ch == 10 || ch == 13 || ch == '\t' || ch == 9) { accept = true; break; }
+        else if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
+            if (currentBuffer().cursor_col > prefix_start_col) {
+                std::string& ln = currentBuffer().current_line->text;
+                int idx = currentBuffer().cursor_col - 2;
+                if (idx >= 0 && idx < (int)ln.size()) {
+                    ln.erase(idx, 1); currentBuffer().cursor_col--; currentBuffer().changed = true;
+                }
+                refilter();
+                if (filtered.empty()) break;
+            } else break;   // backspaced past the trigger point → dismiss
+        }
+        else if (ch < 128 && (std::isalnum((int)ch) || ch == '_')) {
+            std::string& ln = currentBuffer().current_line->text;
+            int idx = currentBuffer().cursor_col - 1;
+            if (idx < 0) idx = 0;
+            ln.insert(ln.begin() + std::min(idx, (int)ln.size()), (char)ch);
+            currentBuffer().cursor_col++; currentBuffer().changed = true;
+            refilter();
+            if (filtered.empty()) break;
+        }
+        else break;   // any other key dismisses the popup
+    }
+    nodelay(stdscr, TRUE);
+
+    if (accept && sel >= 0 && sel < (int)filtered.size()) {
+        const std::string ins = filtered[sel]->insert;
+        std::string& ln = currentBuffer().current_line->text;
+        int ps = prefix_start_col - 1, cc = currentBuffer().cursor_col - 1;
+        if (ps < 0) ps = 0;
+        if (cc > (int)ln.size()) cc = (int)ln.size();
+        if (cc < ps) cc = ps;
+        ln.erase(ps, cc - ps);
+        ln.insert(ps, ins);
+        currentBuffer().cursor_col = ps + (int)ins.size() + 1;
+        currentBuffer().changed = true;
+    }
+    handleResize(); drawEditorState(); m_renderer->refresh();
+}
+
 // Word character for C++ navigation: identifiers are [A-Za-z0-9_]
 static bool isWordChar(unsigned char c) { return std::isalnum(c) || c == '_'; }
 
@@ -2513,6 +2700,7 @@ void TextEditor::process_key(wint_t ch) {
                 case EditorAction::ACT_REPLACE: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } ActivateReplace(); return;
                 case EditorAction::ACT_GOTO_LINE: GoToLineDialog(); return;
                 case EditorAction::ACT_GO_TO_DEFINITION: GoToDefinition(); return;
+                case EditorAction::ACT_AUTOCOMPLETE:     TriggerCompletion(); return;
                 case EditorAction::ACT_FIND_REFERENCES:  findAllReferences(); return;
                 case EditorAction::ACT_COMPILE: compileOnly(); return;
                 case EditorAction::ACT_RUN: compileAndRun(); return;
@@ -2813,6 +3001,20 @@ void TextEditor::process_key(wint_t ch) {
                 }
                 currentBuffer().cursor_col += (int)utf8_char.length();
                 currentBuffer().changed = true;
+
+                // Auto-trigger completion right after a member-access operator
+                // (".", "->", "::"). TriggerCompletion() itself no-ops unless this
+                // is a C/C++ buffer with clang highlighting enabled.
+                const std::string& tl = currentBuffer().current_line->text;
+                int cc = currentBuffer().cursor_col;   // 1-based, just past the char
+                char before = (cc >= 3) ? tl[cc - 3] : '\0';   // char before the operator
+                bool trig = !m_batch_input && (
+                    // "." after an identifier or expression end — but not a number (3.14)
+                    (ch == '.' && (std::isalpha((unsigned char)before) || before == '_' ||
+                                   before == ')' || before == ']')) ||
+                    (ch == '>' && before == '-') ||
+                    (ch == ':' && before == ':'));
+                if (trig) TriggerCompletion();
             }
         }
         break;
@@ -5085,7 +5287,23 @@ void TextEditor::CompileOptionsDialog() {
 }
 
 void TextEditor::AboutBox() {
-    MessageDialog::show(*m_renderer, "gedi C++ Editor (c) fritzone 2026\n\nAn interactive IDE for C++ programmers.");
+    std::string iconPath;
+#ifdef GEDI_GUI
+    // Locate the product logo the same way the help file is located: next to the
+    // binary first, then the installed data dir. Only the SDL build shows it.
+    const std::string rel = "icons/gedi_1.0-icon.png";
+    std::vector<std::filesystem::path> candidates;
+    if (!m_exe_dir.empty()) {
+        candidates.push_back(m_exe_dir / rel);
+        candidates.push_back(m_exe_dir.parent_path() / "share/gedi" / rel);
+    }
+    candidates.push_back(rel);
+    candidates.push_back(std::filesystem::path("/usr/share/gedi") / rel);
+    for (const auto& c : candidates) {
+        if (std::filesystem::exists(c)) { iconPath = c.string(); break; }
+    }
+#endif
+    AboutDialog::show(*m_renderer, iconPath);
 }
 
 void TextEditor::loadHelpFile() {
