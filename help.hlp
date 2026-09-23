@@ -1,7 +1,7 @@
 [main]
-**gedi - The Console C++ IDE - Main Help**
+**Garland Turbine - The Console C++ IDE - Main Help**
 
-Welcome to the gedi help system. This guide provides detailed information on all of the editor's features.
+Welcome to the Garland Turbine help system. This guide provides detailed information on all of the editor's features.
 
 **How to use this guide:**
 * Use the **Up** and **Down arrow keys** to select a link (highlighted text).
@@ -622,6 +622,10 @@ Alt+0    - Toggle Project Panel
 
 **Build & Run**
 Alt+F9   - Compile Only  Ctrl+F9  - Compile & Run
+Alt+F5   - Toggle Output
+
+Return to [[main|Main Menu]].
+ Only  Ctrl+F9  - Compile & Run
 Alt+F5   - Toggle Output
 
 Return to [[main|Main Menu]].

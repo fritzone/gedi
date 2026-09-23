@@ -1,6 +1,7 @@
 {
     "color_scheme": "Borland Classic",
     "compile_mode": -1,
+    "editor_font": "Simpagar",
     "extra_compile_flags": "",
     "indentation_width": 4,
     "keybindings": {
@@ -26,14 +27,15 @@
     },
     "optimization_level": -1,
     "recent_files": [
+        "/home/fld/work/p/gedi/BuildSystem.cpp",
         "/home/fld/work/p/gedi/CompileOptionsDialog.cpp",
         "/home/fld/work/p/gedi/CMakeLists.txt",
         "/home/fld/work/p/gedi/colors.json",
-        "/home/fld/work/p/gedi/BuildSystem.cpp",
         "/home/fld/work/p/gedi/BuildOutputDialog.cpp",
         "/home/fld/work/p/gedi/build/main.cpp",
         "/home/fld/work/p/gedi/ConfigManager.cpp"
     ],
+    "rounded_corners": false,
     "security_flags": [
         true,
         true,
@@ -44,7 +46,7 @@
     "show_line_numbers": false,
     "show_whitespace": true,
     "smart_indentation": true,
-    "smooth_text": true,
+    "smooth_text": false,
     "syntax_highlight": 2,
     "use_tab_character": true
 }

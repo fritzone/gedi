@@ -1,6 +1,6 @@
 #include "Utils.h"
 #include "GlobalState.h"
-#include "BorlandEngine.h"
+#include "VgaTextEngine.h"
 #include <cstdio>
 #include <cstring>
 #include <cstdarg>

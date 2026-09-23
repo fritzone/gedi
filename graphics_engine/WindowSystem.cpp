@@ -1,6 +1,6 @@
 #include "WindowSystem.h"
 #include "GlobalState.h"
-#include "BorlandEngine.h"
+#include "VgaTextEngine.h"
 #include "Utils.h"
 #include <fstream>
 #include <algorithm>

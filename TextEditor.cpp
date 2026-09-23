@@ -27,6 +27,14 @@
 #include <algorithm>
 #include <cstdlib>
 #include <sstream>
+#ifdef GEDI_GUI
+#include <pty.h>          // forkpty
+#include <sys/ioctl.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <csignal>
+#include <cerrno>
+#endif
 
 
 //  UTF-8 byte helpers 
@@ -332,8 +340,16 @@ void TextEditor::run(int argc, char* argv[]) {
     m_text_area_end_y = m_renderer->getHeight() - 4;
 
 #ifdef GEDI_GUI
-    // Apply the font-smoothing preference from config before drawing.
+    // Apply the font-smoothing and rounded-corner preferences from config.
     gui_set_smooth_scaling(m_config.smooth_text ? 1 : 0);
+    gui_set_rounded_corners(m_config.rounded_corners ? 1 : 0);
+    // Apply the selected editor-text font (map saved name → file path).
+    {
+        std::string path;   // empty = Default
+        for (const auto& f : listEditorFonts())
+            if (f.first == m_config.editor_font) { path = f.second; break; }
+        gui_set_font(path.empty() ? nullptr : path.c_str());
+    }
 
     // Restore the graphical window state (zoom, size, position) before any layout
     // happens, so the grid and text-area bounds match the restored window.
@@ -478,6 +494,7 @@ void TextEditor::TryExit() {
             }
         }
     }
+    killRunProgram();   // stop any program still running in the output pane
     saveSession();
     main_loop_running = false;
 }
@@ -790,8 +807,19 @@ void TextEditor::drawTextArea() {
                     } else {
                         // Draw the whole UTF-8 sequence as a single cell so accented
                         // characters render as one glyph (not byte-by-byte garbage).
+                        // Editor text uses the selected font (A_FONT_EDITOR) — but never
+                        // box-drawing/block code points, which stay on the default
+                        // font so frames look the same regardless of the chosen font.
+                        int altf = A_FONT_EDITOR;
+                        if (blen == 3) {
+                            unsigned b0 = (unsigned char)raw,
+                                     b1 = (unsigned char)p->text[char_idx + 1],
+                                     b2 = (unsigned char)p->text[char_idx + 2];
+                            unsigned cp = ((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F);
+                            if (cp >= 0x2500 && cp <= 0x259F) altf = 0;   // box/block
+                        }
                         m_renderer->drawText(screen_x, current_screen_y,
-                                             p->text.substr(char_idx, blen), color, flags);
+                                             p->text.substr(char_idx, blen), color, flags | altf);
                     }
                 }
                 vcol += cell_w;
@@ -1389,9 +1417,24 @@ void TextEditor::handleMouseEvent() {
 void TextEditor::main_loop() {
     main_loop_running = true;
     while (main_loop_running) {
+        pumpRunProgram();   // advance any running program (no-op if none / text build)
+
         if (m_output_screen_visible) {
+#ifdef GEDI_GUI
+            // Graphical build: render the captured output full-window and handle
+            // its own input (scroll / select / copy / toggle). The terminal-based
+            // ShowOutputScreen() can't run here — endwin() would destroy the window.
+            drawRunOutputPane();
+            m_renderer->refresh();
+            wint_t oc = m_renderer->getChar();
+            if (oc == KEY_RESIZE)      { handleResize(); continue; }
+            if (oc == KEY_MOUSE)       { handleRunOutputMouse(); continue; }
+            if (oc != (wint_t)ERR)     handleRunOutputKey(oc);
+            continue;
+#else
             ShowOutputScreen();
             continue;
+#endif
         }
 
         // Calculate gutter width at the start of the loop
@@ -2434,7 +2477,10 @@ void TextEditor::process_key(wint_t ch) {
                 case EditorAction::ACT_FIND_REFERENCES:  findAllReferences(); return;
                 case EditorAction::ACT_COMPILE: compileOnly(); return;
                 case EditorAction::ACT_RUN: compileAndRun(); return;
-                case EditorAction::ACT_TOGGLE_OUTPUT: ShowOutputScreen(); return;
+                case EditorAction::ACT_TOGGLE_OUTPUT:
+                    m_output_screen_visible = !m_output_screen_visible;
+                    if (!m_output_screen_visible) handleResize();
+                    return;
                 case EditorAction::ACT_NEXT_BUFFER: NextWindow(); return;
                 case EditorAction::ACT_PREV_BUFFER: PreviousWindow(); return;
                 case EditorAction::ACT_CLOSE_BUFFER: CloseWindow(); return;
@@ -4022,6 +4068,322 @@ void TextEditor::showScrollableOutputDialog(const std::vector<std::string>& line
     BuildOutputDialog::show(*m_renderer, lines);
 }
 
+// ── Graphical in-window run-output pane ─────────────────────────────────────────
+// Captured program output is shown full-window (the editor is simply not drawn).
+// Toggle with F5 / Alt+F5 / Esc, scroll with PgUp/PgDn/arrows, select with the
+// mouse and copy with Ctrl+C (also auto-copies to the clipboard on mouse release).
+
+void TextEditor::setRunOutput(const std::string& content) {
+    m_run_output_lines.clear();
+    std::string cur;
+    for (char c : content) {
+        if      (c == '\n') { m_run_output_lines.push_back(cur); cur.clear(); }
+        else if (c == '\r') { /* drop CR */ }
+        else if (c == '\t') { cur += "    "; }   // expand tabs so columns line up
+        else                  cur += c;
+    }
+    if (!cur.empty()) m_run_output_lines.push_back(cur);
+    m_run_output_scroll = 0;
+    m_run_sel_active = m_run_selecting = false;
+}
+
+void TextEditor::drawRunOutputPane() {
+    const int W = m_renderer->getWidth();
+    const int H = m_renderer->getHeight();
+    if (W <= 0 || H <= 0) return;
+
+    const int total = (int)m_run_output_lines.size();
+    int max_scroll = std::max(0, total - H);
+    if (m_run_follow) m_run_output_scroll = max_scroll;     // keep newest output in view
+    m_run_output_scroll = std::max(0, std::min(m_run_output_scroll, max_scroll));
+
+    // Normalised selection range
+    int sr = m_run_sel_anchor_row, sc = m_run_sel_anchor_col;
+    int er = m_run_sel_row,        ec = m_run_sel_col;
+    if (sr > er || (sr == er && sc > ec)) { std::swap(sr, er); std::swap(sc, ec); }
+
+    // Plain full-window white-on-black: each row is padded to full width so the
+    // whole screen is black, with white text. No title bar, status bar or colours.
+    for (int i = 0; i < H; ++i) {
+        int row = m_run_output_scroll + i;
+        std::string line = (row < total) ? m_run_output_lines[row] : std::string();
+        if ((int)line.size() < W) line += std::string(W - (int)line.size(), ' ');
+        else                      line = line.substr(0, W);
+        m_renderer->drawText(0, i, line, Renderer::CP_OUTPUT_BW);
+
+        if (m_run_sel_active && row >= sr && row <= er && row < total) {
+            const std::string& raw = m_run_output_lines[row];
+            int a = (row == sr) ? sc : 0;
+            int b = (row == er) ? ec : (int)raw.size();
+            a = std::max(0, std::min(a, (int)raw.size()));
+            b = std::max(0, std::min(b, (int)raw.size()));
+            if (b > a && a < W) {
+                std::string sub = raw.substr(a, b - a);
+                if ((int)sub.size() > W - a) sub = sub.substr(0, W - a);
+                m_renderer->drawText(a, i, sub, Renderer::CP_OUTPUT_BW_SEL);
+            }
+        }
+    }
+
+    // While a program is running, show a cursor at the live input position.
+    if (m_run_running && total > 0) {
+        int live_sy = (total - 1) - m_run_output_scroll;
+        if (live_sy >= 0 && live_sy < H) {
+            m_renderer->setCursor(std::min(m_run_cur_col, W - 1), live_sy);
+            return;
+        }
+    }
+    m_renderer->hideCursor();
+}
+
+void TextEditor::handleRunOutputKey(wint_t ch) {
+    const int H = m_renderer->getHeight();
+    const int visible_rows = std::max(1, H);
+    const int total = (int)m_run_output_lines.size();
+    const int max_scroll = std::max(0, total - visible_rows);
+
+    auto exitPane = [&]() {
+        m_output_screen_visible = false;
+        m_run_selecting = false;
+        handleResize();
+    };
+
+    // F5 always returns to the editor (a running program keeps going in the
+    // background and continues to be pumped from the main loop).
+    if (ch == KEY_F(5)) { exitPane(); return; }
+
+    if (m_run_running) {
+        // Interactive: only scrolling is handled locally; every other key is sent
+        // to the program's stdin (the pty echoes and line-edits it).
+        if (ch == KEY_PPAGE) { m_run_output_scroll = std::max(0, m_run_output_scroll - visible_rows); m_run_follow = false; return; }
+        if (ch == KEY_NPAGE) { m_run_output_scroll = std::min(max_scroll, m_run_output_scroll + visible_rows); m_run_follow = (m_run_output_scroll >= max_scroll); return; }
+        writeToRunProgram(ch);
+        return;
+    }
+
+    // Program finished / not running: navigation + copy.
+    if (ch == 27) {                       // Esc, or Alt+<key> (e.g. Alt+F5)
+        nodelay(stdscr, FALSE);
+        timeout(50);
+        m_renderer->getChar();            // swallow an optional follow byte
+        timeout(-1);
+        nodelay(stdscr, TRUE);            // restore non-blocking for the main loop
+        exitPane();
+        return;
+    }
+    switch (ch) {
+        case KEY_PPAGE: m_run_output_scroll = std::max(0, m_run_output_scroll - visible_rows); break;
+        case KEY_NPAGE: m_run_output_scroll = std::min(max_scroll, m_run_output_scroll + visible_rows); break;
+        case KEY_UP:    m_run_output_scroll = std::max(0, m_run_output_scroll - 1); break;
+        case KEY_DOWN:  m_run_output_scroll = std::min(max_scroll, m_run_output_scroll + 1); break;
+        case KEY_HOME:  m_run_output_scroll = 0; break;
+        case KEY_END:   m_run_output_scroll = max_scroll; break;
+        case 3:         copyRunOutputSelection(); break;   // Ctrl+C
+        default: break;
+    }
+}
+
+void TextEditor::handleRunOutputMouse() {
+    MEVENT ev;
+    if (getmouse(&ev) != OK) return;
+
+    const int H = m_renderer->getHeight();
+    const int visible_rows = std::max(1, H);
+    const int total = (int)m_run_output_lines.size();
+    const int max_scroll = std::max(0, total - visible_rows);
+
+    if (ev.bstate & BUTTON4_PRESSED) { m_run_output_scroll = std::max(0, m_run_output_scroll - 3); return; }
+    if (ev.bstate & BUTTON5_PRESSED) { m_run_output_scroll = std::min(max_scroll, m_run_output_scroll + 3); return; }
+
+    bool press   = (ev.bstate & BUTTON1_PRESSED) != 0;
+    bool release = (ev.bstate & BUTTON1_RELEASED) != 0;
+    bool motion  = (ev.bstate & (BUTTON1_MOTION | REPORT_MOUSE_POSITION)) != 0;
+
+    auto toRowCol = [&](int& row, int& col) {
+        int ry = ev.y;                    // content fills the whole window
+        if (ry < 0) ry = 0;
+        row = m_run_output_scroll + ry;
+        if (row < 0) row = 0;
+        if (row > total) row = total;
+        int len = (row >= 0 && row < total) ? (int)m_run_output_lines[row].size() : 0;
+        col = ev.x;
+        if (col < 0) col = 0;
+        if (col > len) col = len;
+    };
+
+    if (press) {
+        int r, c; toRowCol(r, c);
+        m_run_sel_anchor_row = m_run_sel_row = r;
+        m_run_sel_anchor_col = m_run_sel_col = c;
+        m_run_selecting = true;
+        m_run_sel_active = false;
+        return;
+    }
+    if (m_run_selecting && (motion || release)) {
+        int r, c; toRowCol(r, c);
+        m_run_sel_row = r; m_run_sel_col = c;
+        m_run_sel_active = (r != m_run_sel_anchor_row || c != m_run_sel_anchor_col);
+        if (release) {
+            m_run_selecting = false;
+            if (m_run_sel_active) copyRunOutputSelection();   // copy-on-select
+        }
+    }
+}
+
+void TextEditor::copyRunOutputSelection() {
+    if (!m_run_sel_active) return;
+    int sr = m_run_sel_anchor_row, sc = m_run_sel_anchor_col;
+    int er = m_run_sel_row,        ec = m_run_sel_col;
+    if (sr > er || (sr == er && sc > ec)) { std::swap(sr, er); std::swap(sc, ec); }
+
+    std::string out;
+    for (int row = sr; row <= er && row < (int)m_run_output_lines.size(); ++row) {
+        const std::string& line = m_run_output_lines[row];
+        int a = (row == sr) ? sc : 0;
+        int b = (row == er) ? ec : (int)line.size();
+        a = std::max(0, std::min(a, (int)line.size()));
+        b = std::max(0, std::min(b, (int)line.size()));
+        if (b > a) out += line.substr(a, b - a);
+        if (row != er) out += "\n";
+    }
+    FILE* pipe = popen("xclip -selection clipboard -i", "w");
+    if (pipe) { fputs(out.c_str(), pipe); pclose(pipe); }
+}
+
+// ── Interactive (pty-backed) program execution ──────────────────────────────────
+#ifdef GEDI_GUI
+void TextEditor::startRunProgram(const std::string& exe, const std::string& temp_exe) {
+    killRunProgram();
+    m_run_output_lines.assign(1, std::string());   // single empty "live" line
+    m_run_cur_col = 0; m_run_esc = 0;
+    m_run_output_scroll = 0; m_run_follow = true;
+    m_run_sel_active = m_run_selecting = false;
+    m_run_temp_exe = temp_exe;
+
+    struct winsize ws{};
+    ws.ws_row = (unsigned short)std::max(1, m_renderer->getHeight());
+    ws.ws_col = (unsigned short)std::max(1, m_renderer->getWidth());
+
+    int master = -1;
+    pid_t pid = forkpty(&master, nullptr, nullptr, &ws);
+    if (pid < 0) { m_run_output_lines.back() = "[failed to start program]"; return; }
+    if (pid == 0) {
+        // Child: run the program through the shell (handles quoting / relative path).
+        std::string cmd = (exe[0] == '/') ? ("\"" + exe + "\"") : ("./" + exe);
+        execl("/bin/sh", "sh", "-c", cmd.c_str(), (char*)nullptr);
+        _exit(127);
+    }
+    m_run_pid    = pid;
+    m_run_pty_fd = master;
+    int fl = fcntl(master, F_GETFL, 0);
+    fcntl(master, F_SETFL, fl | O_NONBLOCK);
+    m_run_running = true;
+}
+
+// Incremental terminal-ish parser: handles \n \r \b \t, strips ANSI escapes, and
+// places printable bytes (including UTF-8) at the live cursor.
+void TextEditor::feedRunOutput(const char* data, int n) {
+    if (m_run_output_lines.empty()) { m_run_output_lines.emplace_back(); m_run_cur_col = 0; }
+    for (int i = 0; i < n; ++i) {
+        unsigned char c = (unsigned char)data[i];
+        if (m_run_esc == 1) { m_run_esc = (c == '[') ? 2 : 0; continue; }          // after ESC
+        if (m_run_esc == 2) { if (c >= 0x40 && c <= 0x7E) m_run_esc = 0; continue; } // CSI body
+        std::string& cur = m_run_output_lines.back();
+        switch (c) {
+            case 0x1B: m_run_esc = 1; break;
+            case '\r': m_run_cur_col = 0; break;
+            case '\n': m_run_output_lines.emplace_back(); m_run_cur_col = 0; break;
+            case '\b': case 0x7F: if (m_run_cur_col > 0) --m_run_cur_col; break;
+            case '\t': {
+                int next = (m_run_cur_col / 8 + 1) * 8;
+                while (m_run_cur_col < next) {
+                    if (m_run_cur_col < (int)cur.size()) cur[m_run_cur_col] = ' ';
+                    else                                 cur.push_back(' ');
+                    ++m_run_cur_col;
+                }
+                break;
+            }
+            case 0x07: break;                       // bell
+            default:
+                if (c < 0x20) break;                // drop other control bytes
+                if (m_run_cur_col < (int)cur.size()) cur[m_run_cur_col] = (char)c;
+                else                                 cur.push_back((char)c);
+                ++m_run_cur_col;
+                break;
+        }
+    }
+}
+
+void TextEditor::pumpRunProgram() {
+    if (!m_run_running || m_run_pty_fd < 0) return;
+    char buf[8192];
+    bool gone = false;
+    for (int i = 0; i < 64; ++i) {
+        ssize_t r = ::read(m_run_pty_fd, buf, sizeof(buf));
+        if (r > 0) { feedRunOutput(buf, (int)r); continue; }
+        if (r == 0) { gone = true; break; }
+        if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+        gone = true; break;                          // EIO: child has exited
+    }
+    if (!gone) {
+        int status; pid_t w = waitpid((pid_t)m_run_pid, &status, WNOHANG);
+        if (w == (pid_t)m_run_pid) {
+            char b[8192]; ssize_t r;
+            while ((r = ::read(m_run_pty_fd, b, sizeof(b))) > 0) feedRunOutput(b, (int)r);
+            gone = true;
+        }
+    }
+    if (gone) { finishRunProgram(); return; }
+
+    // Cap memory for runaway output.
+    const int CAP = 20000;
+    if ((int)m_run_output_lines.size() > CAP) {
+        int drop = (int)m_run_output_lines.size() - 15000;
+        m_run_output_lines.erase(m_run_output_lines.begin(), m_run_output_lines.begin() + drop);
+        m_run_output_scroll = std::max(0, m_run_output_scroll - drop);
+        m_run_sel_active = false;
+    }
+}
+
+void TextEditor::finishRunProgram() {
+    if (m_run_pty_fd >= 0) { ::close(m_run_pty_fd); m_run_pty_fd = -1; }
+    if (m_run_pid > 0) { int s; waitpid((pid_t)m_run_pid, &s, WNOHANG); m_run_pid = -1; }
+    m_run_running = false;
+    if (!m_run_temp_exe.empty()) { std::remove(m_run_temp_exe.c_str()); m_run_temp_exe.clear(); }
+    if (m_run_output_lines.empty() || !m_run_output_lines.back().empty())
+        m_run_output_lines.emplace_back();
+    m_run_output_lines.emplace_back("[program finished — F5/Esc: editor]");
+    m_run_cur_col = 0;
+}
+
+void TextEditor::killRunProgram() {
+    if (m_run_pid > 0) { ::kill((pid_t)m_run_pid, SIGKILL); int s; waitpid((pid_t)m_run_pid, &s, 0); m_run_pid = -1; }
+    if (m_run_pty_fd >= 0) { ::close(m_run_pty_fd); m_run_pty_fd = -1; }
+    m_run_running = false;
+}
+
+void TextEditor::writeToRunProgram(wint_t ch) {
+    if (m_run_pty_fd < 0) return;
+    std::string bytes;
+    if      (ch == KEY_ENTER || ch == 10 || ch == 13)     bytes = "\r";   // ICRNL → \n
+    else if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) bytes = "\x7f"; // VERASE
+    else if (ch == 9)                                     bytes = "\t";
+    else if (ch == 27)                                    bytes = "\x1b";
+    else if (ch < 0x80)                                   bytes = std::string(1, (char)ch);
+    else if (ch < KEY_MIN)                                bytes = wchar_to_utf8(ch);
+    else return;   // ignore arrow/function keys while typing
+    ssize_t w = ::write(m_run_pty_fd, bytes.data(), bytes.size()); (void)w;
+    m_run_follow = true;
+}
+#else
+void TextEditor::startRunProgram(const std::string&, const std::string&) {}
+void TextEditor::pumpRunProgram() {}
+void TextEditor::feedRunOutput(const char*, int) {}
+void TextEditor::writeToRunProgram(wint_t) {}
+void TextEditor::finishRunProgram() {}
+void TextEditor::killRunProgram() {}
+#endif
+
 CompilationResult TextEditor::runCompilationProcess() {
     CompilationResult result;
     result.success = false;
@@ -4153,12 +4515,22 @@ void TextEditor::compileAndRun() {
             return;
         }
 
-        def_prog_mode();
-        endwin();
-
+#ifdef GEDI_GUI
+        // Graphical build: run the program on a pseudo-terminal so it can read
+        // stdin and stream output live into the in-window pane. Asynchronous — it
+        // does NOT block the GUI or touch the launching console, and endwin() (which
+        // would tear down SDL) is never used.
+        startRunProgram(exe, result.temp_exe);
+        m_output_screen_visible = true;
+        handleResize();
+#else
         std::string temp_output_file = "tedit_run_output.tmp";
         std::string run_cmd = (exe[0] == '/') ? "\"" + exe + "\"" : ("./" + exe);
         run_cmd += " > " + temp_output_file + " 2>&1";
+        // Text build: give the program the real terminal so interactive I/O works.
+        def_prog_mode();
+        endwin();
+
         auto t = system(run_cmd.c_str());
         (void)t;
 
@@ -4172,6 +4544,7 @@ void TextEditor::compileAndRun() {
         reset_prog_mode();
         refresh();
         m_output_screen_visible = true;
+#endif
     } else {
         m_compile_output_visible = true;
         m_renderer->hideCursor();

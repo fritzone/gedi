@@ -1,5 +1,5 @@
 #include "UI.h"
-#include "BorlandEngine.h"
+#include "VgaTextEngine.h"
 #include "WindowSystem.h"
 #include "Utils.h"
 #include "GlobalState.h"

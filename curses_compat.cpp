@@ -3,13 +3,13 @@
 // Implementation of the ncurses emulation layer used by the graphical (SDL)
 // build of gedi.  Every drawing operation ends up in the cell grid of `stdscr`
 // (or another emulated window); refresh() flushes that grid to the SDL based
-// BorlandEngine VGA text-mode emulator.  Keyboard and mouse events coming from
+// VgaTextEngine VGA text-mode emulator.  Keyboard and mouse events coming from
 // SDL are translated into the exact key codes / MEVENT values the rest of the
 // editor already expects from ncurses.
 #ifdef GEDI_GUI
 
 #include "curses_compat.h"
-#include "graphics_engine/BorlandEngine.h"
+#include "graphics_engine/VgaTextEngine.h"
 #include "graphics_engine/Constants.h"
 
 #include <SDL2/SDL.h>
@@ -23,7 +23,7 @@
 // ---------------------------------------------------------------------------
 //  Global emulator state
 // ---------------------------------------------------------------------------
-static BorlandEngine  g_eng;
+static VgaTextEngine  g_eng;
 WINDOW*               stdscr = nullptr;
 int                   COLS   = 80;
 int                   LINES  = 25;
@@ -179,7 +179,7 @@ static void win_put(WINDOW* w, int y, int x, wchar_t ch, chtype attr) {
 }
 
 // ---------------------------------------------------------------------------
-//  Flush stdscr to the BorlandEngine and present a frame
+//  Flush stdscr to the VgaTextEngine and present a frame
 // ---------------------------------------------------------------------------
 static void pump_sdl();   // fwd
 
@@ -198,9 +198,10 @@ static void blit_and_present() {
             if (cell.attr & A_BOLD)    fg |= 8;
             if (cell.attr & A_DIM)     fg &= 7;
             if (cell.attr & A_REVERSE) { int t = fg; fg = bg; bg = t; }
+            uint8_t font = (uint8_t)A_FONT_OF(cell.attr);   // per-cell font index
             int idx = y * g_eng.SCREEN_COLS + x;
             if (idx >= 0 && idx < (int)g_eng.buffer.size())
-                g_eng.buffer[idx] = { uni_to_cp437(cell.ch), (uint8_t)fg, (uint8_t)bg };
+                g_eng.buffer[idx] = { uni_to_cp437(cell.ch), (uint8_t)fg, (uint8_t)bg, font };
         }
     }
     if (g_cursor_visible)
@@ -218,7 +219,7 @@ static void push_alt(wint_t base)      { g_input.push_back(27); g_input.push_bac
 
 static void push_mouse(int gx, int gy, mmask_t bstate) {
     MEVENT m{};
-    m.x = gx - 1;            // BorlandEngine grid is 1-based, ncurses is 0-based
+    m.x = gx - 1;            // VgaTextEngine grid is 1-based, ncurses is 0-based
     m.y = gy - 1;
     m.bstate = bstate;
     g_mouse.push_back(m);
@@ -418,29 +419,31 @@ static void pump_sdl() {
 //  Public ncurses-compatible API
 // ===========================================================================
 
-static std::string locate_font() {
-    const char* candidates[] = {
-        "VGA9.F16",
-        "graphics_engine/VGA9.F16",
-        "/usr/share/gedi/VGA9.F16",
-        "/usr/local/share/gedi/VGA9.F16",
+static std::string locate_font_named(const char* name) {
+    std::string rel[] = {
+        std::string(name),
+        std::string("graphics_engine/") + name,
+        std::string("/usr/share/gedi/") + name,
+        std::string("/usr/local/share/gedi/") + name,
     };
-    for (const char* c : candidates) {
-        if (FILE* f = fopen(c, "rb")) { fclose(f); return c; }
-    }
+    for (const std::string& c : rel)
+        if (FILE* f = fopen(c.c_str(), "rb")) { fclose(f); return c; }
     // alongside the executable
     char* base = SDL_GetBasePath();
     if (base) {
-        std::string p = std::string(base) + "VGA9.F16";
+        std::string p = std::string(base) + name;
         SDL_free(base);
         if (FILE* f = fopen(p.c_str(), "rb")) { fclose(f); return p; }
     }
-    return "VGA9.F16";
+    return name;
 }
+
+static std::string locate_font() { return locate_font_named("VGA9.F16"); }
 
 WINDOW* initscr() {
     SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, "0");
     g_eng.font_path = locate_font();
+    g_eng.rounded_font_path = locate_font_named("SMVGA.F16");
     g_eng.init_sdl();
     SDL_StartTextInput();
     for (int i = 0; i < 256; ++i) { g_pair_fg[i] = COLOR_WHITE; g_pair_bg[i] = COLOR_BLACK; }
@@ -472,6 +475,18 @@ void gui_set_window_state(int x, int y, int w, int h, float scale) {
 
 void gui_set_smooth_scaling(int on) {
     g_eng.setSmoothScaling(on != 0);
+}
+
+void gui_set_rounded_corners(int on) {
+    g_eng.setRoundedCorners(on != 0);
+}
+
+void gui_set_font(const char* path) {
+    g_eng.setEditorFont(path ? std::string(path) : std::string());
+}
+
+int gui_register_font(const char* path) {
+    return g_eng.registerFont(path ? std::string(path) : std::string());
 }
 
 int cbreak()                 { return OK; }

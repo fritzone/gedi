@@ -12,7 +12,7 @@ include_directories(${SDL2_INCLUDE_DIRS} .)
 # Source files
 set(SOURCES
     main.cpp
-    BorlandEngine.cpp
+    VgaTextEngine.cpp
     Utils.cpp
     WindowSystem.cpp
     UI.cpp

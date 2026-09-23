@@ -5,7 +5,7 @@
 #include <iostream>
 #include "Constants.h"
 
-class BorlandEngine {
+class VgaTextEngine {
 public:
     // Path to the VGA font file; defaults to FONT_FILENAME but may be overridden
     // (e.g. by the gedi GUI launcher) so the font can be found regardless of the
@@ -35,16 +35,21 @@ public:
     float scale_factor = 1.5f;
     bool smooth_scaling = true;
     bool is_resizable = true;
+    bool rounded_corners = false;       // overlay box-drawing glyphs from rounded_font_path
+    std::string rounded_font_path;      // e.g. SMVGA.F16 (rounded box/corner glyphs)
 
     int window_w = 0;
     int window_h = 0;
 
     std::vector<VGAChar> buffer;
-    SDL_Texture* font_texture = nullptr;
+    SDL_Texture* font_texture = nullptr;          // default UI/border/text font (index 0)
+    std::vector<SDL_Texture*> font_registry;      // extra fonts; registry id N -> [N-1]
+    std::vector<std::string>  font_registry_paths;
+    int editor_font_index = 0;                    // registry id used for editor-text cells
     SDL_Renderer* renderer = nullptr;
     SDL_Window* window = nullptr;
 
-    BorlandEngine();
+    VgaTextEngine();
     void init_sdl();
     void shutdown();
     void render_frame();
@@ -59,6 +64,20 @@ public:
     // Set font smoothing (linear vs nearest texture filtering) and rebuild the
     // atlas if it changed. Driven by the "Smooth Text" editor setting.
     void setSmoothScaling(bool on);
+
+    // Use rounded box-drawing glyphs (from rounded_font_path) for the box/corner
+    // characters while keeping the main font for everything else. Driven by the
+    // "Rounded Corners" editor setting.
+    void setRoundedCorners(bool on);
+
+    // Load a font (by path) into the registry and return its id (>=1), reusing the
+    // id if already loaded. Empty path returns 0 (the default font). Used both for
+    // the editor-text font and for previewing each font in the font picker.
+    int registerFont(const std::string& path);
+
+    // Choose the font used for editor-text cells (cells drawn with A_FONT_EDITOR).
+    // Empty path = default font. The UI / borders always use the default font.
+    void setEditorFont(const std::string& path);
 
     // Session persistence: read / restore window geometry and zoom.
     void getSessionState(int& win_x, int& win_y, int& win_w, int& win_h, float& scale);
@@ -89,7 +108,8 @@ public:
 
 private:
     SDL_Texture* create_font_texture(SDL_Renderer* ren, const unsigned char* font_data);
-    void draw_char(unsigned char c, int x, int y, SDL_Color fg, SDL_Color bg);
+    SDL_Texture* load_font_file(const std::string& path);   // raw .F16 -> texture (or null)
+    void draw_char(unsigned char c, int x, int y, SDL_Color fg, SDL_Color bg, SDL_Texture* tex = nullptr);
     void draw_cursor_block(int x, int y);
     void draw_mouse_overlay(); // NEW: Internal helper
     void reload_font();

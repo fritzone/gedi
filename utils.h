@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <utility>
 
 // Formats file size into a human-readable string (B, KB, MB)
 std::string formatSize(off_t size);
@@ -23,5 +24,9 @@ std::vector<std::string> wrap_text(const std::string& text, int width);
 std::string get_full_path(const std::string& filename_part);
 
 std::string get_filename_from_path(const std::string& full_path);
+
+// Enumerate selectable editor fonts (.F16) from the "fonts" directory. Returns
+// (human-readable name, full path) pairs, with ("Default", "") first.
+std::vector<std::pair<std::string, std::string>> listEditorFonts();
 
 #endif // UTILS_H

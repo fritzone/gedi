@@ -82,25 +82,31 @@ endif()
 #  Target 2: gedi-gui — the graphical (SDL) application
 #
 #  Re-uses every shared source but swaps the ncurses backend for the
-#  curses_compat emulation layer running on top of the SDL BorlandEngine.
+#  curses_compat emulation layer running on top of the SDL VgaTextEngine.
 # ===========================================================================
 find_package(SDL2)
 if(SDL2_FOUND)
     add_executable(gedi-gui
         ${GEDI_COMMON_SOURCES}
         curses_compat.cpp
-        graphics_engine/BorlandEngine.cpp
+        graphics_engine/VgaTextEngine.cpp
     )
     target_compile_definitions(gedi-gui PRIVATE GEDI_GUI)
     target_include_directories(gedi-gui PRIVATE ${CLANG_INCLUDE_DIR} ${SDL2_INCLUDE_DIRS})
-    target_link_libraries(gedi-gui ${CLANG_LIBRARY} ${SDL2_LIBRARIES})
+    target_link_libraries(gedi-gui ${CLANG_LIBRARY} ${SDL2_LIBRARIES} util)
     copy_data_files(gedi-gui colors.json config.json help.hlp)
-    # The VGA font lives in graphics_engine/; copy it next to the binary.
+    # The VGA fonts live in graphics_engine/; copy them next to the binary.
     add_custom_command(TARGET gedi-gui POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_SOURCE_DIR}/graphics_engine/VGA9.F16
             $<TARGET_FILE_DIR:gedi-gui>/VGA9.F16
-        COMMENT "Copying VGA9.F16 to gedi-gui build directory")
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_SOURCE_DIR}/graphics_engine/SMVGA.F16
+            $<TARGET_FILE_DIR:gedi-gui>/SMVGA.F16
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_SOURCE_DIR}/fonts
+            $<TARGET_FILE_DIR:gedi-gui>/fonts
+        COMMENT "Copying VGA fonts to gedi-gui build directory")
     install(TARGETS gedi-gui DESTINATION bin)
     install(FILES graphics_engine/VGA9.F16 DESTINATION share/gedi)
 else()

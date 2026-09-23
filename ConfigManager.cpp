@@ -25,6 +25,8 @@ void ConfigManager::loadConfig(Config& config) {
             if (data.contains("indentation_width")) config.indentation_width = data["indentation_width"];
             if (data.contains("use_tab_character")) config.use_tab_character = data["use_tab_character"];
             if (data.contains("smooth_text")) config.smooth_text = data["smooth_text"];
+            if (data.contains("rounded_corners")) config.rounded_corners = data["rounded_corners"];
+            if (data.contains("editor_font")) config.editor_font = data["editor_font"];
             if (data.contains("show_line_numbers")) config.show_line_numbers = data["show_line_numbers"];
             if (data.contains("syntax_highlight")) config.syntax_highlight = data["syntax_highlight"];
             if (data.contains("show_whitespace"))  config.show_whitespace  = data["show_whitespace"];
@@ -49,6 +51,8 @@ void ConfigManager::saveConfig(const Config& config) {
     j["indentation_width"] = config.indentation_width;
     j["use_tab_character"] = config.use_tab_character;
     j["smooth_text"] = config.smooth_text;
+    j["rounded_corners"] = config.rounded_corners;
+    j["editor_font"] = config.editor_font;
     j["show_line_numbers"] = config.show_line_numbers;
     j["syntax_highlight"] = config.syntax_highlight;
     j["show_whitespace"]  = config.show_whitespace;
@@ -115,6 +119,8 @@ void ConfigManager::createDefaultConfigFile(const std::string& path) {
     j["indentation_width"] = 4;
     j["use_tab_character"] = false;
     j["smooth_text"] = true;
+    j["rounded_corners"] = false;
+    j["editor_font"] = "Default";
     j["show_line_numbers"] = true;
     j["color_scheme"] = "Obsidian";
     j["compile_mode"] = -1;

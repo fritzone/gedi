@@ -1,12 +1,12 @@
 #include <SDL2/SDL.h>
 #include "Constants.h"
 #include "GlobalState.h"
-#include "BorlandEngine.h"
+#include "VgaTextEngine.h"
 #include "WindowSystem.h"
 #include "UI.h"
 
 // Define Global State
-BorlandEngine eng;
+VgaTextEngine eng;
 WindowManager wm;
 int currentMenuIndex = -1;
 int currentItemIndex = 0;

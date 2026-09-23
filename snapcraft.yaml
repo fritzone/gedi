@@ -1,6 +1,6 @@
-name: gedi
+name: garland-turbine
 title: Garland Turbine
-icon: snap/gui/gedi.png
+icon: snap/gui/garland-turbine-gui.png
 base: core22
 version: '0.1'
 summary: Garland Turbine - A simple yet powerful C++ Gui editor
@@ -24,9 +24,9 @@ lint:
     - library
 
 apps:
-  gedi:
+  garland-turbine:
     command: usr/bin/gedi
-    desktop: snap/gui/gedi.desktop
+    desktop: snap/gui/garland-turbine.desktop
     plugs:
       - home
       - network
@@ -36,20 +36,23 @@ apps:
       LANG: en_US.UTF-8
       LC_ALL: en_US.UTF-8
       TERMINFO: $SNAP/usr/share/terminfo
-      # Ensure bundled tools are found first
-      PATH: $SNAP/usr/bin:$SNAP/bin:$PATH
+      # Ensure bundled tools and wrappers are found first
+      PATH: $SNAP/bin:$SNAP/usr/bin:$PATH
       # Help the bundled compiler find its headers and libraries
-      CPATH: $SNAP/usr/include:$SNAP/usr/include/x86_64-linux-gnu:$SNAP/usr/include/c++/12:$SNAP/usr/include/x86_64-linux-gnu/c++/12
-      LIBRARY_PATH: $SNAP/usr/lib/x86_64-linux-gnu:$SNAP/lib/x86_64-linux-gnu:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12
-      LD_LIBRARY_PATH: $SNAP/usr/lib/x86_64-linux-gnu:$SNAP/lib/x86_64-linux-gnu:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12:$SNAP/usr/lib:$SNAP/lib
+      CPATH: $SNAP/usr/include/c++/12:$SNAP/usr/include/x86_64-linux-gnu/c++/12:$SNAP/usr/include/x86_64-linux-gnu:$SNAP/usr/include:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12/include:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12/include-fixed
+      C_INCLUDE_PATH: $SNAP/usr/include/x86_64-linux-gnu:$SNAP/usr/include:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12/include:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12/include-fixed
+      CPLUS_INCLUDE_PATH: $SNAP/usr/include/c++/12:$SNAP/usr/include/x86_64-linux-gnu/c++/12:$SNAP/usr/include/x86_64-linux-gnu:$SNAP/usr/include:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12/include:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12/include-fixed
+      LIBRARY_PATH: $SNAP/usr/lib/x86_64-linux-gnu:$SNAP/lib/x86_64-linux-gnu:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12:$SNAP/usr/lib:$SNAP/lib
+      LD_LIBRARY_PATH: $SNAP/usr/lib/x86_64-linux-gnu:$SNAP/usr/lib/x86_64-linux-gnu/pulseaudio:$SNAP/lib/x86_64-linux-gnu:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12:$SNAP/usr/lib:$SNAP/lib
       # Help GCC find its internal components
       COMPILER_PATH: $SNAP/usr/lib/gcc/x86_64-linux-gnu/12
+      GCC_EXEC_PREFIX: $SNAP/usr/lib/gcc/
       # Help CMake find its modules
       CMAKE_ROOT: $SNAP/usr/share/cmake-3.22
 
-  gedi-gui:
+  gui:
     command: usr/bin/gedi-gui
-    desktop: snap/gui/gedi-gui.desktop
+    desktop: snap/gui/garland-turbine-gui.desktop
     plugs:
       - home
       - network
@@ -64,14 +67,18 @@ apps:
       PYTHONPATH: $SNAP/usr/lib/python3/dist-packages
       LANG: en_US.UTF-8
       LC_ALL: en_US.UTF-8
-      # Ensure bundled tools are found first
-      PATH: $SNAP/usr/bin:$SNAP/bin:$PATH
+      # Ensure bundled tools and wrappers are found first
+      PATH: $SNAP/bin:$SNAP/usr/bin:$PATH
       # Help the bundled compiler find its headers and libraries
-      CPATH: $SNAP/usr/include:$SNAP/usr/include/x86_64-linux-gnu:$SNAP/usr/include/c++/12:$SNAP/usr/include/x86_64-linux-gnu/c++/12
-      LIBRARY_PATH: $SNAP/usr/lib/x86_64-linux-gnu:$SNAP/lib/x86_64-linux-gnu:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12
-      LD_LIBRARY_PATH: $SNAP/usr/lib/x86_64-linux-gnu:$SNAP/lib/x86_64-linux-gnu:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12:$SNAP/usr/lib:$SNAP/lib
+      CPATH: $SNAP/usr/include/c++/12:$SNAP/usr/include/x86_64-linux-gnu/c++/12:$SNAP/usr/include/x86_64-linux-gnu:$SNAP/usr/include:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12/include:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12/include-fixed
+      C_INCLUDE_PATH: $SNAP/usr/include/x86_64-linux-gnu:$SNAP/usr/include:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12/include:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12/include-fixed
+      CPLUS_INCLUDE_PATH: $SNAP/usr/include/c++/12:$SNAP/usr/include/x86_64-linux-gnu/c++/12:$SNAP/usr/include/x86_64-linux-gnu:$SNAP/usr/include:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12/include:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12/include-fixed
+      LIBRARY_PATH: $SNAP/usr/lib/x86_64-linux-gnu:$SNAP/lib/x86_64-linux-gnu:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12:$SNAP/usr/lib:$SNAP/lib
+      LD_LIBRARY_PATH: $SNAP/usr/lib/x86_64-linux-gnu:$SNAP/usr/lib/x86_64-linux-gnu/pulseaudio:$SNAP/lib/x86_64-linux-gnu:$SNAP/usr/lib/gcc/x86_64-linux-gnu/12:$SNAP/usr/lib:$SNAP/lib
+      LIBGL_DRIVERS_PATH: $SNAP/usr/lib/x86_64-linux-gnu/dri
       # Help GCC find its internal components
       COMPILER_PATH: $SNAP/usr/lib/gcc/x86_64-linux-gnu/12
+      GCC_EXEC_PREFIX: $SNAP/usr/lib/gcc/
       # Help CMake find its modules
       CMAKE_ROOT: $SNAP/usr/share/cmake-3.22
 
@@ -109,9 +116,20 @@ parts:
       - pkg-config
       - libc6-dev
       - libc-dev-bin
+      - linux-libc-dev
+      - libgcc-12-dev
       - libstdc++-12-dev
+      - libasan8
+      - libubsan1
+      - libitm1
+      - libquadmath0
+      - libtsan2
+      - liblsan0
+      - libatomic1
+      - libgomp1
       - libsdl2-2.0-0
       - libgl1
+      - libgl1-mesa-dri
       - libpulse0
     prime:
       - -usr/share/man
@@ -121,6 +139,28 @@ parts:
     plugin: nil
     after: [gedi]
     override-prime: |
-      mkdir -p $CRAFT_PRIME/usr/bin
-      ln -sf g++-12 $CRAFT_PRIME/usr/bin/g++
-      ln -sf gcc-12 $CRAFT_PRIME/usr/bin/gcc
+      mkdir -p $CRAFT_PRIME/bin
+      # Create wrappers for gcc, g++ and cpp that include necessary search paths.
+      # We use sed to strip the leading indentation from the heredoc.
+      for cmd in gcc g++ cpp; do
+        cat <<EOF | sed 's/^      //' > $CRAFT_PRIME/bin/$cmd
+      #!/bin/bash
+      exec \$SNAP/usr/bin/${cmd}-12 \\
+        -L\$SNAP/usr/lib/x86_64-linux-gnu \\
+        -L\$SNAP/lib/x86_64-linux-gnu \\
+        -L\$SNAP/usr/lib/gcc/x86_64-linux-gnu/12 \\
+        -B\$SNAP/usr/lib/gcc/x86_64-linux-gnu/12 \\
+        "\$@"
+      EOF
+        chmod +x $CRAFT_PRIME/bin/$cmd
+      done
+
+      # Patch linker scripts (libc.so, libpthread.so, etc.) to remove absolute paths
+      # that point outside the snap. By removing them, the linker will correctly
+      # use the search paths provided via -L.
+      find $CRAFT_PRIME/usr/lib/x86_64-linux-gnu -name "*.so" -type f | while read -r f; do
+        if grep -q "GROUP" "$f" || grep -q "INPUT" "$f"; then
+          echo "Patching linker script: $f"
+          sed -i 's|/usr/lib/x86_64-linux-gnu/||g; s|/lib/x86_64-linux-gnu/||g' "$f"
+        fi
+      done

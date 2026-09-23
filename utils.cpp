@@ -11,6 +11,7 @@
 #include <iostream>
 #include <iomanip>
 #include <filesystem>
+#include <algorithm>
 
 namespace fs = std::filesystem;
 
@@ -127,4 +128,59 @@ std::string get_filename_from_path(const std::string &full_path)
 {
     fs::path p(full_path);
     return p.filename().string();
+}
+
+// Turn a font file stem into a human-readable name: "FM-T-437" -> "Fm T 437".
+static std::string pretty_font_name(std::string stem) {
+    for (char& c : stem) if (c == '-' || c == '_') c = ' ';
+    std::string out;
+    bool word_start = true;
+    for (char c : stem) {
+        if (c == ' ') {
+            if (!out.empty() && out.back() != ' ') out += ' ';
+            word_start = true;
+            continue;
+        }
+        if (word_start) { out += (char)std::toupper((unsigned char)c); word_start = false; }
+        else            { out += (char)std::tolower((unsigned char)c); }
+    }
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    return out;
+}
+
+std::vector<std::pair<std::string, std::string>> listEditorFonts() {
+    std::vector<std::pair<std::string, std::string>> fonts;
+    fonts.push_back({"Default", ""});   // the built-in modified VGA font
+
+    // Locate the fonts directory.
+    std::vector<std::string> dirs;
+    std::error_code ec;
+    fs::path exe = fs::read_symlink("/proc/self/exe", ec);
+    if (!ec) {
+        dirs.push_back((exe.parent_path() / "fonts").string());
+        dirs.push_back((exe.parent_path().parent_path() / "share/gedi/fonts").string());
+    }
+    dirs.push_back("fonts");
+    dirs.push_back("/usr/share/gedi/fonts");
+
+    std::string dir;
+    for (const auto& d : dirs) if (fs::is_directory(d, ec)) { dir = d; break; }
+    if (dir.empty()) return fonts;
+
+    std::vector<std::pair<std::string, std::string>> found;
+    for (const auto& entry : fs::directory_iterator(dir, ec)) {
+        if (!entry.is_regular_file()) continue;
+        fs::path p = entry.path();
+        std::string ext = p.extension().string();
+        for (char& c : ext) c = (char)std::tolower((unsigned char)c);
+        if (ext != ".f16") continue;
+        std::string stem = p.stem().string();
+        std::string up = stem;
+        for (char& c : up) c = (char)std::toupper((unsigned char)c);
+        if (up == "VGA9") continue;   // that's already represented by "Default"
+        found.push_back({pretty_font_name(stem), p.string()});
+    }
+    std::sort(found.begin(), found.end());
+    for (auto& f : found) fonts.push_back(std::move(f));
+    return fonts;
 }

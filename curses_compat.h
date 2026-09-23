@@ -5,7 +5,7 @@
 // is completely transparent and just pulls in the real ncurses library.  When
 // the project is built with -DGEDI_GUI it instead provides a small ncurses
 // emulation layer that renders the very same character grid through the SDL
-// based BorlandEngine (a VGA text-mode emulator).  The rest of the code base is
+// based VgaTextEngine (a VGA text-mode emulator).  The rest of the code base is
 // oblivious to which backend it is talking to.
 #ifndef GEDI_CURSES_COMPAT_H
 #define GEDI_CURSES_COMPAT_H
@@ -15,6 +15,13 @@
 //  Text-mode build: just use the real thing.
 // ---------------------------------------------------------------------------
 #include <ncurses.h>
+// Per-cell font selection is graphical-only; in the terminal build these are
+// no-ops so shared code (Renderer/TextEditor) still compiles.
+#ifndef A_FONT
+#define A_FONT(n)     0
+#define A_FONT_MASK   0
+#define A_FONT_EDITOR 0
+#endif
 
 #else
 // ---------------------------------------------------------------------------
@@ -84,6 +91,14 @@ typedef struct {
 #define A_BLINK     ((attr_t)(1u << 19))
 #define A_DIM       ((attr_t)(1u << 20))
 #define A_BOLD      ((attr_t)(1u << 21))
+// Per-cell font selection: a 6-bit font index packed into bits 22-27.
+//   0          = default UI/border/text font
+//   63         = the editor-text font (A_FONT_EDITOR)
+//   1 .. 62    = a registered font (used to preview each font in the picker)
+#define A_FONT(n)     ((attr_t)(((unsigned)(n) & 0x3Fu) << 22))
+#define A_FONT_MASK   ((attr_t)(0x3Fu << 22))
+#define A_FONT_OF(a)  (((unsigned)(a) >> 22) & 0x3Fu)
+#define A_FONT_EDITOR A_FONT(63)
 
 // ---- colours (ncurses numbering) -----------------------------------------
 #define COLOR_BLACK   0
@@ -301,6 +316,16 @@ void    gui_set_window_state(int x, int y, int w, int h, float scale);
 
 // Font smoothing toggle (the "Smooth Text" editor setting), graphical build only.
 void    gui_set_smooth_scaling(int on);
+
+// Rounded box-drawing toggle (the "Rounded Corners" editor setting).
+void    gui_set_rounded_corners(int on);
+
+// Select the editor-text font by path ("" / nullptr = default font).
+void    gui_set_font(const char* path);
+
+// Load a font into the registry and return its id (>=1; 0 for default/empty),
+// so the font picker can draw each entry in its own font via A_FONT(id).
+int     gui_register_font(const char* path);
 
 #endif // GEDI_GUI
 #endif // GEDI_CURSES_COMPAT_H

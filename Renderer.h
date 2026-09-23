@@ -53,7 +53,9 @@ public:
         CP_SYNTAX_ENUM_CONSTANT,  // enum constants
         CP_SYNTAX_MACRO,          // macro expansions
         CP_WHITESPACE,            // show-whitespace markers (· →)
-        CP_DESKTOP                // empty-desktop fill: blue on white
+        CP_DESKTOP,               // empty-desktop fill: blue on white
+        CP_OUTPUT_BW,             // program-output screen: white on black (theme-independent)
+        CP_OUTPUT_BW_SEL          // program-output selection: black on white
     };
 
     enum BoxStyle { SINGLE, DOUBLE };

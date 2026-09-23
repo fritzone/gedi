@@ -1,6 +1,7 @@
 #include "SettingsDialog.h"
 #include "Config.h"
 #include "ConfigManager.h"
+#include "utils.h"
 #include <algorithm>
 
 static constexpr int W          = 60;
@@ -25,8 +26,22 @@ static constexpr int ED_TABSZ_Y  = CONTENT_Y + 6;   // spinner (blank gap above)
 
 // Tab 1 – Display
 static constexpr int DI_LNUM_Y  = CONTENT_Y + 2;   // Show Line Numbers checkbox
-static constexpr int DI_SYNH_LY = CONTENT_Y + 4;   // "Syntax Highlighting:" label row
-static constexpr int DI_SYNH_Y  = CONTENT_Y + 5;   // radiolist start
+#ifdef GEDI_GUI
+static constexpr int DI_ROUND_Y = CONTENT_Y + 3;   // Rounded Corners checkbox (graphical only)
+static constexpr int DI_SYNH_LY = CONTENT_Y + 5;   // "Syntax Highlighting:" label row
+static constexpr int DI_SYNH_Y  = CONTENT_Y + 6;   // radiolist start
+#else
+static constexpr int DI_SYNH_LY = CONTENT_Y + 4;
+static constexpr int DI_SYNH_Y  = CONTENT_Y + 5;
+#endif
+#ifdef GEDI_GUI
+// Editor-font listbox on the right side of the Display tab.
+static constexpr int DI_FONT_X    = 31;
+static constexpr int DI_FONT_W    = 24;                // listbox width (incl. scrollbar)
+static constexpr int DI_FONT_LY   = CONTENT_Y + 1;     // "Editor Font:" label
+static constexpr int DI_FONT_Y    = CONTENT_Y + 2;     // first list row
+static constexpr int DI_FONT_ROWS = CONTENT_H - 3;     // visible rows
+#endif
 
 // Tab 2 – Colors
 static constexpr int CL_LIST_Y    = CONTENT_Y + 2;
@@ -43,6 +58,7 @@ SettingsDialog::SettingsDialog(Renderer& renderer, Config& config,
     , temp_show_whitespace_ (config.show_whitespace)
     , temp_smooth_text_     (config.smooth_text)
     , temp_show_line_numbers_(config.show_line_numbers)
+    , temp_rounded_corners_ (config.rounded_corners)
     , temp_syntax_highlight_(std::max(0, std::min(2, config.syntax_highlight)))
     , temp_syntax_hl_cursor_(std::max(0, std::min(2, config.syntax_highlight)))
     , temp_theme_selected_  (0)
@@ -59,6 +75,20 @@ SettingsDialog::SettingsDialog(Renderer& renderer, Config& config,
             break;
         }
     }
+
+#ifdef GEDI_GUI
+    for (const auto& f : listEditorFonts()) {
+        font_names_.push_back(f.first);
+        font_paths_.push_back(f.second);
+        font_indices_.push_back(gui_register_font(f.second.empty() ? nullptr
+                                                                    : f.second.c_str()));
+    }
+    for (int i = 0; i < (int)font_names_.size(); ++i)
+        if (font_names_[i] == config.editor_font) {
+            temp_font_selected_ = temp_font_cursor_ = i;
+            break;
+        }
+#endif
 }
 
 void SettingsDialog::show(Renderer& renderer, Config& config,
@@ -106,6 +136,9 @@ void SettingsDialog::onInit()
         g.box_x = 2; g.box_y = CONTENT_Y; g.box_w = INNER_W; g.box_h = CONTENT_H;
         g.draw_widgets_manually = true;
         g.checkboxes.push_back({ "Show Line Numbers", temp_show_line_numbers_, 4, DI_LNUM_Y });
+#ifdef GEDI_GUI
+        g.checkboxes.push_back({ "Rounded Corners", temp_rounded_corners_, 4, DI_ROUND_Y });
+#endif
         addGroup(std::move(g));
     }
 
@@ -131,6 +164,19 @@ void SettingsDialog::onInit()
                                  4, CL_LIST_Y, CL_LIST_ROWS });
         addGroup(std::move(g));
     }
+
+#ifdef GEDI_GUI
+    //  Group 5: Display tab — editor font radiolist (right side)
+    {
+        FocusGroup g;
+        g.title = " Display "; g.hotkey = '\0';
+        g.box_x = 2; g.box_y = CONTENT_Y; g.box_w = INNER_W; g.box_h = CONTENT_H;
+        g.draw_widgets_manually = true;
+        g.radiolists.push_back({ font_names_, temp_font_selected_, temp_font_cursor_,
+                                 DI_FONT_X, DI_FONT_Y, DI_FONT_ROWS });
+        addGroup(std::move(g));
+    }
+#endif
 
     //  Button row
     static constexpr int BTN_SAVE_X   = 16;
@@ -192,6 +238,9 @@ void SettingsDialog::onDraw(Renderer& renderer, int sx, int sy)
     setBox(GRP_DISPLAY_CB, active == 1);
     setBox(GRP_DISPLAY_HL, active == 1);
     setBox(GRP_COLORS,     active == 2);
+#ifdef GEDI_GUI
+    setBox(GRP_DISPLAY_FONT, active == 1);
+#endif
 
     // Draw widgets for the active tab manually
     switch (active) {
@@ -223,6 +272,50 @@ void SettingsDialog::onDraw(Renderer& renderer, int sx, int sy)
             for (auto& rl : g.radiolists)
                 rl.draw(renderer, sx, sy, focused);
         }
+#ifdef GEDI_GUI
+        // Editor font listbox (right side). The RadioList in GRP_DISPLAY_FONT only
+        // holds the state (cursor/scroll); it is drawn manually here as a proper
+        // scrollable listbox, with every entry rendered in its own font.
+        renderer.drawText(sx + DI_FONT_X, sy + DI_FONT_LY, "Editor Font:",
+                          Renderer::CP_DIALOG);
+        {
+            bool focused = (getFocusedGroup() == GRP_DISPLAY_FONT);
+            auto& rl = groups()[GRP_DISPLAY_FONT].radiolists[0];
+            int total   = (int)font_names_.size();
+            int rows    = DI_FONT_ROWS;
+            int textw   = DI_FONT_W - 1;                 // leave 1 col for the scrollbar
+            int top     = rl.scrollOffset();
+            for (int i = 0; i < rows; ++i) {
+                int yy  = sy + DI_FONT_Y + i;
+                int idx = top + i;
+                bool cursor = (idx == rl.cursor_idx);
+                int  bg = cursor ? Renderer::CP_LIST_SELECTED : Renderer::CP_LIST_BOX;
+                // row background
+                renderer.drawText(sx + DI_FONT_X, yy, std::string(textw, ' '), bg);
+                if (idx >= total) continue;
+                std::string name = font_names_[idx];
+                if ((int)name.size() > textw - 1) name = name.substr(0, textw - 1);
+                // Render the name in this font's own glyphs (A_FONT id); "Default"
+                // (index 0) renders in the standard font.
+                renderer.drawText(sx + DI_FONT_X + 1, yy, name, bg, A_FONT(font_indices_[idx]));
+            }
+            // Scrollbar
+            int sbx = sx + DI_FONT_X + DI_FONT_W - 1;
+            if (total > rows) {
+                renderer.drawText(sbx, sy + DI_FONT_Y, "\xe2\x86\x91",
+                                  focused ? Renderer::CP_HIGHLIGHT : Renderer::CP_LIST_BOX);   // ↑
+                renderer.drawText(sbx, sy + DI_FONT_Y + rows - 1, "\xe2\x86\x93",
+                                  focused ? Renderer::CP_HIGHLIGHT : Renderer::CP_LIST_BOX);   // ↓
+                int track = rows - 2;
+                if (track > 0) {
+                    float frac = (total > 1) ? (float)rl.cursor_idx / (total - 1) : 0.f;
+                    int thumb = (int)(frac * (track - 1) + 0.5f);
+                    renderer.drawText(sbx, sy + DI_FONT_Y + 1 + thumb, "\xe2\x96\x88",
+                                      Renderer::CP_HIGHLIGHT);   // █
+                }
+            }
+        }
+#endif
         break;
     }
     case 2: {   //  Colors
@@ -249,15 +342,29 @@ bool SettingsDialog::onTab(bool forward)
             if (active == 2) { setGroupFocus(GRP_COLORS);     return true; }
         }
         if (cur == GRP_DISPLAY_CB) { setGroupFocus(GRP_DISPLAY_HL); return true; }
+#ifdef GEDI_GUI
+        if (cur == GRP_DISPLAY_HL) { setGroupFocus(GRP_DISPLAY_FONT); return true; }
+        if (cur == GRP_EDITING || cur == GRP_DISPLAY_FONT || cur == GRP_COLORS) {
+            setGroupFocus(groupCount()); setGroupBtnFocus(0);  return true;
+        }
+#else
         if (cur == GRP_EDITING || cur == GRP_DISPLAY_HL || cur == GRP_COLORS) {
             setGroupFocus(groupCount()); setGroupBtnFocus(0);  return true;
         }
+#endif
     } else {
         if (inButtonRow()) {
             if (active == 0) { setGroupFocus(GRP_EDITING);    return true; }
+#ifdef GEDI_GUI
+            if (active == 1) { setGroupFocus(GRP_DISPLAY_FONT); return true; }
+#else
             if (active == 1) { setGroupFocus(GRP_DISPLAY_HL); return true; }
+#endif
             if (active == 2) { setGroupFocus(GRP_COLORS);     return true; }
         }
+#ifdef GEDI_GUI
+        if (cur == GRP_DISPLAY_FONT) { setGroupFocus(GRP_DISPLAY_HL); return true; }
+#endif
         if (cur == GRP_DISPLAY_HL) { setGroupFocus(GRP_DISPLAY_CB); return true; }
         if (cur == GRP_EDITING || cur == GRP_DISPLAY_CB || cur == GRP_COLORS) {
             setGroupFocus(GRP_TABS); return true;
@@ -276,7 +383,14 @@ void SettingsDialog::applySettings()
     config_.show_whitespace   = temp_show_whitespace_;
 #ifdef GEDI_GUI
     config_.smooth_text = temp_smooth_text_;
-    gui_set_smooth_scaling(config_.smooth_text ? 1 : 0);   // apply live
+    gui_set_smooth_scaling(config_.smooth_text ? 1 : 0);    // apply live
+    config_.rounded_corners = temp_rounded_corners_;
+    gui_set_rounded_corners(config_.rounded_corners ? 1 : 0);
+    if (temp_font_cursor_ >= 0 && temp_font_cursor_ < (int)font_names_.size()) {
+        config_.editor_font = font_names_[temp_font_cursor_];
+        const std::string& path = font_paths_[temp_font_cursor_];
+        gui_set_font(path.empty() ? nullptr : path.c_str());
+    }
 #endif
     config_.show_line_numbers = temp_show_line_numbers_;
     config_.syntax_highlight  = temp_syntax_highlight_;

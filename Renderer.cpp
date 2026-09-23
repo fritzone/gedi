@@ -97,7 +97,10 @@ void Renderer::drawText(int x, int y, const std::string &text, int colorId, int 
     wattron(stdscr, COLOR_PAIR(colorId));
     if (flags & A_BOLD) wattron(stdscr, A_BOLD);
     if (flags & A_UNDERLINE) wattron(stdscr, A_UNDERLINE);
+    int fontbits = flags & A_FONT_MASK;          // per-cell font selection
+    if (fontbits) wattron(stdscr, fontbits);
     mvwaddstr(stdscr, y, x, text.c_str());
+    if (fontbits) wattroff(stdscr, fontbits);
     if (flags & A_UNDERLINE) wattroff(stdscr, A_UNDERLINE);
     if (flags & A_BOLD) wattroff(stdscr, A_BOLD);
     wattroff(stdscr, COLOR_PAIR(colorId));
@@ -272,6 +275,10 @@ void Renderer::loadColors(const json &theme_data) {
     }
 
     init_pair(CP_DESKTOP, COLOR_BLUE, COLOR_WHITE);
+
+    // Program-output screen: always plain white-on-black, independent of theme.
+    init_pair(CP_OUTPUT_BW,     COLOR_WHITE, COLOR_BLACK);
+    init_pair(CP_OUTPUT_BW_SEL, COLOR_BLACK, COLOR_WHITE);
 }
 
 

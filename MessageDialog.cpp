@@ -118,6 +118,18 @@ void MessageDialog::show(Renderer& renderer, const std::string& message) {
             layoutAndDraw();   // re-centre, re-wrap and repaint at the new size
             continue;
         }
+        if (ch == KEY_MOUSE) {
+            MEVENT ev;
+            if (getmouse(&ev) == OK &&
+                (ev.bstate & (BUTTON1_PRESSED | BUTTON1_CLICKED)) != 0) {
+                int bw = 0; for (char c : ok_text) if (c != '&') ++bw;
+                bool on_ok  = (ev.y == btn_y && ev.x >= btn_x && ev.x < btn_x + bw);
+                bool inside = (ev.x >= startx && ev.x < startx + w &&
+                               ev.y >= starty && ev.y < starty + h);
+                if (on_ok || !inside) pressed = true;   // Ok, or click-away → dismiss
+            }
+            continue;
+        }
         if (ch == 27) {
             timeout(1);
             wint_t next = renderer.getChar();

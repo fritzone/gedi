@@ -79,6 +79,24 @@ private:
     // Output Screens
     bool m_output_screen_visible = false;
     std::string m_output_content;
+
+    // Graphical run-output pane (captured program output shown in-window).
+    std::vector<std::string> m_run_output_lines;
+    int  m_run_output_scroll = 0;
+    bool m_run_sel_active = false;          // a selection has been made
+    bool m_run_selecting  = false;          // mouse button currently held / dragging
+    int  m_run_sel_anchor_row = 0, m_run_sel_anchor_col = 0;
+    int  m_run_sel_row = 0,        m_run_sel_col = 0;
+
+    // Interactive program execution: the program runs on a pseudo-terminal so it
+    // can read stdin and stream stdout/stderr live into the output pane.
+    int   m_run_pty_fd  = -1;               // pty master fd (-1 = nothing running)
+    long  m_run_pid     = -1;               // child pid
+    bool  m_run_running = false;
+    bool  m_run_follow  = true;             // auto-scroll to the newest output
+    int   m_run_cur_col = 0;                // byte cursor within the live (last) line
+    int   m_run_esc     = 0;                // ANSI escape-sequence parse state
+    std::string m_run_temp_exe;             // temp executable to delete on exit
     bool m_compile_output_visible = false;
     std::vector<CompileMessage> m_compile_output_lines;
     int m_compile_output_scroll_pos = 0;
@@ -200,6 +218,19 @@ private:
     void compileAndRun();
     void compileOnly();
     void ShowOutputScreen();
+    // Graphical in-window run-output pane.
+    void setRunOutput(const std::string& content);
+    void drawRunOutputPane();
+    void handleRunOutputKey(wint_t ch);
+    void handleRunOutputMouse();
+    void copyRunOutputSelection();
+    // Interactive (pty-backed) program execution.
+    void startRunProgram(const std::string& exe, const std::string& temp_exe);
+    void pumpRunProgram();
+    void feedRunOutput(const char* data, int n);
+    void writeToRunProgram(wint_t ch);
+    void finishRunProgram();
+    void killRunProgram();
     void CompileOptionsDialog();
     void AboutBox();
     void handleToggleComment();

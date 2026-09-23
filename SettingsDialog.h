@@ -35,16 +35,25 @@ private:
 
     // Display tab
     bool temp_show_line_numbers_;
+    bool temp_rounded_corners_;   // graphical build only
     int  temp_syntax_highlight_;
     int  temp_syntax_hl_cursor_;
+
+    // Display tab — editor font list (graphical build only)
+    std::vector<std::string> font_names_;   // human-readable names ("Default" first)
+    std::vector<std::string> font_paths_;   // matching file paths ("" for Default)
+    std::vector<int>         font_indices_; // engine registry ids (to preview each font)
+    int  temp_font_selected_ = 0;
+    int  temp_font_cursor_   = 0;
 
     // Colors tab
     int  temp_theme_selected_;
     int  temp_theme_cursor_;
 
-    static constexpr int GRP_TABS       = 0;
-    static constexpr int GRP_EDITING    = 1;
-    static constexpr int GRP_DISPLAY_CB = 2;   // Show Line Numbers checkbox
-    static constexpr int GRP_DISPLAY_HL = 3;   // Syntax Highlighting radiolist
-    static constexpr int GRP_COLORS     = 4;
+    static constexpr int GRP_TABS         = 0;
+    static constexpr int GRP_EDITING      = 1;
+    static constexpr int GRP_DISPLAY_CB   = 2;   // Show Line Numbers checkbox
+    static constexpr int GRP_DISPLAY_HL   = 3;   // Syntax Highlighting radiolist
+    static constexpr int GRP_COLORS       = 4;
+    static constexpr int GRP_DISPLAY_FONT = 5;   // Editor font radiolist (graphical only)
 };

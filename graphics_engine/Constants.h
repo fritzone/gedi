@@ -42,6 +42,7 @@ struct VGAChar {
     unsigned char character_code;
     uint8_t fg_index;
     uint8_t bg_index;
+    uint8_t font_index = 0;   // 0 = default UI/border font, 1 = selected editor font
 };
 
 // Global Palette

@@ -69,6 +69,23 @@ void BuildOutputDialog::show(Renderer& renderer, const std::vector<std::string>&
             renderer.drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG, Renderer::DOUBLE, " Build Output ", Renderer::CP_DIALOG_TITLE, A_BOLD);
             continue;
         }
+        if (ch == KEY_MOUSE) {
+            MEVENT ev;
+            if (getmouse(&ev) == OK) {
+                if (ev.bstate & BUTTON4_PRESSED)      { if (scroll_pos > 0) scroll_pos--; }
+                else if (ev.bstate & BUTTON5_PRESSED) { if (scroll_pos + visible_h < (int)lines.size()) scroll_pos++; }
+                else if (ev.bstate & (BUTTON1_PRESSED | BUTTON1_CLICKED)) {
+                    int cb_x = startx + (w - 10) / 2;
+                    int cb_y = starty + h - 3;
+                    int cb_w = 6;   // " Close "
+                    bool on_close = (ev.y == cb_y && ev.x >= cb_x && ev.x < cb_x + cb_w);
+                    bool inside   = (ev.x >= startx && ev.x < startx + w &&
+                                     ev.y >= starty && ev.y < starty + h);
+                    if (on_close || !inside) pressed = true;   // Close, or click-away
+                }
+            }
+            continue;
+        }
         if (ch == KEY_UP) { if (scroll_pos > 0) scroll_pos--; }
         else if (ch == KEY_DOWN) { if (scroll_pos + visible_h < (int)lines.size()) scroll_pos++; }
         else if (ch == KEY_PPAGE) { scroll_pos -= visible_h; if (scroll_pos < 0) scroll_pos = 0; }
