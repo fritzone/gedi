@@ -288,13 +288,15 @@ static void translate_keydown(SDL_Keycode key, Uint16 mod) {
         default: break;
     }
 
-    // Function keys F1..F12 (+12 for shifted, like ncurses)
+    // Function keys F1..F12. Follow the ncurses convention: Shift+Fn = F(n+12),
+    // Ctrl+Fn = F(n+24). (The old "code & 0x1f" scheme collided Ctrl+F7 with
+    // Ctrl+O, Ctrl+F2 with Enter, etc.)
     if (key >= SDLK_F1 && key <= SDLK_F12) {
-        int n = (int)(key - SDLK_F1) + 1;
-        if (shift) n += 12;
+        int base = (int)(key - SDLK_F1) + 1;         // 1..12
+        int n = base + (shift ? 12 : 0);
         int code = KEY_F(n);
         if (alt)       push_alt(code);
-        else if (ctrl) push_key(code & 0x1f);   // matches gedi's CTRL(KEY_F(9)) mapping
+        else if (ctrl) push_key(KEY_F(base + 24));   // Ctrl+Fn → F(n+24), collision-free
         else           push_key(code);
         return;
     }

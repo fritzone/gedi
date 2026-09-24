@@ -247,3 +247,11 @@ bool GediProject::load(const std::string& path, GediProject& out)
     out = std::move(proj);
     return true;
 }
+
+std::string GediProject::buildFile() const
+{
+    if (build_system == "cmake") return "CMakeLists.txt";
+    else if (build_system == "make")  return "Makefile";
+    else if (build_system == "meson") return "meson.build";
+    else return "unknown";
+}

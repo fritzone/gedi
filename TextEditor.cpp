@@ -710,10 +710,31 @@ void TextEditor::drawTextArea() {
     // Use it even on a dirty buffer — stale-by-a-few-chars colours are far better
     // than no semantic highlighting. A debounced re-request will refresh them.
     std::shared_ptr<std::vector<std::vector<uint8_t>>> sem_snap;
+    std::shared_ptr<std::vector<Diagnostic>>           diag_snap;
     if (m_config.syntax_highlight >= 2 && buffer.semantic_cache) {
         std::unique_lock<std::mutex> lk(buffer.semantic_cache->mutex, std::try_to_lock);
-        if (lk.owns_lock()) sem_snap = buffer.semantic_cache->colors;
+        if (lk.owns_lock()) {
+            sem_snap  = buffer.semantic_cache->colors;
+            diag_snap = buffer.semantic_cache->diagnostics;
+        }
     }
+
+    // Index the diagnostics by line: max severity per line (for the gutter marker)
+    // and the per-line span list (for colouring the offending text).
+    std::unordered_map<unsigned, int> diag_line_sev;
+    std::unordered_map<unsigned, std::vector<const Diagnostic*>> diag_by_line;
+    if (diag_snap) {
+        for (const Diagnostic& d : *diag_snap) {
+            int& s = diag_line_sev[d.line];
+            if (d.severity > s) s = d.severity;
+            diag_by_line[d.line].push_back(&d);
+        }
+    }
+
+    // Absolute path of this buffer, for breakpoint / current-exec-line markers.
+    std::string buf_abs;
+    if (m_debugging || !m_breakpoints.empty())
+        buf_abs = get_full_path(buffer.filename);
 
     for(int i = 0; i < text_area_height; ++i) {
         int current_screen_y = m_text_area_start_y + i;
@@ -726,9 +747,37 @@ void TextEditor::drawTextArea() {
         }
 
         if (p != nullptr) {
+            unsigned docline = static_cast<unsigned>(current_doc_line + i + 1);
+            bool is_exec_line = !m_debug_cur_file.empty() && (int)docline == m_debug_cur_line &&
+                                !buf_abs.empty() && buf_abs == m_debug_cur_file;
+
             if (m_gutter_width > 0) {
-                std::string line_num_str = std::to_string(current_doc_line + i + 1);
-                m_renderer->drawText(m_text_area_start_x + m_gutter_width - line_num_str.length() - 1, current_screen_y, line_num_str, Renderer::CP_GUTTER_FG);
+                auto dsev = diag_line_sev.find(docline);
+                bool has_diag = (dsev != diag_line_sev.end());
+                int  diag_cp = (has_diag && dsev->second >= 3) ? Renderer::CP_COMPILE_ERROR
+                                                               : Renderer::CP_COMPILE_WARNING;
+                bool is_bp   = !buf_abs.empty() && lineHasBreakpoint(buf_abs, (int)docline);
+                bool is_exec = is_exec_line;
+
+                // Line number (tinted red/yellow when the line has a diagnostic).
+                if (m_config.show_line_numbers) {
+                    std::string line_num_str = std::to_string(docline);
+                    m_renderer->drawText(m_text_area_start_x + m_gutter_width - line_num_str.length() - 1,
+                                         current_screen_y, line_num_str,
+                                         has_diag ? diag_cp : Renderer::CP_GUTTER_FG);
+                }
+
+                // Far-left gutter marker, in priority order:
+                //   current execution line (→) > breakpoint (●) > diagnostic (●).
+                if (is_exec)
+                    m_renderer->drawText(m_text_area_start_x, current_screen_y,
+                                         "\xe2\x86\x92", Renderer::CP_HIGHLIGHT);   // →
+                else if (is_bp)
+                    m_renderer->drawText(m_text_area_start_x, current_screen_y,
+                                         "\xe2\x80\xa2", Renderer::CP_COMPILE_ERROR); // • breakpoint
+                else if (has_diag)
+                    m_renderer->drawText(m_text_area_start_x, current_screen_y,
+                                         "\xe2\x80\xa2", diag_cp);                    // •
             }
 
             std::vector<SyntaxToken> tokens;
@@ -742,6 +791,16 @@ void TextEditor::drawTextArea() {
             int vcol = 0;   // running 0-based visual column from the start of the line
             size_t token_idx = 0;
             size_t token_char_offset = 0;
+            int line_end_x = text_left - 1;   // rightmost screen column used by this line
+
+            // Current execution line: paint the whole row so the highlight extends
+            // past the code; characters below are drawn in the same pair.
+            if (is_exec_line) {
+                int tw = m_text_area_end_x - text_left + 1;
+                if (tw > 0)
+                    m_renderer->drawText(text_left, current_screen_y,
+                                         std::string(tw, ' '), Renderer::CP_DEBUG_LINE);
+            }
 
             for (size_t char_idx = 0; char_idx < p->text.length(); ) {
                 int current_col = char_idx + 1;
@@ -786,6 +845,24 @@ void TextEditor::drawTextArea() {
                                 }
                             }
                         }
+                        // Inline diagnostic: recolour + underline the offending span.
+                        if (!diag_by_line.empty()) {
+                            auto dl = diag_by_line.find(static_cast<unsigned>(current_doc_line + i + 1));
+                            if (dl != diag_by_line.end()) {
+                                int worst = 0;
+                                for (const Diagnostic* d : dl->second)
+                                    if ((unsigned)current_col >= d->col_start &&
+                                        (unsigned)current_col <  d->col_end)
+                                        worst = std::max(worst, d->severity);
+                                if (worst > 0) {
+                                    color = (worst >= 3) ? Renderer::CP_COMPILE_ERROR
+                                                         : Renderer::CP_COMPILE_WARNING;
+                                    flags |= A_UNDERLINE;
+                                }
+                            }
+                        }
+                        // Current execution line wins over syntax/diagnostic colours.
+                        if (is_exec_line) { color = Renderer::CP_DEBUG_LINE; flags = 0; }
                     }
                     // Bracket-match flash: highest-priority color override.
                     // Timer is checked here; expires after FLASH_DURATION_MS.
@@ -836,9 +913,42 @@ void TextEditor::drawTextArea() {
                         m_renderer->drawText(screen_x, current_screen_y,
                                              p->text.substr(char_idx, blen), color, flags | altf);
                     }
+                    line_end_x = std::min(m_text_area_end_x, screen_x + cell_w - 1);
                 }
                 vcol += cell_w;
                 char_idx += blen;
+            }
+
+            // Error-Lens style: print the most severe diagnostic for this line to
+            // the right of the code, in the error/warning colour. (Opt-in setting.)
+            if (m_config.show_inline_diagnostics && !diag_by_line.empty()) {
+                auto dl = diag_by_line.find(static_cast<unsigned>(current_doc_line + i + 1));
+                if (dl != diag_by_line.end() && !dl->second.empty()) {
+                    const Diagnostic* worst = dl->second.front();
+                    for (const Diagnostic* d : dl->second)
+                        if (d->severity > worst->severity) worst = d;
+                    int cp = (worst->severity >= 3) ? Renderer::CP_COMPILE_ERROR
+                                                    : Renderer::CP_COMPILE_WARNING;
+                    std::string msg = worst->message;
+                    for (char& c : msg) if (c == '\n' || c == '\t' || c == '\r') c = ' ';
+
+                    int right     = m_text_area_end_x;
+                    int min_start = line_end_x + 2;      // leave a gap after the code
+                    int avail     = right - min_start + 1;
+                    if (avail >= 6) {
+                        std::string full = " " + msg + " ";
+                        if ((int)full.size() <= avail) {
+                            int start = right - (int)full.size() + 1;   // right-aligned
+                            m_renderer->drawText(start, current_screen_y, full, cp);
+                        } else {
+                            int room = avail - 1;                       // 1 for leading space
+                            std::string body = ((int)msg.size() > room)
+                                ? msg.substr(0, std::max(0, room - 1)) + "\xe2\x80\xa6"
+                                : msg;
+                            m_renderer->drawText(min_start, current_screen_y, " " + body, cp);
+                        }
+                    }
+                }
             }
             p = p->next;
         }
@@ -942,8 +1052,41 @@ void TextEditor::drawStatusBar() {
         EditorBuffer& buffer = currentBuffer();
         char status_buf[120];
         snprintf(status_buf, sizeof(status_buf), "%s Line: %-5d Col: %-5d %s", (buffer.read_only ? "[RO]" : ""), buffer.current_line_num, buffer.cursor_col, (buffer.insert_mode ? "INS" : "OVR"));
+        int linecol_x = w - (int)strlen(status_buf) - 2;
+
+        // Debug status takes the middle region while a session is active.
+        if (!m_debug_status.empty()) {
+            std::string full = " " + m_debug_status + " ";
+            int left = 50, avail = linecol_x - left - 1;
+            if (avail > 12) {
+                if ((int)full.size() > avail) full = full.substr(0, avail - 1) + "\xe2\x80\xa6";
+                m_renderer->drawText(left, h - 1, full, Renderer::CP_STATUS_BAR_HIGHLIGHT);
+            }
+        }
+        // Diagnostic on the cursor line → show its message in the middle region.
+        else if (m_config.syntax_highlight >= 2 && buffer.semantic_cache) {
+            std::string dmsg; int dsev = 0;
+            {
+                std::unique_lock<std::mutex> lk(buffer.semantic_cache->mutex, std::try_to_lock);
+                if (lk.owns_lock() && buffer.semantic_cache->diagnostics) {
+                    for (const Diagnostic& d : *buffer.semantic_cache->diagnostics)
+                        if (d.line == (unsigned)buffer.current_line_num && d.severity > dsev) {
+                            dsev = d.severity; dmsg = d.message;
+                        }
+                }
+            }
+            if (!dmsg.empty()) {
+                std::string full = std::string(dsev >= 3 ? " Error: " : " Warning: ") + dmsg;
+                int left = 50, avail = linecol_x - left - 1;
+                if (avail > 12) {
+                    if ((int)full.size() > avail) full = full.substr(0, avail - 1) + "\xe2\x80\xa6";
+                    m_renderer->drawText(left, h - 1, full, Renderer::CP_STATUS_BAR_HIGHLIGHT);
+                }
+            }
+        }
+
         if (w > 50 + (int)strlen(status_buf)) {
-            m_renderer->drawText(w - strlen(status_buf) - 2, h - 1, status_buf, Renderer::CP_STATUS_BAR);
+            m_renderer->drawText(linecol_x, h - 1, status_buf, Renderer::CP_STATUS_BAR);
         }
     }
 }
@@ -1011,6 +1154,94 @@ void TextEditor::drawEditorState(int active_menu_id) {
     }
     drawMenuBar(active_menu_id);
     drawStatusBar();
+    drawDebugPanel();
+    drawDiagnosticHover();
+}
+
+// Decide whether the mouse (mx,my) rests over the gutter of a line that has
+// diagnostics, and if so remember that line so drawDiagnosticHover() can pop up
+// its errors/warnings. Called on plain mouse movement.
+void TextEditor::updateDiagnosticHover(int mx, int my) {
+    m_diag_hover_mx = mx;
+    m_diag_hover_my = my;
+    int result = -1;
+
+    if (currentBufferIdx() != -1 && m_gutter_width > 0 &&
+        my >= m_text_area_start_y && my <= m_text_area_end_y &&
+        mx >= m_text_area_start_x && mx < m_text_area_start_x + m_gutter_width) {
+        EditorBuffer& buf = currentBuffer();
+        int fvl_num = 1;
+        for (const Line* p = buf.document_head; p && p != buf.first_visible_line; p = p->next)
+            ++fvl_num;
+        int line_offset = my - m_text_area_start_y;
+        Line* l = buf.first_visible_line;
+        bool reached = true;
+        for (int i = 0; i < line_offset; ++i) {
+            if (l && l->next) l = l->next;
+            else { reached = false; break; }
+        }
+        int linenum = fvl_num + line_offset;
+        if (reached && l && buf.semantic_cache) {
+            std::unique_lock<std::mutex> lk(buf.semantic_cache->mutex, std::try_to_lock);
+            if (lk.owns_lock() && buf.semantic_cache->diagnostics)
+                for (const Diagnostic& d : *buf.semantic_cache->diagnostics)
+                    if (d.line == (unsigned)linenum) { result = linenum; break; }
+        }
+    }
+    m_diag_hover_line = result;
+}
+
+// Draw a tooltip listing every diagnostic on the hovered line (most severe first).
+void TextEditor::drawDiagnosticHover() {
+    if (m_diag_hover_line < 0 || currentBufferIdx() == -1) return;
+    EditorBuffer& buf = currentBuffer();
+    if (!buf.semantic_cache) return;
+
+    std::vector<std::pair<int, std::string>> items;   // (severity, message)
+    {
+        std::unique_lock<std::mutex> lk(buf.semantic_cache->mutex, std::try_to_lock);
+        if (!lk.owns_lock() || !buf.semantic_cache->diagnostics) return;
+        for (const Diagnostic& d : *buf.semantic_cache->diagnostics)
+            if (d.line == (unsigned)m_diag_hover_line)
+                items.push_back({ d.severity, d.message });
+    }
+    if (items.empty()) return;
+    std::sort(items.begin(), items.end(),
+              [](const std::pair<int,std::string>& a, const std::pair<int,std::string>& b) {
+                  return a.first > b.first;
+              });
+
+    int scr_w = m_renderer->getWidth();
+    int scr_h = m_renderer->getHeight();
+
+    int content_w = 8;
+    for (auto& it : items) content_w = std::max(content_w, (int)it.second.size());
+    content_w = std::min(content_w, scr_w - 6);
+    int rows  = std::min((int)items.size(), std::max(1, scr_h - 4));
+    int box_w = content_w + 4;   // 2 border + 2 padding
+    int box_h = rows + 2;
+
+    int sx = m_diag_hover_mx + 2;   // just right of the gutter marker
+    int sy = m_diag_hover_my + 1;   // just below the hovered line
+    if (sx + box_w > scr_w) sx = scr_w - box_w;
+    if (sx < 0) sx = 0;
+    if (sy + box_h > scr_h - 1) sy = m_diag_hover_my - box_h;   // flip above if no room
+    if (sy < 1) sy = 1;
+
+    m_renderer->drawShadow(sx, sy, box_w, box_h);
+    m_renderer->drawBoxWithTitle(sx, sy, box_w, box_h, Renderer::CP_DIALOG,
+                                 Renderer::SINGLE, " Problems ",
+                                 Renderer::CP_DIALOG_TITLE, 0);
+    for (int i = 1; i < box_h - 1; ++i)
+        m_renderer->drawText(sx + 1, sy + i, std::string(box_w - 2, ' '), Renderer::CP_DIALOG);
+    for (int i = 0; i < rows; ++i) {
+        int cp = (items[i].first >= 3) ? Renderer::CP_COMPILE_ERROR
+                                       : Renderer::CP_COMPILE_WARNING;
+        std::string msg = items[i].second;
+        for (char& c : msg) if (c == '\n' || c == '\t' || c == '\r') c = ' ';
+        if ((int)msg.size() > content_w) msg = msg.substr(0, content_w - 1) + "\xe2\x80\xa6";
+        m_renderer->drawText(sx + 2, sy + 1 + i, msg, cp);
+    }
 }
 
 int TextEditor::msgwin_yesno(const std::string& question, const std::string& info) {
@@ -1038,8 +1269,8 @@ std::string TextEditor::formatMenuItem(const std::string& label, EditorAction ac
 }
 
 void TextEditor::updateMenuLabels() {
-    m_menus = {" &File ", " &Edit ", " &Search ", " &Build ", " &Project ", " &Window ", " &Options ", " &Help "};
-    m_menu_positions = { 1, 7, 13, 21, 28, 37, 45, 54 };
+    m_menus = {" &File ", " &Edit ", " &Search ", " &Build ", " &Debug ", " &Project ", " &Window ", " &Options ", " &Help "};
+    m_menu_positions = { 1, 7, 13, 21, 28, 35, 44, 52, 61 };
 
     {
         const std::string rf_label = "&Recent Files";
@@ -1098,6 +1329,21 @@ void TextEditor::updateMenuLabels() {
         formatMenuItem("Compile &Options...", EditorAction::ACT_COMPILE_OPTIONS)
     };
 
+    m_submenu_debug = {
+        formatMenuItem("&Run / Go",          EditorAction::ACT_DEBUG_START),          // 1
+        formatMenuItem("&Program Reset",     EditorAction::ACT_DEBUG_STOP),           // 2
+        " -------------- ",                                                           // 3
+        formatMenuItem("Step &Over",         EditorAction::ACT_DEBUG_STEP_OVER),      // 4
+        formatMenuItem("Step &Into",         EditorAction::ACT_DEBUG_STEP_INTO),      // 5
+        formatMenuItem("Step Ou&t",          EditorAction::ACT_DEBUG_STEP_OUT),       // 6
+        formatMenuItem("Go to &Cursor",      EditorAction::ACT_DEBUG_RUN_TO_CURSOR),  // 7
+        " -------------- ",                                                           // 8
+        formatMenuItem("Toggle &Breakpoint", EditorAction::ACT_DEBUG_TOGGLE_BREAKPOINT), // 9
+        formatMenuItem("Add / Remove &Watch",EditorAction::ACT_DEBUG_ADD_WATCH),      // 10
+        " -------------- ",                                                           // 11
+        formatMenuItem("&Variables Window",  EditorAction::ACT_DEBUG_FOCUS_PANEL)     // 12
+    };
+
     m_submenu_window = {
         formatMenuItem("&Output Screen", EditorAction::ACT_TOGGLE_OUTPUT),
         " -------------- ",
@@ -1145,6 +1391,13 @@ void TextEditor::handleMouseEvent() {
         if (!btn_was_down) return;      // spurious release – nothing to finalise
         is_motion = true;               // treat release position as final drag endpoint
     }
+
+    // Gutter diagnostic hover popup: update on plain mouse movement (no button);
+    // any click/scroll dismisses it.
+    if (is_motion && !m_mouse_btn_down && !is_press && !is_release)
+        updateDiagnosticHover(mx, my);
+    else if (is_press || is_scroll_up || is_scroll_dn)
+        m_diag_hover_line = -1;
 
     // Scroll wheel
     if (is_scroll_up || is_scroll_dn) {
@@ -1452,13 +1705,27 @@ void TextEditor::main_loop() {
 #endif
         }
 
-        // Calculate gutter width at the start of the loop
-        if (m_config.show_line_numbers && currentBufferIdx() != -1) {
-            m_gutter_width = std::to_string(currentBuffer().total_lines).length() + 2;
-        } else {
-            m_gutter_width = 0;
+        // Calculate gutter width at the start of the loop. When line numbers are
+        // off we still show a thin 2-column margin if the (C/C++) file currently
+        // has diagnostics, so the error/warning markers have somewhere to live.
+        m_gutter_width = 0;
+        if (currentBufferIdx() != -1) {
+            if (m_config.show_line_numbers) {
+                m_gutter_width = std::to_string(currentBuffer().total_lines).length() + 2;
+            } else {
+                bool want = m_debugging;
+                if (m_config.syntax_highlight >= 2 && currentBuffer().semantic_cache &&
+                    currentBuffer().semantic_cache->has_diagnostics.load())
+                    want = true;
+                if (!want && !m_breakpoints.empty()) {
+                    auto it = m_breakpoints.find(get_full_path(currentBuffer().filename));
+                    if (it != m_breakpoints.end() && !it->second.empty()) want = true;
+                }
+                if (want) m_gutter_width = 2;   // thin margin for markers (marker + rule)
+            }
         }
 
+        if (m_debugger) pollDebugEvents();
         update_cursor_and_scroll();
         drawEditorState();
         if (m_project_panel_focused || currentBufferIdx() == -1) {
@@ -1486,10 +1753,16 @@ void TextEditor::main_loop() {
         if (ch == KEY_RESIZE) { handleResize(); continue; }
         if (ch == KEY_MOUSE) { handleMouseEvent(); continue; }
 
+        // Any keypress (Escape included) dismisses the gutter diagnostic popup
+        // and clears a transient debug status message.
+        if (ch != (wint_t)ERR) { m_diag_hover_line = -1; if (!m_debugging) m_debug_status.clear(); }
+
         if (ch != (wint_t)ERR) m_last_keystroke_time = std::chrono::steady_clock::now();
 
         if (ch != (wint_t)ERR) {
-            if (m_project_panel_focused && !m_compile_output_visible) {
+            if (m_debug_panel_focused) {
+                handleDebugPanelKey(ch);
+            } else if (m_project_panel_focused && !m_compile_output_visible) {
                 handleProjectPanelKey(ch);
             } else if (m_compile_output_visible) {
                 switch (ch) {
@@ -1693,10 +1966,11 @@ void TextEditor::HandleAltKey(wint_t key) {
     case 'e': ActivateMenuBar(2); break; // Edit
     case 's': ActivateMenuBar(3); break; // Search
     case 'b': ActivateMenuBar(4); break; // Build
-    case 'p': ActivateMenuBar(5); break; // Project
-    case 'w': ActivateMenuBar(6); break; // Window
-    case 'o': ActivateMenuBar(7); break; // Options
-    case 'h': ActivateMenuBar(8); break; // Help
+    case 'd': ActivateMenuBar(5); break; // Debug
+    case 'p': ActivateMenuBar(6); break; // Project
+    case 'w': ActivateMenuBar(7); break; // Window
+    case 'o': ActivateMenuBar(8); break; // Options
+    case 'h': ActivateMenuBar(9); break; // Help
     case 'y': HandleRedo(); break;
     case KEY_BACKSPACE: HandleUndo(); break;
     case 'c': CloseWindow(); break;
@@ -2495,6 +2769,441 @@ void TextEditor::TriggerCompletion() {
     handleResize(); drawEditorState(); m_renderer->refresh();
 }
 
+void TextEditor::GoToDiagnostic(bool forward) {
+    if (currentBufferIdx() == -1) return;
+    EditorBuffer& buffer = currentBuffer();
+    if (!buffer.semantic_cache) { msgwin("No diagnostics."); return; }
+
+    std::vector<std::pair<unsigned, unsigned>> pts;   // (line, col_start)
+    {
+        std::unique_lock<std::mutex> lk(buffer.semantic_cache->mutex);
+        if (buffer.semantic_cache->diagnostics)
+            for (const Diagnostic& d : *buffer.semantic_cache->diagnostics)
+                pts.push_back({ d.line, d.col_start });
+    }
+    if (pts.empty()) { msgwin("No diagnostics."); return; }
+    std::sort(pts.begin(), pts.end());
+    pts.erase(std::unique(pts.begin(), pts.end()), pts.end());
+
+    unsigned cl = (unsigned)buffer.current_line_num;
+    unsigned cc = (unsigned)buffer.cursor_col;
+    std::pair<unsigned, unsigned> target;
+    bool found = false;
+    if (forward) {
+        for (const auto& p : pts)
+            if (p.first > cl || (p.first == cl && p.second > cc)) { target = p; found = true; break; }
+        if (!found) target = pts.front();   // wrap to the first
+    } else {
+        for (auto it = pts.rbegin(); it != pts.rend(); ++it)
+            if (it->first < cl || (it->first == cl && it->second < cc)) { target = *it; found = true; break; }
+        if (!found) target = pts.back();     // wrap to the last
+    }
+
+    buffer.current_line_num = (int)target.first;
+    buffer.current_line = buffer.document_head;
+    for (unsigned i = 1; i < target.first && buffer.current_line->next; ++i)
+        buffer.current_line = buffer.current_line->next;
+    int llen = (int)buffer.current_line->text.length();
+    buffer.cursor_col = std::min<int>(std::max(1u, target.second), llen + 1);
+    handleResize();   // scroll the target into view + repaint
+}
+
+//  Debugger integration (dbg::IDebugger — GDB today, MSVC later)
+
+bool TextEditor::lineHasBreakpoint(const std::string& absfile, int line) const {
+    auto it = m_breakpoints.find(absfile);
+    return it != m_breakpoints.end() && it->second.count(line) > 0;
+}
+
+void TextEditor::ToggleBreakpoint() {
+    if (currentBufferIdx() == -1) return;
+    EditorBuffer& buf = currentBuffer();
+    if (buf.is_new_file) { msgwin("Save the file before setting breakpoints."); return; }
+    std::string file = get_full_path(buf.filename);
+    int line = buf.current_line_num;
+    auto& lines = m_breakpoints[file];
+    if (lines.count(line)) {
+        lines.erase(line);
+        if (m_debugging && m_debugger) m_debugger->removeBreakpoint(file, line);
+    } else {
+        lines.insert(line);
+        if (m_debugging && m_debugger) m_debugger->addBreakpoint(file, line);
+    }
+    handleResize();   // a gutter may need to appear/disappear
+}
+
+bool TextEditor::startDebugSession() {
+    if (currentBufferIdx() == -1) { msgwin("Nothing to debug."); return false; }
+
+    // Build first, so we debug a fresh binary.
+    CompilationResult result = runCompilationProcess();
+    if (!result.success) {
+        showScrollableOutputDialog(result.output_lines);
+        m_compile_output_visible = true;
+        m_renderer->hideCursor();
+        return false;
+    }
+    std::string exe = result.executable_name;
+    if (exe.empty() || !std::filesystem::exists(exe)) {
+        msgwin("Build succeeded but no executable was found to debug.");
+        return false;
+    }
+
+    m_debugger = dbg::createDebugger();
+    if (!m_debugger) { msgwin("No debugger backend is available on this platform."); return false; }
+
+    std::string wd = std::filesystem::path(exe).parent_path().string();
+    if (!m_debugger->load(exe, "", wd) || !m_debugger->isActive()) {
+        msgwin(std::string("Could not start ") + m_debugger->name() +
+               ".\nMake sure it is installed and on PATH.");
+        m_debugger.reset();
+        return false;
+    }
+
+    m_debugging     = true;
+    m_debug_running = false;
+    m_output_content.clear();
+    for (auto& [file, lines] : m_breakpoints)
+        for (int ln : lines) m_debugger->addBreakpoint(file, ln);
+    handleResize();
+    return true;
+}
+
+void TextEditor::DebugStartOrContinue() {
+    if (m_debugging && m_debugger) { m_debugger->run(); return; }   // continue
+    if (startDebugSession()) m_debugger->run();                     // start
+}
+
+void TextEditor::DebugRunToCursor() {
+    if (currentBufferIdx() == -1 || !currentBuffer().current_line) return;
+    if (currentBuffer().is_new_file) { msgwin("Save the file before debugging."); return; }
+    std::string file = get_full_path(currentBuffer().filename);
+    int line = currentBuffer().current_line_num;
+    if (!m_debugging) { if (!startDebugSession()) return; }
+    m_debugger->runToCursor(file, line);
+}
+
+void TextEditor::DebugStepOver() { if (m_debugging && m_debugger) m_debugger->stepOver(); }
+void TextEditor::DebugStepInto() { if (m_debugging && m_debugger) m_debugger->stepInto(); }
+void TextEditor::DebugStepOut()  { if (m_debugging && m_debugger) m_debugger->stepOut(); }
+
+void TextEditor::DebugStop() {
+    if (m_debugger) { m_debugger->terminate(); m_debugger.reset(); }
+    m_debugging      = false;
+    m_debug_running  = false;
+    m_debug_cur_file.clear();
+    m_debug_cur_line = 0;
+    m_debug_status   = "Debugging stopped.";
+    if (m_debug_panel_focused) { m_debug_panel_focused = false; m_renderer->showCursor(); }
+    handleResize();
+}
+
+void TextEditor::pollDebugEvents() {
+    if (!m_debugger) return;
+    dbg::Event e;
+    bool exited = false;
+    int  exit_code = 0;
+    std::string status;
+    while (m_debugger->pollEvent(e)) {
+        switch (e.type) {
+            case dbg::Event::Running:
+                m_debug_running  = true;
+                m_debug_cur_file.clear();
+                m_debug_cur_line = 0;
+                status = "Running...";
+                break;
+            case dbg::Event::Stopped: {
+                m_debug_running  = false;
+                m_debug_cur_file = e.file;
+                m_debug_cur_line = e.line;
+                if (!e.file.empty() && e.line > 0 && std::filesystem::exists(e.file))
+                    openFileAtLine(e.file, e.line, 1);
+                const char* r = (e.reason == dbg::StopReason::Breakpoint) ? "Breakpoint" :
+                                (e.reason == dbg::StopReason::Step)       ? "Stepped"    :
+                                (e.reason == dbg::StopReason::Signal)     ? "Signal"     : "Paused";
+                status = std::string(r) + (e.func.empty() ? "" : " in " + e.func + "()");
+                refreshDebugData();   // locals / call stack / watches for this stop
+                break;
+            }
+            case dbg::Event::Exited:
+                m_output_content += "\n--- Program exited (code " +
+                                    std::to_string(e.exitCode) + ") ---\n";
+                exit_code = e.exitCode;
+                exited = true;
+                break;
+            case dbg::Event::Output:
+                m_output_content += e.text;
+                break;
+            default: break;
+        }
+    }
+    if (!status.empty()) m_debug_status = status;
+    if (exited) {
+        DebugStop();
+        m_debug_status = "Program exited (code " + std::to_string(exit_code) + ")";
+    }
+}
+
+void TextEditor::refreshDebugData() {
+    if (!m_debugger || !m_debugging) return;
+    m_debug_locals = m_debugger->locals();
+    m_debug_stack  = m_debugger->backtrace();
+    for (auto& w : m_debug_watches) w.second = m_debugger->evaluate(w.first);
+}
+
+void TextEditor::AddWatch() {
+    if (currentBufferIdx() == -1 || !currentBuffer().current_line) return;
+    const std::string& t = currentBuffer().current_line->text;
+    int c0 = currentBuffer().cursor_col - 1;
+    std::string expr;
+    if (c0 >= 0 && c0 < (int)t.size() && (std::isalnum((unsigned char)t[c0]) || t[c0] == '_')) {
+        int s = c0, e = c0;
+        while (s > 0 && (std::isalnum((unsigned char)t[s - 1]) || t[s - 1] == '_')) --s;
+        while (e < (int)t.size() && (std::isalnum((unsigned char)t[e]) || t[e] == '_')) ++e;
+        expr = t.substr(s, e - s);
+    }
+    if (expr.empty()) { msgwin("Place the cursor on a variable to watch it."); return; }
+
+    for (size_t i = 0; i < m_debug_watches.size(); ++i)
+        if (m_debug_watches[i].first == expr) {
+            m_debug_watches.erase(m_debug_watches.begin() + i);
+            m_debug_status = "Removed watch: " + expr;
+            return;
+        }
+    std::string val = (m_debugging && m_debugger) ? m_debugger->evaluate(expr) : "";
+    m_debug_watches.push_back({ expr, val });
+    m_debug_status = "Watching: " + expr;
+}
+
+int TextEditor::debugSectionCount(int section) const {
+    switch (section) {
+        case 0: return (int)m_debug_locals.size();
+        case 1: return (int)m_debug_watches.size();
+        case 2: return (int)m_debug_stack.size();
+    }
+    return 0;
+}
+
+bool TextEditor::debugPanelLayout(int& x0, int& y0, int& Wp, int& Hp,
+                                  int titleRow[3], int contentY[3], int contentH[3]) const {
+    if (!m_debugging || m_debug_running || m_debug_cur_line <= 0) return false;
+    if (currentBufferIdx() == -1) return false;
+
+    int areaW = m_text_area_end_x - m_text_area_start_x + 1;
+    Wp = std::min(42, areaW / 2);
+    if (Wp < 22) return false;
+    x0 = m_text_area_end_x - Wp + 1;
+    y0 = m_text_area_start_y;
+    Hp = m_text_area_end_y - y0 + 1;
+    if (Hp < 9) return false;                    // room for 3 usable sections
+
+    int interior = Hp - 2;                        // between top/bottom border
+    int base = interior / 3;
+    int h[3] = { base, base, interior - 2 * base };
+    int ry = y0 + 1;
+    for (int i = 0; i < 3; ++i) {
+        titleRow[i] = ry;
+        contentY[i] = ry + 1;
+        contentH[i] = h[i] - 1;                    // one row is the section title
+        ry += h[i];
+    }
+    return true;
+}
+
+void TextEditor::drawDebugPanel() {
+    int x0, y0, Wp, Hp, tr[3], cy[3], chh[3];
+    if (!debugPanelLayout(x0, y0, Wp, Hp, tr, cy, chh)) return;
+
+    // Clamp cursors to current data (it changes on every stop).
+    for (int s = 0; s < 3; ++s) {
+        int cnt = debugSectionCount(s);
+        if (m_dbg_cursor[s] >= cnt) m_dbg_cursor[s] = cnt - 1;
+        if (m_dbg_cursor[s] < 0)    m_dbg_cursor[s] = 0;
+        if (m_dbg_scroll[s] > m_dbg_cursor[s]) m_dbg_scroll[s] = m_dbg_cursor[s];
+        if (m_dbg_scroll[s] < 0) m_dbg_scroll[s] = 0;
+    }
+
+    m_renderer->drawShadow(x0, y0, Wp, Hp);
+    m_renderer->drawBoxWithTitle(x0, y0, Wp, Hp, Renderer::CP_DIALOG, Renderer::SINGLE,
+                                 m_debug_panel_focused ? " Variables* " : " Variables ",
+                                 Renderer::CP_DIALOG_TITLE, m_debug_panel_focused ? A_BOLD : 0);
+    for (int i = 1; i < Hp - 1; ++i)
+        m_renderer->drawText(x0 + 1, y0 + i, std::string(Wp - 2, ' '), Renderer::CP_DIALOG);
+
+    const char* titles[3] = { "Locals", "Watch", "Call Stack" };
+    const int inner_w = Wp - 2;
+
+    auto itemText = [&](int s, int i) -> std::string {
+        if (s == 0) return m_debug_locals[i].name + " = " + m_debug_locals[i].value;
+        if (s == 1) return m_debug_watches[i].first + " = " +
+                           (m_debug_watches[i].second.empty() ? "<n/a>" : m_debug_watches[i].second);
+        std::string loc = m_debug_stack[i].func.empty() ? "??" : m_debug_stack[i].func;
+        if (m_debug_stack[i].line > 0) loc += " :" + std::to_string(m_debug_stack[i].line);
+        return loc;
+    };
+
+    for (int s = 0; s < 3; ++s) {
+        bool secFocused = m_debug_panel_focused && m_dbg_section == s;
+
+        // Section title row: "─ Name ────" (highlighted when focused).
+        std::string label = std::string("\xe2\x94\x80 ") + titles[s] + " ";  // ─ Name
+        int used = 2 + (int)std::string(titles[s]).size() + 1;               // ─,space,name,space
+        for (int k = used; k < inner_w; ++k) label += "\xe2\x94\x80";        // pad with ─
+        m_renderer->drawText(x0 + 1, tr[s], label,
+                             secFocused ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG_TITLE,
+                             A_BOLD);
+
+        int cnt = debugSectionCount(s);
+        int rows = chh[s];
+        if (cnt == 0) {
+            m_renderer->drawText(x0 + 1, cy[s], " (none)", Renderer::CP_DIALOG);
+            continue;
+        }
+        int top = m_dbg_scroll[s];
+        for (int r = 0; r < rows; ++r) {
+            int idx = top + r;
+            if (idx >= cnt) break;
+            std::string txt = itemText(s, idx);
+            for (char& c : txt) if (c == '\n' || c == '\t' || c == '\r') c = ' ';
+            bool sel = secFocused && idx == m_dbg_cursor[s];
+            std::string cell = " " + txt;
+            if ((int)cell.size() > inner_w) cell = cell.substr(0, inner_w - 1) + "\xe2\x80\xa6";
+            else cell.resize(inner_w, ' ');   // fill the row so the selection bar spans it
+            m_renderer->drawText(x0 + 1, cy[s] + r, cell,
+                                 sel ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
+        }
+        // Scroll markers.
+        if (top > 0)
+            m_renderer->drawText(x0 + Wp - 2, cy[s], "\xe2\x86\x91", Renderer::CP_DIALOG_TITLE);
+        if (top + rows < cnt)
+            m_renderer->drawText(x0 + Wp - 2, cy[s] + rows - 1, "\xe2\x86\x93", Renderer::CP_DIALOG_TITLE);
+    }
+
+    // Footer hint on the bottom border while focused.
+    if (m_debug_panel_focused) {
+        const std::string hint = " Tab \xe2\x86\x94  Enter  Ins/Del ";
+        int hx = x0 + (Wp - 18) / 2;
+        if (hx > x0) m_renderer->drawText(hx, y0 + Hp - 1, hint, Renderer::CP_STATUS_BAR);
+    }
+}
+
+void TextEditor::FocusDebugPanel() {
+    if (!m_debugging || m_debug_running || m_debug_cur_line <= 0) {
+        msgwin("The Variables window is available while the program is stopped.");
+        return;
+    }
+    m_debug_panel_focused = !m_debug_panel_focused;
+    if (m_debug_panel_focused) m_renderer->hideCursor();
+    else                       m_renderer->showCursor();
+}
+
+bool TextEditor::promptLine(const std::string& label, std::string& out) {
+    out.clear();
+    int h = m_renderer->getHeight(), w = m_renderer->getWidth();
+    nodelay(stdscr, FALSE); timeout(-1);
+    bool ok = false;
+    while (true) {
+        std::string shown = " " + label + ": " + out;
+        m_renderer->drawText(0, h - 1, std::string(w, ' '), Renderer::CP_STATUS_BAR_HIGHLIGHT);
+        m_renderer->drawText(0, h - 1, shown.substr(0, std::max(0, w - 1)),
+                             Renderer::CP_STATUS_BAR_HIGHLIGHT);
+        m_renderer->setCursor(std::min((int)shown.size(), w - 1), h - 1);
+        m_renderer->refresh();
+        wint_t c = m_renderer->getChar();
+        if (c == 27) break;
+        if (c == KEY_ENTER || c == 10 || c == 13) { ok = !out.empty(); break; }
+        if (c == KEY_BACKSPACE || c == 127 || c == 8) { if (!out.empty()) out.pop_back(); continue; }
+        if (c >= 32 && c < 127) out += (char)c;
+    }
+    nodelay(stdscr, TRUE);
+    return ok;
+}
+
+void TextEditor::handleDebugPanelKey(wint_t ch) {
+    if (ch == KEY_RESIZE) { handleResize(); return; }
+    if (!m_debugging) { m_debug_panel_focused = false; m_renderer->showCursor(); return; }
+    if (m_debug_running || m_debug_cur_line <= 0) return;   // ignore keys while running
+
+    // Debugger controls keep working while the panel has focus.
+    switch (m_keyBindings->getAction(ch)) {
+        case EditorAction::ACT_DEBUG_START:     DebugStartOrContinue(); return;
+        case EditorAction::ACT_DEBUG_STEP_OVER: DebugStepOver(); return;
+        case EditorAction::ACT_DEBUG_STEP_INTO: DebugStepInto(); return;
+        case EditorAction::ACT_DEBUG_STEP_OUT:  DebugStepOut(); return;
+        case EditorAction::ACT_DEBUG_RUN_TO_CURSOR: DebugRunToCursor(); return;
+        case EditorAction::ACT_DEBUG_STOP:      DebugStop(); return;
+        case EditorAction::ACT_DEBUG_FOCUS_PANEL:
+            m_debug_panel_focused = false; m_renderer->showCursor(); return;
+        default: break;
+    }
+
+    int x0, y0, Wp, Hp, tr[3], cy[3], chh[3];
+    if (!debugPanelLayout(x0, y0, Wp, Hp, tr, cy, chh)) { m_debug_panel_focused = false; return; }
+
+    int  sec = m_dbg_section;
+    int  cnt = debugSectionCount(sec);
+    int  vis = std::max(1, chh[sec]);
+    int& cur = m_dbg_cursor[sec];
+    int& top = m_dbg_scroll[sec];
+    auto clamp = [&]() {
+        if (cnt <= 0) { cur = 0; top = 0; return; }
+        if (cur < 0) cur = 0;
+        if (cur >= cnt) cur = cnt - 1;
+        if (cur < top) top = cur;
+        if (cur >= top + vis) top = cur - vis + 1;
+        if (top < 0) top = 0;
+    };
+
+    switch (ch) {
+        case 27: m_debug_panel_focused = false; m_renderer->showCursor(); return;
+        case '\t':              m_dbg_section = (m_dbg_section + 1) % 3; return;
+        case KEY_BTAB:          m_dbg_section = (m_dbg_section + 2) % 3; return;
+        case KEY_UP:    cur--;        clamp(); return;
+        case KEY_DOWN:  cur++;        clamp(); return;
+        case KEY_PPAGE: cur -= vis;   clamp(); return;
+        case KEY_NPAGE: cur += vis;   clamp(); return;
+        case KEY_HOME:  cur = 0;      clamp(); return;
+        case KEY_END:   cur = cnt-1;  clamp(); return;
+        case KEY_ENTER: case 10: case 13:
+            if (sec == 2 && cur >= 0 && cur < (int)m_debug_stack.size()) {
+                const dbg::Frame& f = m_debug_stack[cur];
+                if (!f.file.empty() && f.line > 0 && std::filesystem::exists(f.file)) {
+                    m_debug_panel_focused = false; m_renderer->showCursor();
+                    openFileAtLine(f.file, f.line, 1);
+                }
+            } else if (sec == 1 && cur >= 0 && cur < (int)m_debug_watches.size()) {
+                msgwin(m_debug_watches[cur].first + " =\n" +
+                       (m_debug_watches[cur].second.empty() ? "<n/a>" : m_debug_watches[cur].second));
+            } else if (sec == 0 && cur >= 0 && cur < (int)m_debug_locals.size()) {
+                msgwin(m_debug_locals[cur].name + " =\n" + m_debug_locals[cur].value);
+            }
+            return;
+        default: break;
+    }
+
+    // Watch section editing (add / remove expressions).
+    if (sec == 1) {
+        if (ch == KEY_IC || ch == 'a' || ch == 'A' || ch == '+') {
+            std::string expr;
+            if (promptLine("Watch expression", expr)) {
+                std::string val = m_debugger ? m_debugger->evaluate(expr) : "";
+                m_debug_watches.push_back({ expr, val });
+                cur = (int)m_debug_watches.size() - 1; cnt = (int)m_debug_watches.size(); clamp();
+            }
+            return;
+        }
+        if (ch == KEY_DC || ch == 'd' || ch == 'D') {
+            if (cur >= 0 && cur < (int)m_debug_watches.size()) {
+                m_debug_watches.erase(m_debug_watches.begin() + cur);
+                cnt = (int)m_debug_watches.size();
+                if (cur > 0) cur--;
+                clamp();
+            }
+            return;
+        }
+    }
+}
+
 // Word character for C++ navigation: identifiers are [A-Za-z0-9_]
 static bool isWordChar(unsigned char c) { return std::isalnum(c) || c == '_'; }
 
@@ -2701,6 +3410,17 @@ void TextEditor::process_key(wint_t ch) {
                 case EditorAction::ACT_GOTO_LINE: GoToLineDialog(); return;
                 case EditorAction::ACT_GO_TO_DEFINITION: GoToDefinition(); return;
                 case EditorAction::ACT_AUTOCOMPLETE:     TriggerCompletion(); return;
+                case EditorAction::ACT_NEXT_DIAGNOSTIC:  GoToDiagnostic(true);  return;
+                case EditorAction::ACT_PREV_DIAGNOSTIC:  GoToDiagnostic(false); return;
+                case EditorAction::ACT_DEBUG_TOGGLE_BREAKPOINT: ToggleBreakpoint();   return;
+                case EditorAction::ACT_DEBUG_START:      DebugStartOrContinue(); return;
+                case EditorAction::ACT_DEBUG_STEP_OVER:  DebugStepOver();  return;
+                case EditorAction::ACT_DEBUG_STEP_INTO:  DebugStepInto();  return;
+                case EditorAction::ACT_DEBUG_STEP_OUT:   DebugStepOut();   return;
+                case EditorAction::ACT_DEBUG_STOP:       DebugStop();      return;
+                case EditorAction::ACT_DEBUG_ADD_WATCH:  AddWatch();       return;
+                case EditorAction::ACT_DEBUG_RUN_TO_CURSOR: DebugRunToCursor(); return;
+                case EditorAction::ACT_DEBUG_FOCUS_PANEL: FocusDebugPanel();  return;
                 case EditorAction::ACT_FIND_REFERENCES:  findAllReferences(); return;
                 case EditorAction::ACT_COMPILE: compileOnly(); return;
                 case EditorAction::ACT_RUN: compileAndRun(); return;
@@ -2845,7 +3565,7 @@ void TextEditor::process_key(wint_t ch) {
     switch(ch) {
     case KEY_F(2): if (buffer.is_new_file) { SaveFileBrowser(); } else { write_file(buffer); } break;
     case KEY_F(3): selectfile(); break;
-    case KEY_F(1): ActivateMenuBar(8); break;
+    case KEY_F(1): ActivateMenuBar(9); break;   // Help menu (now id 9)
     case KEY_F(6): NextWindow(); break;
     case KEY_F(18): PreviousWindow(); break;
     case KEY_CTRL_W: CloseWindow(); break;
@@ -3690,10 +4410,11 @@ void TextEditor::ActivateMenuBar(int initial_menu_id) {
         {2, {&m_submenu_edit,    m_menu_positions[1] - 1}},
         {3, {&m_submenu_search,  m_menu_positions[2] - 1}},
         {4, {&m_submenu_build,   m_menu_positions[3] - 1}},
-        {5, {&m_submenu_project, m_menu_positions[4] - 1}},
-        {6, {&m_submenu_window,  m_menu_positions[5] - 1}},
-        {7, {&m_submenu_options, m_menu_positions[6] - 1}},
-        {8, {&m_submenu_help,    help_x}}
+        {5, {&m_submenu_debug,   m_menu_positions[4] - 1}},
+        {6, {&m_submenu_project, m_menu_positions[5] - 1}},
+        {7, {&m_submenu_window,  m_menu_positions[6] - 1}},
+        {8, {&m_submenu_options, m_menu_positions[7] - 1}},
+        {9, {&m_submenu_help,    help_x}}
     };
 
     while (true) {
@@ -3728,14 +4449,14 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
         if (item_disabled.size() > 6) item_disabled[6] = true; // disable "Recent Files" when empty
     }
 
-    if (menu_id == 5) { // Project — disable certain items when no project is loaded
+    if (menu_id == 6) { // Project — disable certain items when no project is loaded
         bool no_project = m_project.name.empty();
         if (no_project && item_disabled.size() > 2) item_disabled[2] = true; // Project Properties
         if (no_project && item_disabled.size() > 3) item_disabled[3] = true; // Close Project
         if (no_project && item_disabled.size() > 5) item_disabled[5] = true; // Add File
     }
 
-    if (menu_id == 6) { // Window menu
+    if (menu_id == 7) { // Window menu
         finalMenuItems.push_back(" ----------------- ");
         for(size_t i = 0; i < m_bufferManager->bufferCount() && i < 10; ++i) {
             std::string hotkey_num = (i < 9) ? std::to_string(i + 1) : "0";
@@ -3979,14 +4700,25 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
                 else if (selection == 2) compileOnly();
                 else if (selection == 3) CompileOptionsDialog();
                 break;
-            case 5: // Project
+            case 5: // Debug
+                if (selection == 1) DebugStartOrContinue();
+                else if (selection == 2) DebugStop();
+                else if (selection == 4) DebugStepOver();
+                else if (selection == 5) DebugStepInto();
+                else if (selection == 6) DebugStepOut();
+                else if (selection == 7) DebugRunToCursor();
+                else if (selection == 9) ToggleBreakpoint();
+                else if (selection == 10) AddWatch();
+                else if (selection == 12) FocusDebugPanel();
+                break;
+            case 6: // Project
                 if (selection == 1) CreateNewProject();
                 else if (selection == 2) OpenProject();
                 else if (selection == 3) ProjectProperties();
                 else if (selection == 4) CloseProject();
                 else if (selection == 6) AddFileToProject();
                 break;
-            case 6: // Window
+            case 7: // Window
                 if (selection == 1) {
                     m_output_screen_visible = !m_output_screen_visible;
                     if (!m_output_screen_visible) handleResize();
@@ -3999,9 +4731,9 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
                     if (buffer_idx < (int)m_bufferManager->bufferCount()) SwitchToBuffer(buffer_idx);
                 }
                 break;
-            case 7: // Options
+            case 8: // Options
                 EditorSettingsDialog(); break;
-            case 8: // Help
+            case 9: // Help
                 if (selection == 1) showHelpDialog();
                 else if (selection == 2) AboutBox();
                 break;
@@ -5344,10 +6076,8 @@ std::vector<PanelEntry> TextEditor::buildPanelEntries() const
     std::vector<PanelEntry> entries;
 
     // Build file at the top
-    std::string build_name;
-    if      (m_project.build_system == "cmake") build_name = "CMakeLists.txt";
-    else if (m_project.build_system == "make")  build_name = "Makefile";
-    else if (m_project.build_system == "meson") build_name = "meson.build";
+    std::string build_name = m_project.buildFile();
+
     if (!build_name.empty()) {
         PanelEntry e;
         e.kind    = PanelEntry::BUILD_FILE;
@@ -5517,9 +6247,7 @@ void TextEditor::handleProjectPanelKey(wint_t ch) {
             m_project.save();
             regenerateBuildFile();
             // Reload build file buffer if open
-            std::string build_file_name =
-                m_project.build_system == "cmake" ? "CMakeLists.txt" :
-                m_project.build_system == "make"  ? "Makefile" : "meson.build";
+            std::string build_file_name = m_project.buildFile();
             std::string bfp = (std::filesystem::path(m_project.root) / build_file_name).string();
             for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
                 if (m_bufferManager->getBuffer(i).filename == bfp) {
@@ -5600,9 +6328,7 @@ void TextEditor::handleProjectPanelKey(wint_t ch) {
         regenerateBuildFile();
 
         // Reload build file buffer if open
-        std::string build_file_name =
-            m_project.build_system == "cmake" ? "CMakeLists.txt" :
-            m_project.build_system == "make"  ? "Makefile" : "meson.build";
+        std::string build_file_name = m_project.buildFile();
         std::string bfp = (std::filesystem::path(m_project.root) / build_file_name).string();
         for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
             if (m_bufferManager->getBuffer(i).filename == bfp) {

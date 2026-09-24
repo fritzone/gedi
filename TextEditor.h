@@ -18,7 +18,10 @@
 #include "HelpProvider.h"
 #include "BufferManager.h"
 #include "CompletionEngine.h"
+#include "debugger/Debugger.h"
 #include "MessageDialog.h"
+#include <map>
+#include <set>
 #include "AboutDialog.h"
 #include "QuestionDialog.h"
 #include "SettingsDialog.h"
@@ -67,6 +70,47 @@ private:
     std::unique_ptr<KeyBindings> m_keyBindings;
     std::unique_ptr<CompletionEngine> m_completion;   // libclang code completion
     bool m_batch_input = false;   // true while replaying a paste/escape-seq burst
+
+    // --- Debugger (GDB / future MSVC via dbg::IDebugger) ---
+    std::unique_ptr<dbg::IDebugger> m_debugger;
+    std::map<std::string, std::set<int>> m_breakpoints;   // abs file path -> line set
+    bool        m_debugging      = false;   // a session is loaded
+    bool        m_debug_running  = false;   // inferior currently executing
+    std::string m_debug_cur_file;           // current stop location (abs path)
+    int         m_debug_cur_line = 0;
+    std::string m_debug_status;             // shown on the status bar while debugging
+    std::vector<dbg::Variable> m_debug_locals;   // refreshed on each stop
+    std::vector<dbg::Frame>    m_debug_stack;    // call stack on each stop
+    std::vector<std::pair<std::string, std::string>> m_debug_watches;  // expr -> value
+
+    void ToggleBreakpoint();
+    void AddWatch();                 // toggle a watch on the identifier under the cursor
+    bool startDebugSession();        // build + load + apply breakpoints (no run yet)
+    void DebugRunToCursor();         // "Go to Cursor" (F4)
+
+    // Variables window: three focusable/scrollable sections (Locals / Watch / Stack).
+    bool m_debug_panel_focused = false;
+    int  m_dbg_section   = 0;         // 0 = Locals, 1 = Watch, 2 = Call Stack
+    int  m_dbg_cursor[3] = {0, 0, 0};
+    int  m_dbg_scroll[3] = {0, 0, 0};
+    void FocusDebugPanel();          // give / take keyboard focus to the Variables window
+    void handleDebugPanelKey(wint_t ch);
+    int  debugSectionCount(int section) const;
+    bool promptLine(const std::string& label, std::string& out);  // one-line input
+    // Geometry of the Variables window; false when it isn't shown. Fills the outer
+    // box (x0,y0,Wp,Hp) and, per section, the title row / first content row / content
+    // row count.
+    bool debugPanelLayout(int& x0, int& y0, int& Wp, int& Hp,
+                          int titleRow[3], int contentY[3], int contentH[3]) const;
+    void refreshDebugData();         // pull locals / stack / watch values from backend
+    void drawDebugPanel();           // floating "Variables" panel (locals/watch/stack)
+    void DebugStartOrContinue();
+    void DebugStepOver();
+    void DebugStepInto();
+    void DebugStepOut();
+    void DebugStop();
+    void pollDebugEvents();          // drain backend events into the UI (main thread)
+    bool lineHasBreakpoint(const std::string& absfile, int line) const;
 
     // Help
     std::vector<std::string> m_help_history;
@@ -131,6 +175,7 @@ private:
     std::vector<std::string> m_submenu_edit;
     std::vector<std::string> m_submenu_search;
     std::vector<std::string> m_submenu_build;
+    std::vector<std::string> m_submenu_debug;
     std::vector<std::string> m_submenu_project;
     std::vector<std::string> m_submenu_window;
     std::vector<std::string> m_submenu_options;
@@ -202,6 +247,7 @@ private:
     void GoToLineDialog();
     void GoToDefinition();
     void TriggerCompletion();   // libclang code-completion popup (C/C++ buffers)
+    void GoToDiagnostic(bool forward);   // jump to next/previous inline diagnostic
     void GoToNextWord();
     void GoToPreviousWord();
     void GoToNextParagraph();
@@ -255,6 +301,14 @@ private:
     int  pickTarget(const std::string& action_label, int exclude_idx = -1);
     std::vector<PanelEntry> buildPanelEntries() const;
     void handleMouseEvent();
+
+    // Gutter diagnostic hover: when the mouse rests over a diagnostic line's gutter,
+    // a popup lists all its errors/warnings. -1 = no popup.
+    void updateDiagnosticHover(int mx, int my);
+    void drawDiagnosticHover();
+    int  m_diag_hover_line = -1;   // 1-based buffer line whose diagnostics to show
+    int  m_diag_hover_mx = 0;      // mouse screen column (popup anchor)
+    int  m_diag_hover_my = 0;      // mouse screen row
 
     // Project panel state
     bool m_project_panel_open    = false;

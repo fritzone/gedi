@@ -62,6 +62,19 @@ enum class EditorAction {
     ACT_CLOSE_PROJECT,     // File > Close Project          — closes the active project
     ACT_PROJECT_PROPERTIES,// File > Project Properties...  — opens project properties dialog
     ACT_AUTOCOMPLETE,      // Edit > code completion / Ctrl+Space — libclang completion popup
+    ACT_NEXT_DIAGNOSTIC,   // Search > Next Problem / F8           — jump to next error/warning
+    ACT_PREV_DIAGNOSTIC,   // Search > Previous Problem / Shift+F8 — jump to previous problem
+
+    //  Debugger
+    ACT_DEBUG_TOGGLE_BREAKPOINT, // Debug > Toggle Breakpoint / F9
+    ACT_DEBUG_START,             // Debug > Start / Continue / F7
+    ACT_DEBUG_STEP_OVER,         // Debug > Step Over / Ctrl+F7
+    ACT_DEBUG_STEP_INTO,         // Debug > Step Into / Alt+F7
+    ACT_DEBUG_STEP_OUT,          // Debug > Step Out / Shift+F7
+    ACT_DEBUG_STOP,              // Debug > Program Reset / Ctrl+F2
+    ACT_DEBUG_ADD_WATCH,         // Debug > Add Watch / Ctrl+F7
+    ACT_DEBUG_RUN_TO_CURSOR,     // Debug > Go to Cursor / F4
+    ACT_DEBUG_FOCUS_PANEL,       // Debug > Variables Window / F11
 
     //  Sentinel
     ACT_UNKNOWN            // returned by getAction() when no binding matches the key
@@ -112,7 +125,18 @@ class KeyBindings {
         ActionMapping{EditorAction::ACT_TOGGLE_PROJECT_PANEL,"toggle_project_panel"},
         ActionMapping{EditorAction::ACT_CLOSE_PROJECT,      "close_project"},
         ActionMapping{EditorAction::ACT_PROJECT_PROPERTIES, "project_properties"},
-        ActionMapping{EditorAction::ACT_AUTOCOMPLETE,       "autocomplete"}
+        ActionMapping{EditorAction::ACT_AUTOCOMPLETE,       "autocomplete"},
+        ActionMapping{EditorAction::ACT_NEXT_DIAGNOSTIC,    "next_diagnostic"},
+        ActionMapping{EditorAction::ACT_PREV_DIAGNOSTIC,    "prev_diagnostic"},
+        ActionMapping{EditorAction::ACT_DEBUG_TOGGLE_BREAKPOINT, "debug_toggle_breakpoint"},
+        ActionMapping{EditorAction::ACT_DEBUG_START,        "debug_start"},
+        ActionMapping{EditorAction::ACT_DEBUG_STEP_OVER,    "debug_step_over"},
+        ActionMapping{EditorAction::ACT_DEBUG_STEP_INTO,    "debug_step_into"},
+        ActionMapping{EditorAction::ACT_DEBUG_STEP_OUT,     "debug_step_out"},
+        ActionMapping{EditorAction::ACT_DEBUG_STOP,         "debug_stop"},
+        ActionMapping{EditorAction::ACT_DEBUG_ADD_WATCH,    "debug_add_watch"},
+        ActionMapping{EditorAction::ACT_DEBUG_RUN_TO_CURSOR,"debug_run_to_cursor"},
+        ActionMapping{EditorAction::ACT_DEBUG_FOCUS_PANEL,  "debug_focus_panel"}
     };
 
 public:

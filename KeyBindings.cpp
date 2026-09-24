@@ -4,6 +4,10 @@
 #include <vector>
 
 #define CTRL(c) ((c) & 0x1f)
+// Ctrl+Fn / Shift+Fn use the ncurses F-key numbering (see curses_compat.cpp),
+// which avoids the Ctrl+letter collisions that (KEY_F(n) & 0x1f) produced.
+#define CTRLF(n)  KEY_F((n) + 24)
+#define SHIFTF(n) KEY_F((n) + 12)
 
 KeyBindings::KeyBindings() {
     loadDefaults();
@@ -46,7 +50,7 @@ void KeyBindings::loadDefaults() {
     addBinding(EditorAction::ACT_GO_TO_DEFINITION, KEY_F(12), "F12");
     addBinding(EditorAction::ACT_FIND_REFERENCES,  KEY_F(24), "Shift+F12");
     addBinding(EditorAction::ACT_COMPILE, KEY_ALT(KEY_F(9)), "Alt+F9"); 
-    addBinding(EditorAction::ACT_RUN, CTRL(KEY_F(9)), "Ctrl+F9"); 
+    addBinding(EditorAction::ACT_RUN, -1, "");   // run/go is the debugger's Ctrl+F9 (Turbo-style)
     addBinding(EditorAction::ACT_COMPILE_OPTIONS, -1, "");
     addBinding(EditorAction::ACT_TOGGLE_OUTPUT, KEY_F(5), "F5");
     addBinding(EditorAction::ACT_NEXT_BUFFER, KEY_F(6), "F6");
@@ -60,6 +64,21 @@ void KeyBindings::loadDefaults() {
     addBinding(EditorAction::ACT_CLOSE_PROJECT, -1, "");
     addBinding(EditorAction::ACT_PROJECT_PROPERTIES, -1, "");
     addBinding(EditorAction::ACT_AUTOCOMPLETE, CTRL(' '), "Ctrl+Space");
+    // Diagnostics nav (moved off F8 to make room for the Turbo debugger keys).
+    addBinding(EditorAction::ACT_NEXT_DIAGNOSTIC, KEY_ALT(KEY_F(8)), "Alt+F8");
+    addBinding(EditorAction::ACT_PREV_DIAGNOSTIC, SHIFTF(8), "Shift+F8");
+
+    // Debugger — Borland Turbo C++ layout.
+    addBinding(EditorAction::ACT_DEBUG_START, KEY_F(9), "F9");           // Run / Go
+    addBinding(EditorAction::ACT_DEBUG_START, CTRLF(9), "Ctrl+F9");      //   (also Ctrl+F9)
+    addBinding(EditorAction::ACT_DEBUG_STEP_INTO, KEY_F(7), "F7");       // Step Into (Trace)
+    addBinding(EditorAction::ACT_DEBUG_STEP_OVER, KEY_F(8), "F8");       // Step Over
+    addBinding(EditorAction::ACT_DEBUG_TOGGLE_BREAKPOINT, CTRLF(8), "Ctrl+F8"); // Toggle BP
+    addBinding(EditorAction::ACT_DEBUG_RUN_TO_CURSOR, KEY_F(4), "F4");   // Go to Cursor
+    addBinding(EditorAction::ACT_DEBUG_STOP, CTRLF(2), "Ctrl+F2");       // Program Reset
+    addBinding(EditorAction::ACT_DEBUG_ADD_WATCH, CTRLF(7), "Ctrl+F7");  // Add Watch
+    addBinding(EditorAction::ACT_DEBUG_STEP_OUT, -1, "");                // (menu only)
+    addBinding(EditorAction::ACT_DEBUG_FOCUS_PANEL, KEY_F(11), "F11");   // Variables window
 }
 
 int KeyBindings::getKey(EditorAction action) const {

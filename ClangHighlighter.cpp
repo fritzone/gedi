@@ -7,6 +7,7 @@
 #include <thread>
 #include <memory>
 #include <cstdint>
+#include <cctype>
 #include <string>
 #include <vector>
 
@@ -131,7 +132,7 @@ void ClangHighlighter::requestHighlight(EditorBuffer& buffer, BuildSystem* build
                  my_version,
                  build]() mutable
     {
-        //  Thread: slow I/O happens here, not on the main thread 
+        //  Thread: slow I/O happens here, not on the main thread
         std::vector<std::string> args_str =
             build ? build->getClangArguments(abs_path, settings_snap)
                   : std::vector<std::string>{};
@@ -242,15 +243,79 @@ void ClangHighlighter::requestHighlight(EditorBuffer& buffer, BuildSystem* build
                 },
                 def_map.get());
 
+            // Collect errors/warnings for the main file (inline diagnostics).
+            // Split the parsed snapshot into lines so point-diagnostics (those with
+            // no source range) can be widened to cover their whole identifier token.
+            std::vector<std::string> doc_lines;
+            for (size_t s = 0; s <= content.size(); ) {
+                size_t nl = content.find('\n', s);
+                size_t e  = (nl == std::string::npos) ? content.size() : nl;
+                doc_lines.push_back(content.substr(s, e - s));
+                if (nl == std::string::npos) break;
+                s = e + 1;
+            }
+            auto is_word = [](unsigned char c) { return std::isalnum(c) || c == '_'; };
+
+            auto diags = std::make_shared<std::vector<Diagnostic>>();
+            unsigned nd = clang_getNumDiagnostics(tu);
+            for (unsigned di = 0; di < nd; ++di) {
+                CXDiagnostic d = clang_getDiagnostic(tu, di);
+                CXDiagnosticSeverity sev = clang_getDiagnosticSeverity(d);
+                if (sev >= CXDiagnostic_Warning) {   // skip notes / ignored
+                    CXSourceLocation loc = clang_getDiagnosticLocation(d);
+                    unsigned line = 0, col = 0, off = 0;
+                    clang_getSpellingLocation(loc, nullptr, &line, &col, &off);
+                    // "Is this in the file being edited?" — ask clang directly rather
+                    // than matching file handles/paths, which is unreliable when the
+                    // buffer path and clang's stored path differ.
+                    if (line > 0 && clang_Location_isFromMainFile(loc)) {
+                        Diagnostic dg;
+                        dg.line = line;
+                        dg.severity = static_cast<int>(sev);
+                        dg.col_start = col;
+                        dg.col_end = col + 1;
+                        // Widen to the first source range that lies on this line.
+                        if (clang_getDiagnosticNumRanges(d) > 0) {
+                            CXSourceRange rg = clang_getDiagnosticRange(d, 0);
+                            unsigned sl = 0, sc = 0, el = 0, ec = 0, t;
+                            clang_getSpellingLocation(clang_getRangeStart(rg), nullptr, &sl, &sc, &t);
+                            clang_getSpellingLocation(clang_getRangeEnd(rg),   nullptr, &el, &ec, &t);
+                            if (sl == line && sc > 0) dg.col_start = sc;
+                            if (el == line && ec > dg.col_start) dg.col_end = ec;
+                            else if (el > line)       dg.col_end = 100000;  // spans to EOL
+                        }
+                        if (dg.col_end <= dg.col_start) dg.col_end = dg.col_start + 1;
+                        // No useful range → widen over the identifier at the location.
+                        if (dg.col_end == dg.col_start + 1 && dg.line - 1 < doc_lines.size()) {
+                            const std::string& lt = doc_lines[dg.line - 1];
+                            unsigned c = dg.col_start;   // 1-based
+                            if (c >= 1 && c - 1 < lt.size() && is_word((unsigned char)lt[c - 1])) {
+                                unsigned e = c;
+                                while (e - 1 < lt.size() && is_word((unsigned char)lt[e - 1])) ++e;
+                                dg.col_end = e;
+                            }
+                        }
+                        CXString msg = clang_getDiagnosticSpelling(d);
+                        const char* mc = clang_getCString(msg);
+                        dg.message = mc ? mc : "";
+                        clang_disposeString(msg);
+                        diags->push_back(std::move(dg));
+                    }
+                }
+                clang_disposeDiagnostic(d);
+            }
+
             clang_disposeTranslationUnit(tu);
 
-            // Commit colors + definition map when still the active version.
+            // Commit colors + definition map + diagnostics when still current.
             if (cache->version.load() == my_version) {
                 std::lock_guard<std::mutex> lk(cache->mutex);
                 cache->colors = std::move(result);
                 cache->definition_map.clear();
                 for (auto& [name, defs] : *def_map)
                     cache->definition_map[name] = std::move(defs);
+                cache->has_diagnostics.store(!diags->empty());
+                cache->diagnostics = std::move(diags);
             }
         }
         clang_disposeIndex(index);

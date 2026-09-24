@@ -249,6 +249,9 @@ void Renderer::loadColors(const json &theme_data) {
     init_pair(CP_COMPILE_ERROR, COLOR_RED, dialog_bg);
     init_pair(CP_COMPILE_WARNING, COLOR_YELLOW, dialog_bg);
     init_pair(CP_DEFAULT_ON_SELECTION, default_fg, sel_bg);
+    // Current execution line while debugging — classic black-on-yellow, readable
+    // in every scheme and unmistakable.
+    init_pair(CP_DEBUG_LINE, COLOR_BLACK, COLOR_YELLOW);
 
     // button_shadow uses half-block chars (▀/▄) that must blend with the dialog background
     short shadow_fg, shadow_bg;

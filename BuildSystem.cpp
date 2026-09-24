@@ -456,14 +456,53 @@ std::vector<CompileMessage> BuildSystem::parseCompilerOutput(const std::string& 
     return messages;
 }
 
+// Ask the configured C++ compiler for its builtin/system header search paths and
+// return them as "-isystem <dir>" arguments. Without these, libclang can't find
+// <stddef.h>/<stdarg.h>/the C++ standard library and bails out with a cascade of
+// errors before it ever reaches the user's code. Detected once and cached.
+std::vector<std::string> BuildSystem::systemIncludeArgs() {
+    {
+        std::lock_guard<std::mutex> lk(m_cache_mutex);
+        if (m_sys_include_cached) return m_sys_include_args;
+    }
+
+    std::vector<std::string> out;
+#ifndef _WIN32
+    std::string cxx = m_config.toolchain.cxx.empty() ? "c++" : m_config.toolchain.cxx;
+    std::string cmd = cxx + " -xc++ -E -v /dev/null 2>&1";
+    if (FILE* p = popen(cmd.c_str(), "r")) {
+        char line[4096];
+        bool in_list = false;
+        while (fgets(line, sizeof(line), p)) {
+            std::string s(line);
+            if (s.find("#include <...> search starts here:") != std::string::npos) { in_list = true;  continue; }
+            if (s.find("End of search list.") != std::string::npos)               { in_list = false; continue; }
+            if (!in_list) continue;
+            size_t a = s.find_first_not_of(" \t");
+            size_t b = s.find_last_not_of(" \t\r\n");
+            if (a == std::string::npos || b < a) continue;
+            std::string dir = s.substr(a, b - a + 1);
+            size_t fw = dir.find(" (framework directory)");   // macOS
+            if (fw != std::string::npos) dir = dir.substr(0, fw);
+            if (!dir.empty()) { out.push_back("-isystem"); out.push_back(dir); }
+        }
+        pclose(p);
+    }
+#endif
+
+    std::lock_guard<std::mutex> lk(m_cache_mutex);
+    m_sys_include_args = out;
+    m_sys_include_cached = true;
+    return out;
+}
+
 std::vector<std::string> BuildSystem::getClangArguments(EditorBuffer& buffer) {
     std::vector<std::string> args;
     args.push_back("-xc++");
     args.push_back("-std=" + (buffer.compiler_settings.cpp_standard.empty() ? "c++20" : buffer.compiler_settings.cpp_standard));
 
     args.push_back("-I.");
-    args.push_back("-I/usr/include");
-    args.push_back("-I/usr/local/include");
+    for (auto& a : systemIncludeArgs()) args.push_back(a);
 
     if (!buffer.compiler_settings.optional_flags.empty()) {
         std::stringstream ss(buffer.compiler_settings.optional_flags);
@@ -550,8 +589,7 @@ std::vector<std::string> BuildSystem::getClangArguments(const std::string& filen
     args.push_back("-xc++");
     args.push_back("-std=" + (settings.cpp_standard.empty() ? "c++20" : settings.cpp_standard));
     args.push_back("-I.");
-    args.push_back("-I/usr/include");
-    args.push_back("-I/usr/local/include");
+    for (auto& a : systemIncludeArgs()) args.push_back(a);
 
     if (!settings.optional_flags.empty()) {
         std::stringstream ss(settings.optional_flags);

@@ -36,6 +36,7 @@ private:
 
     // Display tab
     bool temp_show_line_numbers_;
+    bool temp_inline_diag_;       // Error-Lens style inline diagnostic text
     bool temp_rounded_corners_;   // graphical build only
     int  temp_syntax_highlight_;
     int  temp_syntax_hl_cursor_;

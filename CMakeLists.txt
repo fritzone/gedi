@@ -85,6 +85,8 @@ set(GEDI_COMMON_SOURCES
     DialogBase.cpp
     DependencyChecker.cpp
     platform_compat.cpp
+    debugger/DebuggerFactory.cpp
+    debugger/GdbDebugger.cpp
 )
 
 # Helper that copies the runtime data files next to a freshly built target.

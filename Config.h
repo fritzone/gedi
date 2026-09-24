@@ -24,6 +24,7 @@ struct Config {
     bool show_line_numbers = true;
     int syntax_highlight = 2;    // 0=none  1=basic  2=advanced (clang)
     bool show_whitespace = false;
+    bool show_inline_diagnostics = true;   // print each error's message at line's right
     std::string color_scheme_name = "Obsidian";
     int compile_mode = -1;
     int optimization_level = -1;

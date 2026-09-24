@@ -37,4 +37,7 @@ struct GediProject {
     // Load from an explicit file path.  On success, populates `out` and
     // sets out.root to the directory that contains the file.
     static bool load(const std::string& path, GediProject& out);
+
+    // gets the build file name from the project type
+    std::string buildFile() const;
 };

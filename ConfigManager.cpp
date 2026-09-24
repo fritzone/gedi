@@ -8,7 +8,16 @@
 ConfigManager::ConfigManager(const std::string& configPath, const std::string& colorsPath)
     : m_configPath(configPath), m_colorsPath(colorsPath)
 {
-    auto abs_dir = std::filesystem::absolute(std::filesystem::path(configPath)).parent_path();
+    // Pin the paths to absolute now, at startup. The file browser chdir()s as the
+    // user navigates, so a relative path like "config.json" would otherwise be
+    // saved into whatever directory happens to be current — losing the settings.
+    std::error_code ec;
+    auto absCfg = std::filesystem::absolute(m_configPath, ec);
+    if (!ec) m_configPath = absCfg.string();
+    auto absCol = std::filesystem::absolute(m_colorsPath, ec);
+    if (!ec) m_colorsPath = absCol.string();
+
+    auto abs_dir = std::filesystem::absolute(std::filesystem::path(m_configPath)).parent_path();
     m_sessionPath = (abs_dir / "session.json").string();
 }
 
@@ -33,6 +42,7 @@ void ConfigManager::loadConfig(Config& config) {
             if (data.contains("show_line_numbers")) config.show_line_numbers = data["show_line_numbers"];
             if (data.contains("syntax_highlight")) config.syntax_highlight = data["syntax_highlight"];
             if (data.contains("show_whitespace"))  config.show_whitespace  = data["show_whitespace"];
+            if (data.contains("show_inline_diagnostics")) config.show_inline_diagnostics = data["show_inline_diagnostics"];
             if (data.contains("color_scheme")) config.color_scheme_name = data["color_scheme"];
             if (data.contains("compile_mode")) config.compile_mode = data["compile_mode"];
             if (data.contains("optimization_level")) config.optimization_level = data["optimization_level"];
@@ -59,6 +69,7 @@ void ConfigManager::saveConfig(const Config& config) {
     j["show_line_numbers"] = config.show_line_numbers;
     j["syntax_highlight"] = config.syntax_highlight;
     j["show_whitespace"]  = config.show_whitespace;
+    j["show_inline_diagnostics"] = config.show_inline_diagnostics;
     j["color_scheme"] = config.color_scheme_name;
     j["compile_mode"] = config.compile_mode;
     j["optimization_level"] = config.optimization_level;
@@ -125,6 +136,7 @@ void ConfigManager::createDefaultConfigFile(const std::string& path) {
     j["rounded_corners"] = false;
     j["editor_font"] = "Default";
     j["show_line_numbers"] = true;
+    j["show_inline_diagnostics"] = true;
     j["color_scheme"] = "Obsidian";
     j["compile_mode"] = -1;
     j["optimization_level"] = -1;

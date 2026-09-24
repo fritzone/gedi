@@ -61,10 +61,17 @@ public:
     std::string buildProjectPreview(const GediProject& project, const CompilerSettings& settings) const;
 
 private:
+    // The compiler's own header search paths (-isystem ...), detected once by
+    // asking the configured C++ compiler, so libclang can find <stddef.h>, the
+    // C++ standard library, etc. when parsing for highlighting/completion.
+    std::vector<std::string> systemIncludeArgs();
+
     Config m_config;
     std::filesystem::path m_exe_dir;
     std::mutex m_cache_mutex;
     std::map<std::string, std::string> m_compile_command_cache;
+    std::vector<std::string> m_sys_include_args;
+    bool m_sys_include_cached = false;
 };
 
 #endif // BUILDSYSTEM_H

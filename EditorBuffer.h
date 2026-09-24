@@ -18,6 +18,17 @@ struct SymbolDef {
     unsigned    col  = 0;
 };
 
+// A compiler diagnostic (error/warning) located in THIS buffer's file, produced
+// by the background libclang parse. Columns are 1-based; the span [col_start,
+// col_end) is clamped to the diagnostic's line.
+struct Diagnostic {
+    unsigned    line      = 0;   // 1-based
+    unsigned    col_start = 0;   // 1-based, inclusive
+    unsigned    col_end   = 0;   // 1-based, exclusive (always > col_start)
+    int         severity  = 0;   // CXDiagnosticSeverity: 2=warning, 3=error, 4=fatal
+    std::string message;
+};
+
 // Per-buffer libclang semantic highlight cache.
 // The background ClangHighlighter thread writes colors and the definition map
 // into this struct; the rendering thread reads colors lock-free via the
@@ -28,6 +39,9 @@ struct SemanticCache {
     // Symbol name → all definition locations visible in this TU (non-system only).
     // Populated by ClangHighlighter; read by GoToDefinition for instant lookup.
     std::unordered_map<std::string, std::vector<SymbolDef>> definition_map;
+    // Errors/warnings in this file from the last parse (lock-free snapshot via ptr).
+    std::shared_ptr<std::vector<Diagnostic>> diagnostics;
+    std::atomic<bool>  has_diagnostics{false};   // lock-free "any diagnostics?" flag
     std::atomic<bool>  dirty{true};
     std::atomic<bool>  in_progress{false};
     std::atomic<int>   version{0};

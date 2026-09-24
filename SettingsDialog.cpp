@@ -28,12 +28,14 @@ static constexpr int ED_RENDER_ROWS = 3;
 // Tab 1 – Display
 static constexpr int DI_LNUM_Y  = CONTENT_Y + 2;   // Show Line Numbers checkbox
 #ifdef GEDI_GUI
-static constexpr int DI_ROUND_Y = CONTENT_Y + 3;   // Rounded Corners checkbox (graphical only)
-static constexpr int DI_SYNH_LY = CONTENT_Y + 5;   // "Syntax Highlighting:" label row
-static constexpr int DI_SYNH_Y  = CONTENT_Y + 6;   // radiolist start
+static constexpr int DI_ROUND_Y  = CONTENT_Y + 3;  // Rounded Corners checkbox (graphical only)
+static constexpr int DI_INLINE_Y = CONTENT_Y + 4;  // Inline Error Text checkbox
+static constexpr int DI_SYNH_LY = CONTENT_Y + 6;   // "Syntax Highlighting:" label row
+static constexpr int DI_SYNH_Y  = CONTENT_Y + 7;   // radiolist start
 #else
-static constexpr int DI_SYNH_LY = CONTENT_Y + 4;
-static constexpr int DI_SYNH_Y  = CONTENT_Y + 5;
+static constexpr int DI_INLINE_Y = CONTENT_Y + 3;  // Inline Error Text checkbox
+static constexpr int DI_SYNH_LY = CONTENT_Y + 5;
+static constexpr int DI_SYNH_Y  = CONTENT_Y + 6;
 #endif
 #ifdef GEDI_GUI
 // Editor-font listbox on the right side of the Display tab.
@@ -60,6 +62,7 @@ SettingsDialog::SettingsDialog(Renderer& renderer, Config& config,
     , temp_render_mode_     (std::max(0, std::min(2, config.text_render_mode)))
     , temp_render_cursor_   (std::max(0, std::min(2, config.text_render_mode)))
     , temp_show_line_numbers_(config.show_line_numbers)
+    , temp_inline_diag_     (config.show_inline_diagnostics)
     , temp_rounded_corners_ (config.rounded_corners)
     , temp_syntax_highlight_(std::max(0, std::min(2, config.syntax_highlight)))
     , temp_syntax_hl_cursor_(std::max(0, std::min(2, config.syntax_highlight)))
@@ -138,6 +141,7 @@ void SettingsDialog::onInit()
 #ifdef GEDI_GUI
         g.checkboxes.push_back({ "Rounded Corners", temp_rounded_corners_, 4, DI_ROUND_Y });
 #endif
+        g.checkboxes.push_back({ "Inline Error Text", temp_inline_diag_, 4, DI_INLINE_Y });
         addGroup(std::move(g));
     }
 
@@ -418,6 +422,7 @@ void SettingsDialog::applySettings()
     }
 #endif
     config_.show_line_numbers = temp_show_line_numbers_;
+    config_.show_inline_diagnostics = temp_inline_diag_;
     config_.syntax_highlight  = temp_syntax_highlight_;
     config_.color_scheme_name = themes_[temp_theme_selected_];
     renderer_.loadColors(configManager_.loadThemes()[config_.color_scheme_name]);
