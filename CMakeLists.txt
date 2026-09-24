@@ -44,6 +44,12 @@ if(WIN32)
         set(SDL2_LIBRARIES ${SDL2_LIBRARY})
         set(SDL2_RUNTIME_DLLS
             "${GEDI_SDL2_ROOT}/lib/SDL2.dll"
+            # SDL2_image plus the codec DLLs it loads on demand. The About-box
+            # logo is a PNG, so libpng (and the zlib it needs) have to travel
+            # alongside it; the copy loop below skips whichever are absent.
+            "${GEDI_SDL2_ROOT}/lib/SDL2_image.dll"
+            "${GEDI_SDL2_ROOT}/lib/libpng16-16.dll"
+            "${GEDI_SDL2_ROOT}/lib/zlib1.dll"
         )
     endif()
 endif()
@@ -141,9 +147,15 @@ if(SDL2_FOUND)
     endif()
 
     # Optional SDL2_image: enables loading the About-box logo (a PNG). When it is
-    # not available (e.g. the vendored Windows SDL2 does not ship it) the About box
-    # still works — it just omits the image (or can load a .bmp via core SDL).
-    find_library(SDL2_IMAGE_LIBRARY NAMES SDL2_image)
+    # not available (e.g. a system SDL2 without the matching -image package) the
+    # About box still works — it just omits the image (or can load a .bmp via
+    # core SDL). The vendored Windows SDL2 does ship it, but only under
+    # GEDI_SDL2_ROOT, which is not on any default search path — hence the hint.
+    if(WIN32)
+        find_library(SDL2_IMAGE_LIBRARY NAMES SDL2_image HINTS "${GEDI_SDL2_ROOT}/lib")
+    else()
+        find_library(SDL2_IMAGE_LIBRARY NAMES SDL2_image)
+    endif()
     find_path(SDL2_IMAGE_INCLUDE_DIR NAMES SDL2/SDL_image.h HINTS ${SDL2_INCLUDE_DIRS})
     if(SDL2_IMAGE_LIBRARY AND SDL2_IMAGE_INCLUDE_DIR)
         target_compile_definitions(gedi-gui PRIVATE GEDI_HAVE_SDL_IMAGE)
