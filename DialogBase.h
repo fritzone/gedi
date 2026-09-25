@@ -16,19 +16,19 @@
 // Base class for all modal dialogs.
 //
 // All button management is now done through ButtonRow / Button widgets.
-// There is no longer a separate ButtonDescriptor type — buttons are first-class
+// There is no longer a separate ButtonDescriptor type - buttons are first-class
 // widgets alongside CheckBox, Spinner, and RadioList.
 //
 // Two layout modes (may be combined):
 //
-//   MODE A — flat (GoToLineDialog, ReplaceDialog)
-//     addInput()   — registers a text input field
-//     addButtons() — registers the ButtonRow (one Tab stop for all buttons)
-//     setNavigation() — registers arrow-key edges via NavigationGraph
+//   MODE A - flat (GoToLineDialog, ReplaceDialog)
+//     addInput()   - registers a text input field
+//     addButtons() - registers the ButtonRow (one Tab stop for all buttons)
+//     setNavigation() - registers arrow-key edges via NavigationGraph
 //
-//   MODE B — grouped (SettingsDialog)
-//     addGroup()   — registers a FocusGroup (CheckBox/Spinner/RadioList)
-//     addButtons() — registers the ButtonRow as the final Tab stop
+//   MODE B - grouped (SettingsDialog)
+//     addGroup()   - registers a FocusGroup (CheckBox/Spinner/RadioList)
+//     addButtons() - registers the ButtonRow as the final Tab stop
 //
 // Mandatory hooks:  onInit(), onDraw()
 // Optional hook:    onKey()
@@ -124,7 +124,7 @@ protected:
     std::vector<FocusGroup>& groups() noexcept { return groups_; }
 
     // Trigger the press animation for a button by its index in the ButtonRow.
-    // Safe to call from onKey() — the animation runs on the next frame.
+    // Safe to call from onKey() - the animation runs on the next frame.
     void activateButtonByIndex(int index) {
         button_row_.inner_focus = index;
         if (!groups_.empty())
@@ -150,7 +150,7 @@ private:
     void placeCursor      (Renderer&, int sx, int sy);
     void runPressAnimation(Renderer&, int sx, int sy);
 
-    //  Dispatch — Mode A 
+    //  Dispatch - Mode A 
     HandleResult dispatchKey      (wint_t ch);
     HandleResult dispatchAltKey   (wint_t ch);
     HandleResult dispatchArrow    (wint_t ch);
@@ -158,7 +158,7 @@ private:
     HandleResult dispatchBackspace();
     HandleResult dispatchChar     (wint_t ch);
 
-    //  Dispatch — Mode B 
+    //  Dispatch - Mode B 
     HandleResult dispatchGroupKey   (wint_t ch);
     HandleResult dispatchGroupAltKey(wint_t ch);
 
@@ -195,10 +195,10 @@ private:
     int  group_focus_ = 0;
     std::vector<FocusGroup> groups_;
 
-    // Shared — the single ButtonRow
+    // Shared - the single ButtonRow
     ButtonRow button_row_;
 
-    // Shared — press animation state
+    // Shared - press animation state
     bool    pressed_        = false;
     Button* pending_button_ = nullptr;
 

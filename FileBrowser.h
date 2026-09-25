@@ -28,16 +28,16 @@ struct FilterEntry {
 };
 
 // 
-// FileBrowser — three modal browser dialogs sharing one implementation.
+// FileBrowser - three modal browser dialogs sharing one implementation.
 //
-//   open()            — select an existing file; returns full path or ""
-//   save()            — choose a filename to save to; returns full path or ""
-//   selectDirectory() — select a directory; returns full path or ""
+//   open()            - select an existing file; returns full path or ""
+//   save()            - choose a filename to save to; returns full path or ""
+//   selectDirectory() - select a directory; returns full path or ""
 // 
 class FileBrowser {
 public:
-    // title   — dialog title (default: "Open File")
-    // filters — optional list of file-type filters shown in a "Type:" combo;
+    // title   - dialog title (default: "Open File")
+    // filters - optional list of file-type filters shown in a "Type:" combo;
     //           when empty, no combo is displayed and all files are shown.
     static std::string open(Renderer& renderer,
                             const std::string& title = "Open File",

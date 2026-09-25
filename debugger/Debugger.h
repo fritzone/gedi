@@ -6,8 +6,8 @@
 // Platform-agnostic debugger abstraction.
 //
 // The editor talks only to IDebugger; concrete backends implement it:
-//   * GdbDebugger  — GDB/MI on Linux/macOS (and MinGW GDB on Windows).
-//   * MsvcDebugger — the Visual Studio / Windows debugging engine (future).
+//   * GdbDebugger  - GDB/MI on Linux/macOS (and MinGW GDB on Windows).
+//   * MsvcDebugger - the Visual Studio / Windows debugging engine (future).
 //
 // createDebugger() picks the right backend for the current platform/toolchain.
 namespace dbg {
@@ -92,7 +92,7 @@ public:
     virtual void addBreakpoint(const std::string& file, int line)    = 0;
     virtual void removeBreakpoint(const std::string& file, int line) = 0;
 
-    // State queries — only meaningful while stopped. These block briefly on the
+    // State queries - only meaningful while stopped. These block briefly on the
     // backend, so call them in response to a Stopped event, not every frame.
     virtual std::vector<Frame>    backtrace() = 0;
     virtual std::vector<Variable> locals()    = 0;

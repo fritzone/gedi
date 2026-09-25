@@ -12,6 +12,11 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // Before probing: a shipped copy carries its own compiler and build systems,
+    // and this puts them at the front of PATH. The probe below then finds them,
+    // and every cmake/ninja/meson/make the editor spawns resolves to them too.
+    DependencyChecker::useBundledTools();
+
     Toolchain toolchain;
     if (!DependencyChecker::check(toolchain, ignore_deps))
         return 1;

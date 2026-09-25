@@ -122,7 +122,7 @@ DialogResult DialogBase::run(Renderer& renderer)
             if (next == (wint_t)ERR) { result_.cancel(); break; }
 
             if (next == '[') {
-                // CSI sequence - read until the final byte (0x40–0x7E)
+                // CSI sequence - read until the final byte (0x40-0x7E)
                 std::string csi;
                 timeout(30);
                 wint_t c;

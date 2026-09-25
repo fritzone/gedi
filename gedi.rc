@@ -1,0 +1,7 @@
+// Windows resource script for the editor executable.
+//
+// Resource id 1 is deliberate. Explorer shows the lowest-numbered icon as the
+// file's icon, and SDL takes the window icon - the one the taskbar and Alt-Tab
+// show - from the executable's first icon as well, so a single entry covers the
+// file, the taskbar and any shortcut pointing at it.
+1 ICON "icons/gt_gui.ico"

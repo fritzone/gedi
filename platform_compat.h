@@ -83,7 +83,7 @@ long win_self_exe_path(char* buf, size_t bufsize);
 
 // ---- run a child program with redirected output, no console flash -----------
 // gedi-gui has no console of its own (Windows subsystem, not Console); system()
-// would spawn cmd.exe, and Windows auto-allocates a new — briefly visible —
+// would spawn cmd.exe, and Windows auto-allocates a new - briefly visible -
 // console for it since none is inherited. This runs exe_path directly via
 // CreateProcess with CREATE_NO_WINDOW, so nothing flashes on screen; stdout
 // and stderr are both redirected to output_file. Returns the exit code, or

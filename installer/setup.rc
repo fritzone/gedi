@@ -1,0 +1,6 @@
+// Windows resource script for the setup stub.
+//
+// The uninstaller is the first payload_base bytes of the installer written back
+// out, so it is the same PE image and carries this icon too - installer and
+// uninstaller match without a second resource.
+1 ICON "../icons/gedi_setup.ico"

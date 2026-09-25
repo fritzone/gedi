@@ -49,13 +49,17 @@ public:
 
     // Convert CompilerSettings to a flat flags string. Produces GCC/Clang-style
     // flags (e.g. "-g -O0 -Wall -Wextra") or, when msvc is true, cl.exe-style
-    // flags (e.g. "/Zi /Od /W4") — the two option languages are not
+    // flags (e.g. "/Zi /Od /W4") - the two option languages are not
     // interchangeable, and handing GCC flags to cl.exe fails hard (e.g. it
     // parses "-Wextra" as "/W" with a non-numeric argument).
     static std::string settingsToFlags(const CompilerSettings& s, bool msvc);
 
     // True if the given compiler path/name refers to MSVC's cl.exe.
     static bool isMsvcCompiler(const std::string& compilerPath);
+
+    // -DCMAKE_CXX_COMPILER=... for the configured toolchain, so a project build
+    // uses the same compiler as everything else instead of whatever cmake finds.
+    std::string cmakeToolchainArgs() const;
 
     // Human-readable build command preview used by the Build Options dialog
     std::string buildProjectPreview(const GediProject& project, const CompilerSettings& settings) const;

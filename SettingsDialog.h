@@ -41,7 +41,7 @@ private:
     int  temp_syntax_highlight_;
     int  temp_syntax_hl_cursor_;
 
-    // Display tab — editor font list (graphical build only)
+    // Display tab - editor font list (graphical build only)
     std::vector<std::string> font_names_;   // human-readable names ("Default" first)
     std::vector<std::string> font_paths_;   // matching file paths ("" for Default)
     std::vector<int>         font_indices_; // engine registry ids (to preview each font)

@@ -1,0 +1,128 @@
+# ---------------------------------------------------------------------------
+#  Garland Turbine - Windows install script
+#
+#  Paths under "from:" and "dir:" are relative to --root, which the CMake target
+#  points at Garland Turbine-gui's output directory - everything below has already been
+#  gathered there by the existing POST_BUILD copy steps.
+# ---------------------------------------------------------------------------
+
+product:
+  name: Garland Turbine
+  version: '1.0'
+  publisher: 'Ferenc Deak'
+  website: 'https://github.com/fritzone/gedi'
+  install_key: gedi          # name of the Add/Remove Programs registry key
+
+ui:
+  title: 'Garland Turbine Installation Utility'
+
+  welcome: |
+    Welcome to Garland Turbine, the C++ programmer's editor.
+
+    This program will install the program and dependencies on your computer.
+    No files outside the directory you choose are modified, and nothing is
+    written to the system registry beyond a single Add/Remove Programs entry.
+
+    Press Continue to go on, or Exit to leave setup.
+
+  license: |
+    Garland Turbine - a small Turbo-style programming editor
+    Copyright (C) 2024-2026 Ferenc Deak
+
+    This program is free software: you can redistribute it and/or modify it
+    under the terms of the GNU General Public License as published by the Free
+    Software Foundation, either version 3 of the License, or (at your option)
+    any later version.
+
+    This program is distributed in the hope that it will be useful, but WITHOUT
+    ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+    FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+    more details.
+
+    You should have received a copy of the GNU General Public License along
+    with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    THIRD-PARTY COMPONENTS
+
+    This package also carries, under their own licences:
+
+      SDL2 and SDL2_image    zlib licence
+      libclang / LLVM        Apache 2.0 with LLVM exceptions
+      libpng, zlib           their respective permissive licences
+      nlohmann/json          MIT licence
+
+    The VGA fonts shipped in the fonts directory are bitmap reproductions of
+    hardware ROM character sets, included for authenticity of display.
+
+  finish: |
+    Garland Turbine has been installed. The editor is ready to use.
+
+install:
+  default_dir: '%LOCALAPPDATA%\Programs\Garland Turbine'
+  register_uninstall: true
+  start_menu: true
+  desktop_shortcut: false
+
+# Files the setup program itself needs on disk before it can draw its own UI.
+# They are unpacked to a scratch directory first; SDL2.dll is delay-loaded so
+# the process can start without it.
+bootstrap:
+  - SDL2.dll
+  - VGA9.F16
+  - SMVGA.F16
+
+components:
+  - id: core
+    name: 'Garland Turbine program and libraries'
+    description: 'The editor itself, SDL2 and the libclang engine. Required.'
+    required: true
+    files:
+      - from: Garland Turbine-gui.exe
+      - from: SDL2.dll
+      - from: libclang.dll
+      - from: help.hlp
+      - from: SDL2_image.dll
+      - from: libpng16-16.dll
+      - from: zlib1.dll
+      - from: icons/gedi_1.0-icon.png
+        to: icons/gedi_1.0-icon.png
+      - from: colors.json
+      - from: config.json
+      - from: VGA9.F16
+      - from: SMVGA.F16
+      - dir: fonts
+        to: fonts
+        pattern: '*.F16'
+      - dir: templates
+        to: templates
+        pattern: '*.tmpl'
+
+  - id: toolchain
+    name: 'C++ compiler toolchain (Clang)'
+    description: 'Clang, LLD, GNU make, mingw-w64 headers and libraries - build C++ with no Visual Studio installed.'
+    selected: true
+    files:
+      - dir: ../thirdparty/toolchain
+        to: toolchain
+
+  - id: buildtools
+    name: 'Build systems (CMake, Ninja, Meson)'
+    description: 'CMake, Ninja and Meson, so generated projects build without installing anything else.'
+    selected: true
+    files:
+      - dir: ../thirdparty/buildtools
+        to: buildtools
+
+shortcuts:
+  - name: Garland Turbine
+    target: Garland Turbine-gui.exe
+    location: start_menu
+    group: Garland Turbine
+    description: 'Garland Turbine programming editor'
+    icon: Garland Turbine-gui.exe
+
+  - name: Garland Turbine
+    target: Garland Turbine-gui.exe
+    location: desktop
+    description: 'Garland Turbine programming editor'
+    icon: Garland Turbine-gui.exe

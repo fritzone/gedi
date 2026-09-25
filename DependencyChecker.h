@@ -16,6 +16,12 @@ public:
 
     // Path of the toolchain config file (~/.config/gedi/toolchain.json).
     static std::string toolchainPath();
+
+    // Put the bundled compiler and build systems at the front of PATH for this
+    // process and everything it spawns, so plain "cmake" / "ninja" / "meson" /
+    // "make" resolve to the shipped copies. Call once, before anything builds.
+    // A no-op where nothing is bundled, and on non-Windows.
+    static void useBundledTools();
 };
 
 #endif // DEPENDENCYCHECKER_H

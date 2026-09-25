@@ -314,6 +314,18 @@ int     unget_wch(const wchar_t wch);
 void    gui_get_window_state(int* x, int* y, int* w, int* h, float* scale);
 void    gui_set_window_state(int x, int y, int w, int h, float scale);
 
+// Title of the host window (graphical build only). Programs that share this
+// backend - the editor, the installer - each want their own.
+void    gui_set_window_title(const char* title);
+
+// Borderless full-screen, with the character cell scaled up so the 80x25 grid
+// fills the display (whatever does not divide evenly becomes extra rows or
+// columns). Used by the installer, which wants the whole screen the way a DOS
+// setup program had it. The window keeps normal z-order, so other applications
+// can still be switched to in front of it. Pushes a KEY_RESIZE, so the caller
+// should refresh any cached dimensions.
+void    gui_set_fullscreen(int on);
+
 // Text rendering mode (the "Text Rendering" editor setting), graphical build only.
 // mode: 0 = Pixelated, 1 = Smooth, 2 = Sharp (see enum RenderMode).
 void    gui_set_render_mode(int mode);

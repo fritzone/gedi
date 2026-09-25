@@ -9,16 +9,16 @@
 // Shows a modal yes/no question dialog.
 //
 // Returns:
-//    1  — Yes
-//    0  — No
-//   -1  — ESC / dismissed without a choice
+//    1  - Yes
+//    0  - No
+//   -1  - ESC / dismissed without a choice
 //
 // Keys accepted:
-//   Left / Right / Tab / Shift-Tab  — toggle between Yes and No
-//   Enter / Space                   — activate focused button
-//   Y / y   (or Alt+Y)              — activate Yes directly
-//   N / n   (or Alt+N)              — activate No directly
-//   ESC                             — dismiss, return -1
+//   Left / Right / Tab / Shift-Tab  - toggle between Yes and No
+//   Enter / Space                   - activate focused button
+//   Y / y   (or Alt+Y)              - activate Yes directly
+//   N / n   (or Alt+N)              - activate No directly
+//   ESC                             - dismiss, return -1
 // ═══════════════════════════════════════════════════════════════════════════════
 
 class QuestionDialog : private DialogBase {
@@ -34,7 +34,7 @@ private:
     void onInit() override;
     void onDraw(Renderer& renderer, int startx, int starty) override;
 
-    // Y/N direct keypresses (no Alt needed) — reach here via dispatchChar
+    // Y/N direct keypresses (no Alt needed) - reach here via dispatchChar
     // fall-through when no input field is focused.
     HandleResult onKey(wint_t ch) override;
 

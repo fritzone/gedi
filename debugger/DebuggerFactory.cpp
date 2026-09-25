@@ -4,16 +4,16 @@
 
 namespace dbg {
 
-// Choose the backend for this platform. GDB is used wherever it's available
-// (Linux/macOS, and MinGW on Windows); the MSVC engine is the Windows-native
-// fallback. The GdbDebugger reports isActive()==false if gdb can't be launched,
-// so a null return specifically means "no backend compiled in".
+// The GDB/MI backend everywhere, because it is no longer GDB-specific: it picks
+// up gdb where the machine has one and lldb-mi otherwise, and lldb-mi speaks the
+// same protocol on top of LLDB. That covers Windows, where the bundled toolchain
+// ships LLDB and no gdb - previously this returned the MsvcDebugger stub and the
+// debugger pane had nothing behind it at all.
+//
+// load() reports false if no debugger could be launched, so a null return here
+// would specifically mean "no backend compiled in".
 std::unique_ptr<IDebugger> createDebugger() {
-#if defined(_WIN32)
-    return std::make_unique<MsvcDebugger>();
-#else
     return std::make_unique<GdbDebugger>();
-#endif
 }
 
 } // namespace dbg

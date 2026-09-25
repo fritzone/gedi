@@ -6,22 +6,22 @@
 #include <vector>
 #include <functional>
 
-// Ctrl+Down key code – pinned by Renderer::Renderer() via define_key(tigetstr("kDN5"), 525)
+// Ctrl+Down key code - pinned by Renderer::Renderer() via define_key(tigetstr("kDN5"), 525)
 static constexpr wint_t KEY_CTRL_DOWN = 525;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Widgets.h
 //
 // Widget catalogue:
-//   Button      — push-button with & hotkey
-//   ButtonRow   — horizontal row of Buttons (one Tab stop)
-//   CheckBox    — [X] / [ ] boolean toggle
-//   Spinner     — < N > bounded integer
-//   RadioList   — scrollable (•)/( ) single-selection list
-//   ComboBox    — [ item ] left/right cycling selector
-//   TabControl  — horizontal tab bar with separator line
-//   OptionList  — scrollable mixed checkbox/radio list built from an Option array
-//   FocusGroup  — titled box containing any mix of the above
+//   Button      - push-button with & hotkey
+//   ButtonRow   - horizontal row of Buttons (one Tab stop)
+//   CheckBox    - [X] / [ ] boolean toggle
+//   Spinner     - < N > bounded integer
+//   RadioList   - scrollable (•)/( ) single-selection list
+//   ComboBox    - [ item ] left/right cycling selector
+//   TabControl  - horizontal tab bar with separator line
+//   OptionList  - scrollable mixed checkbox/radio list built from an Option array
+//   FocusGroup  - titled box containing any mix of the above
 // ═══════════════════════════════════════════════════════════════════════════════
 
 enum class HandleResult { CONTINUE, CLOSE };
@@ -157,7 +157,7 @@ struct RadioList {
 
 //  ComboBox 
 // Displays the selected item between [ ] brackets.
-// Left/Right — cycle items.   Ctrl+Down — open dropdown list.
+// Left/Right - cycle items.   Ctrl+Down - open dropdown list.
 // In dropdown: Up/Down navigate; Enter confirms; Esc cancels.
 struct ComboBox {
     std::vector<std::string> items;
@@ -269,7 +269,7 @@ struct ComboBox {
                 close();
                 return true;
             }
-            if (ch == 27) {           // Esc — cancel
+            if (ch == 27) {           // Esc - cancel
                 close();
                 return true;
             }
@@ -518,7 +518,7 @@ struct FocusGroup {
     int inner_focus = 0;
 
     // Total focusable items: cb + sp + combo + tab + optionlist
-    // (RadioList is one unit; text_buffer has no separate focus — it's the whole group)
+    // (RadioList is one unit; text_buffer has no separate focus - it's the whole group)
     int innerCount() const {
         if (text_buffer) return 1;   // the whole group is one text field
         return static_cast<int>(

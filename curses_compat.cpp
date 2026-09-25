@@ -478,6 +478,49 @@ void gui_set_window_state(int x, int y, int w, int h, float scale) {
     resize_to_engine();   // sync stdscr + COLS/LINES to the restored grid
 }
 
+void gui_set_window_title(const char* title) {
+    if (title && g_eng.window) SDL_SetWindowTitle(g_eng.window, title);
+}
+
+void gui_set_fullscreen(int on) {
+    if (!g_eng.window) return;
+
+    if (!on) {
+        SDL_SetWindowFullscreen(g_eng.window, 0);
+        SDL_SetWindowAlwaysOnTop(g_eng.window, SDL_FALSE);
+        return;
+    }
+
+    // Keep the window put when it loses focus. SDL otherwise minimises a
+    // full-screen window as soon as you switch away, so coming back would mean
+    // restoring it from the taskbar rather than a plain Alt-Tab.
+    SDL_SetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "0");
+
+    SDL_SetWindowFullscreen(g_eng.window, SDL_WINDOW_FULLSCREEN_DESKTOP);
+    SDL_RaiseWindow(g_eng.window);
+    // Deliberately NOT always-on-top: a topmost full-screen window cannot be
+    // switched away from, which makes the machine feel hijacked. Ordinary
+    // z-order lets Alt-Tab put another application in front while setup keeps
+    // the whole screen underneath.
+    SDL_SetWindowAlwaysOnTop(g_eng.window, SDL_FALSE);
+
+    int w = 0, h = 0;
+    SDL_GetWindowSize(g_eng.window, &w, &h);
+    if (w <= 0 || h <= 0) return;
+
+    // Scale so 80x25 cells cover the screen; the axis that does not divide
+    // evenly simply yields a few more rows or columns of grid.
+    const float sx = (float)w / (80.0f * FONT_CHAR_WIDTH);
+    const float sy = (float)h / (25.0f * FONT_CHAR_HEIGHT);
+    g_eng.scale_factor = std::min(sx, sy);
+    g_eng.window_w = w;
+    g_eng.window_h = h;
+    g_eng.updateGridDims();
+
+    resize_to_engine();
+    push_key(KEY_RESIZE);
+}
+
 void gui_set_render_mode(int mode) {
     g_eng.setRenderMode(mode);
 }

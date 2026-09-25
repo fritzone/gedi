@@ -13,7 +13,7 @@ static constexpr int CONTENT_H  = H - 7;   // = 15 (rows 4..18)
 static constexpr int BTN_Y      = H - 3;   // = 19
 
 // Widget y-positions inside the content box (dialog-relative)
-// Tab 0 – Editing. innerCount order is all checkboxes then the spinner.
+// Tab 0 - Editing. innerCount order is all checkboxes then the spinner.
 static constexpr int ED_SMART_Y  = CONTENT_Y + 2;   // inner_focus 0
 static constexpr int ED_WSPC_Y   = CONTENT_Y + 3;   // inner_focus 1
 static constexpr int ED_USETAB_Y = CONTENT_Y + 4;   // inner_focus 2
@@ -25,7 +25,7 @@ static constexpr int ED_RENDER_Y    = CONTENT_Y + 9;
 static constexpr int ED_RENDER_ROWS = 3;
 #endif
 
-// Tab 1 – Display
+// Tab 1 - Display
 static constexpr int DI_LNUM_Y  = CONTENT_Y + 2;   // Show Line Numbers checkbox
 #ifdef GEDI_GUI
 static constexpr int DI_ROUND_Y  = CONTENT_Y + 3;  // Rounded Corners checkbox (graphical only)
@@ -46,7 +46,7 @@ static constexpr int DI_FONT_Y    = CONTENT_Y + 2;     // first list row
 static constexpr int DI_FONT_ROWS = CONTENT_H - 3;     // visible rows
 #endif
 
-// Tab 2 – Colors
+// Tab 2 - Colors
 static constexpr int CL_LIST_Y    = CONTENT_Y + 2;
 static constexpr int CL_LIST_ROWS = CONTENT_H - 4; // = 11
 

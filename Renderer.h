@@ -44,7 +44,7 @@ public:
         CP_GUTTER_FG,
         CP_BUTTON_BG,
         CP_BUTTON_SELECTED_BG,
-        // Semantic (libclang) syntax colors — C/C++ only
+        // Semantic (libclang) syntax colors - C/C++ only
         CP_SYNTAX_TYPE,           // struct / class / enum / typedef
         CP_SYNTAX_FUNCTION,       // function and method names
         CP_SYNTAX_PARAMETER,      // function parameters

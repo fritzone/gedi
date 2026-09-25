@@ -12,3 +12,8 @@ sdl2/lib/*.lib
 sdl2/lib/*.pdb
 thirdparty/llvm/bin/*.dll
 thirdparty/llvm/lib/*.lib
+
+# Bundled Clang toolchain staged by thirdparty/fetch-toolchain.ps1. Several
+# hundred MB of redistributable binaries; fetched per machine, never committed.
+thirdparty/toolchain/
+thirdparty/buildtools/

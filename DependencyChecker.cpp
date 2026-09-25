@@ -22,6 +22,80 @@ using json = nlohmann::json;
 // Helpers
 // ---------------------------------------------------------------------------
 
+#ifdef _WIN32
+// Directory holding the running executable.
+static std::filesystem::path selfDir()
+{
+    char buf[4096];
+    const long n = win_self_exe_path(buf, sizeof buf);
+    if (n <= 0) return {};
+    return std::filesystem::path(std::string(buf, (size_t)n)).parent_path();
+}
+
+// Directory holding the bundled development environment - toolchain\ and
+// buildtools\ - or "" when this build was not given one. Shipping them is what
+// lets a fresh Windows machine build C++ with no Visual Studio, no MinGW and
+// nothing on PATH.
+//
+// Two layouts resolve here: installed, where they sit next to the executable,
+// and the build tree, where the executable is in build\ and they are under the
+// sibling thirdparty\ of that directory's parent.
+static std::filesystem::path bundledRoot()
+{
+    const std::filesystem::path exe = selfDir();
+    if (exe.empty()) return {};
+
+    std::error_code ec;
+    const std::filesystem::path candidates[] = {
+        exe,
+        exe.parent_path(),
+        exe.parent_path() / "thirdparty",
+    };
+    for (const auto& c : candidates)
+        if (std::filesystem::exists(c / "toolchain" / "bin" / "clang++.exe", ec)) return c;
+    return {};
+}
+
+static std::filesystem::path bundledToolchainRoot()
+{
+    const std::filesystem::path r = bundledRoot();
+    return r.empty() ? r : (r / "toolchain");
+}
+#endif
+
+void DependencyChecker::useBundledTools()
+{
+#ifdef _WIN32
+    const std::filesystem::path root = bundledRoot();
+    if (root.empty()) return;
+
+    // Order matters only in that all of these precede whatever the machine
+    // already has: a bundled environment that loses to a half-installed MinGW
+    // on PATH would be worse than not shipping one.
+    const std::filesystem::path dirs[] = {
+        root / "toolchain" / "bin",
+        root / "buildtools" / "cmake" / "bin",
+        root / "buildtools" / "ninja",
+        root / "buildtools" / "meson",
+    };
+
+    std::string prefix;
+    std::error_code ec;
+    for (const auto& d : dirs)
+        if (std::filesystem::is_directory(d, ec)) prefix += d.string() + ";";
+    if (prefix.empty()) return;
+
+    const char* cur = std::getenv("PATH");
+    const std::string value = prefix + (cur ? cur : "");
+
+    // Both copies: SetEnvironmentVariable is what CreateProcess hands to child
+    // processes, _putenv_s is what the CRT's own getenv/_popen read. Setting
+    // only one of them leaves the other stale.
+    SetEnvironmentVariableA("PATH", value.c_str());
+    _putenv_s("PATH", value.c_str());
+#endif
+}
+
 static std::string which(const std::string& name)
 {
 #ifdef _WIN32
@@ -187,8 +261,15 @@ bool DependencyChecker::check(Toolchain& out, bool ignore)
             out.pkg_config = j.value("pkg_config", "");
             out.python3    = j.value("python3",    "");
 
-            // Sanity: at minimum we need a C++ compiler and python3.
-            if (!out.cxx.empty() && !out.python3.empty())
+            // Sanity: at minimum we need a C++ compiler and python3, and the
+            // recorded compiler has to still be there. The file stores absolute
+            // paths, so an uninstalled MinGW - or a toolchain directory that
+            // moved - would otherwise be trusted forever and every build would
+            // fail with "command not found" instead of re-probing.
+            const bool cxx_ok = !out.cxx.empty() &&
+                                (out.cxx.find_first_of("/\\") == std::string::npos ||
+                                 std::filesystem::exists(out.cxx));
+            if (cxx_ok && !out.python3.empty())
                 return true;
             // Fall through to re-probe if the file looks incomplete.
         } catch (...) {
@@ -200,16 +281,31 @@ bool DependencyChecker::check(Toolchain& out, bool ignore)
     Toolchain t;
 
 #ifdef _WIN32
-    // Prefer MSVC (cl.exe) if present, otherwise fall back to a MinGW g++/gcc.
-    t.cxx = which("cl");
-    t.cc  = t.cxx;
+    // The bundled Clang wins over anything installed on the machine: it is the
+    // toolchain this copy was shipped with, it is complete (drivers, linker,
+    // headers, import libraries, runtime DLLs), and it does not depend on which
+    // Visual Studio happens to be present. Everything else stays as a fallback
+    // for source builds that were not given a toolchain.
+    const std::filesystem::path tc = bundledToolchainRoot();
+    if (!tc.empty()) {
+        t.cxx       = (tc / "bin" / "clang++.exe").string();
+        t.cc        = (tc / "bin" / "clang.exe").string();
+        t.clang     = t.cc;
+        t.clang_cxx = t.cxx;
+    }
+
+    // Otherwise prefer MSVC (cl.exe), then a MinGW g++/gcc.
+    if (t.cxx.empty()) {
+        t.cxx = which("cl");
+        t.cc  = t.cxx;
+    }
     if (t.cxx.empty()) {
         t.cxx = which("g++");
         t.cc  = which("gcc");
     }
 
-    t.clang     = which("clang");
-    t.clang_cxx = which("clang++");
+    if (t.clang.empty())     t.clang     = which("clang");
+    if (t.clang_cxx.empty()) t.clang_cxx = which("clang++");
 
     // pkg-config isn't part of the Windows toolchain; leave it unset.
     t.pkg_config.clear();

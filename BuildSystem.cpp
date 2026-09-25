@@ -69,6 +69,35 @@ static const char* kLocalePrefix = "";
 BuildSystem::BuildSystem(const Config& config, std::filesystem::path exe_dir)
     : m_config(config), m_exe_dir(exe_dir) {}
 
+// One command with an environment variable set for it. "VAR=value cmd" is shell
+// syntax that cmd.exe does not understand at all - it treats the assignment as
+// the program name - so on Windows this has to become a "set" and a chained
+// call instead.
+static std::string withEnv(const std::string& var, const std::string& value,
+                           const std::string& command)
+{
+#ifdef _WIN32
+    return "set \"" + var + "=" + value + "\" && " + command;
+#else
+    return var + "=\"" + value + "\" " + command;
+#endif
+}
+
+// Arguments that pin an external build system to the compiler gedi is configured
+// to use. Without them cmake runs its own detection and happily picks up a
+// Visual Studio that the bundled Clang was meant to replace, so a project build
+// would end up using a different toolchain than single-file compiles do.
+std::string BuildSystem::cmakeToolchainArgs() const
+{
+    const std::string& cxx = m_config.toolchain.cxx;
+    if (cxx.empty()) return {};
+
+    std::string a = " \"-DCMAKE_CXX_COMPILER=" + cxx + "\"";
+    if (!m_config.toolchain.cc.empty())
+        a += " \"-DCMAKE_C_COMPILER=" + m_config.toolchain.cc + "\"";
+    return a;
+}
+
 bool BuildSystem::isMsvcCompiler(const std::string& compilerPath) {
     std::string p = compilerPath;
     if (p.size() >= 2 && p.front() == '"' && p.back() == '"')
@@ -252,6 +281,7 @@ std::string BuildSystem::buildProjectPreview(const GediProject& project, const C
         std::string args;
         args += " -DCMAKE_BUILD_TYPE=" + bt;
         args += " -DCMAKE_CXX_STANDARD=" + std_num;
+        args += cmakeToolchainArgs();
         if (!flags.empty()) args += " \"-DCMAKE_CXX_FLAGS=" + flags + "\"";
         return "cmake -S \"" + root + "\" -B \"" + build_dir + "\"" + args + "\n"
              + "cmake --build \"" + build_dir + "\"";
@@ -259,7 +289,7 @@ std::string BuildSystem::buildProjectPreview(const GediProject& project, const C
     if (project.build_system == "make") {
         std::string cxxflags = "-std=" + s.cpp_standard;
         if (!flags.empty()) cxxflags += " " + flags;
-        return "make -C \"" + root + "\" CXXFLAGS=\"" + cxxflags + "\"";
+        return "make -C \"" + root + "\" CXX=\"" + m_config.toolchain.cxx + "\" CXXFLAGS=\"" + cxxflags + "\"";
     }
     if (project.build_system == "meson") {
         std::string build_dir = root + "/builddir";
@@ -267,7 +297,7 @@ std::string BuildSystem::buildProjectPreview(const GediProject& project, const C
         std::string cxxflags = "-std=" + s.cpp_standard;
         if (!flags.empty()) cxxflags += " " + flags;
         return "meson setup \"" + build_dir + "\" \"" + root + "\" --buildtype=" + buildtype + "\n"
-             + "CXXFLAGS=\"" + cxxflags + "\" ninja -C \"" + build_dir + "\"";
+             + withEnv("CXXFLAGS", cxxflags, "ninja -C \"" + build_dir + "\"");
     }
     return "(unknown build system: " + project.build_system + ")";
 }
@@ -353,6 +383,7 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
         std::string cmake_args;
         cmake_args += " -DCMAKE_BUILD_TYPE=" + bt;
         cmake_args += " -DCMAKE_CXX_STANDARD=" + std_num;
+        cmake_args += cmakeToolchainArgs();
         if (!extra_flags.empty())
             cmake_args += " \"-DCMAKE_CXX_FLAGS=" + extra_flags + "\"";
         if (!run_cmd("cmake -S \"" + root + "\" -B \"" + build_dir + "\"" + cmake_args + " 2>&1")) {
@@ -367,7 +398,7 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
         build_dir = root;
         std::string cxxflags = "-std=" + cs.cpp_standard;
         if (!extra_flags.empty()) cxxflags += " " + extra_flags;
-        build_cmd = "make -C \"" + root + "\" CXXFLAGS=\"" + cxxflags + "\" 2>&1";
+        build_cmd = "make -C \"" + root + "\" CXX=\"" + m_config.toolchain.cxx + "\" CXXFLAGS=\"" + cxxflags + "\" 2>&1";
         result.executable_name = root + "/" + project.name;
 
     } else if (project.build_system == "meson") {
@@ -375,7 +406,12 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
         std::string buildtype = (bt == "Release") ? "release" : "debug";
         if (!std::filesystem::exists(build_dir + "/build.ninja")) {
             result.output_lines.push_back("No Meson build directory found - setting up...");
-            if (!run_cmd("meson setup \"" + build_dir + "\" \"" + root + "\" --buildtype=" + buildtype + " 2>&1")) {
+            // Meson takes its compiler from CXX at setup time; without this it
+            // would run its own detection and could pick a different one than
+            // the cmake and make paths above use.
+            const std::string setup = withEnv("CXX", m_config.toolchain.cxx,
+                "meson setup \"" + build_dir + "\" \"" + root + "\" --buildtype=" + buildtype);
+            if (!run_cmd(setup + " 2>&1")) {
                 result.output_lines.push_back("=== Meson setup failed ===");
                 return result;
             }
@@ -386,7 +422,8 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
         }
         std::string cxxflags = "-std=" + cs.cpp_standard;
         if (!extra_flags.empty()) cxxflags += " " + extra_flags;
-        build_cmd = "CXXFLAGS=\"" + cxxflags + "\" ninja -C \"" + build_dir + "\" 2>&1";
+        build_cmd = withEnv("CXXFLAGS", cxxflags,
+                            "ninja -C \"" + build_dir + "\"") + " 2>&1";
         result.executable_name = build_dir + "/" + project.name;
 
     } else {

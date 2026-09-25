@@ -143,10 +143,18 @@ if(NOT SDL2_FOUND)
     find_package(SDL2)
 endif()
 if(SDL2_FOUND)
+    # gedi.rc carries the application icon. MSVC compiles a .rc listed as a
+    # source automatically; it is Windows-only, hence the conditional.
+    set(GEDI_GUI_RESOURCES "")
+    if(WIN32)
+        set(GEDI_GUI_RESOURCES gedi.rc)
+    endif()
+
     add_executable(gedi-gui
         ${GEDI_COMMON_SOURCES}
         curses_compat.cpp
         graphics_engine/VgaTextEngine.cpp
+        ${GEDI_GUI_RESOURCES}
     )
     target_compile_definitions(gedi-gui PRIVATE GEDI_GUI)
     target_include_directories(gedi-gui PRIVATE ${CLANG_INCLUDE_DIR} ${SDL2_INCLUDE_DIRS})
@@ -183,6 +191,10 @@ if(SDL2_FOUND)
     # so keep that as the actual entry point (mainCRTStartup) rather than requiring
     # a WinMain - only the subsystem (no console) changes.
     if(WIN32)
+        # The Windows product ships as "Garland Turbine"; install.yaml packs the
+        # executable and its shortcuts under that name. The CMake target keeps
+        # its own name so every other reference here still resolves.
+        set_target_properties(gedi-gui PROPERTIES OUTPUT_NAME "Garland Turbine-gui")
         set_target_properties(gedi-gui PROPERTIES WIN32_EXECUTABLE TRUE)
         if(MSVC)
             set_target_properties(gedi-gui PROPERTIES LINK_FLAGS "/ENTRY:mainCRTStartup")
@@ -242,3 +254,9 @@ install(
     FILES cguess.py
     DESTINATION lib/python3/dist-packages/${PROJECT_NAME}
 )
+
+# ---------------------------------------------------------------------------
+#  The Windows setup builder. Self-skipping elsewhere; adds the 'gedi-setup'
+#  target, which packs the freshly built gedi-gui into one installer exe.
+# ---------------------------------------------------------------------------
+add_subdirectory(installer)

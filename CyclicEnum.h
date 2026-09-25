@@ -15,7 +15,7 @@
 
 // Note: the return-type constraint { E::_count } -> std::convertible_to<...>
 // fails for nested enum classes on GCC < 13. We require only that _count
-// exists as an enumerator — which is all we actually need.
+// exists as an enumerator - which is all we actually need.
 template<typename E>
 concept CyclicEnum = std::is_enum_v<E> && requires { E::_count; };
 

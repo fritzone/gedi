@@ -1357,7 +1357,7 @@ void TextEditor::handleMouseEvent() {
 
     if (is_release) {
         m_mouse_btn_down = false;
-        if (!btn_was_down) return;      // spurious release – nothing to finalise
+        if (!btn_was_down) return;      // spurious release - nothing to finalise
         is_motion = true;               // treat release position as final drag endpoint
     }
 
@@ -2400,10 +2400,10 @@ void TextEditor::GoToDefinition() {
     };
     auto result = std::make_shared<GtdResult>();
 
-    // 3. Launch background thread – all slow I/O happens here
+    // 3. Launch background thread - all slow I/O happens here
     BuildSystem* build = m_buildSystem.get();
     std::thread([result, abs_path, content, settings_snap, target_line, target_col, build]() mutable {
-        // Fetch compiler flags (may run cguess.py via popen – that's fine in a thread)
+        // Fetch compiler flags (may run cguess.py via popen - that's fine in a thread)
         std::vector<std::string> args_str =
             build->getClangArguments(abs_path, settings_snap);
         std::vector<const char*> args;
@@ -2843,7 +2843,7 @@ void TextEditor::DebugStartOrContinue() {
 
     // Turbo "Run/Go": with no breakpoints set, just run the program normally
     // (visible/interactive in the output pane). Only start the debugger when there
-    // are breakpoints to stop at — otherwise gdb would run it invisibly to exit.
+    // are breakpoints to stop at - otherwise gdb would run it invisibly to exit.
     bool any_bp = false;
     for (const auto& kv : m_breakpoints) if (!kv.second.empty()) { any_bp = true; break; }
     if (!any_bp) { compileAndRun(); return; }
@@ -3503,7 +3503,7 @@ void TextEditor::process_key(wint_t ch) {
         }
         return;
     }
-    // NOTE: we deliberately do NOT treat bytes 128–255 as 8-bit "Meta+key" here.
+    // NOTE: we deliberately do NOT treat bytes 128-255 as 8-bit "Meta+key" here.
     // That legacy encoding collides with Latin-1/UTF-8 code points: e.g. ø=0xF8
     // would be read as Alt+x (exit), æ=0xE6 as Alt+f, å=0xE5 as Alt+e, ö=0xF6 as
     // Alt+v - breaking Norwegian/German/etc. keyboards. Alt is delivered via the
