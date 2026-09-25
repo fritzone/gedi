@@ -165,8 +165,18 @@ struct ComboBox {
     int  x, y, w;               // position and total width (including brackets)
     bool dropdown_open   = false;
     int  dropdown_cursor = 0;
+    // Open the list ABOVE the header instead of below it. Set this for a combo
+    // that sits low in its dialog, so the popup stays inside the dialog (a
+    // downward list would spill past the frame and leave uncleared artifacts).
+    bool open_up         = false;
 
     static constexpr int MAX_DD_ROWS = 8;
+
+    // The one combo whose dropdown is currently open (only one can be at a time).
+    // The dialog framework draws THIS last - after every other component - so
+    // nothing paints over the open list. Callers must NOT draw the dropdown from
+    // onDraw(); open()/close() keep this pointer in sync.
+    static inline ComboBox* s_open = nullptr;
 
     ComboBox() = default;
     ComboBox(const std::vector<std::string>& i, int sel, int x_, int y_, int w_)
@@ -176,6 +186,10 @@ struct ComboBox {
         if (!items.empty() && selected_idx >= (int)items.size())
             selected_idx = (int)items.size() - 1;
     }
+    ~ComboBox() { if (s_open == this) s_open = nullptr; }
+
+    void open()  { dropdown_open = true;  dropdown_cursor = selected_idx; s_open = this; }
+    void close() { dropdown_open = false; if (s_open == this) s_open = nullptr; }
 
     void draw(Renderer& renderer, int startx, int starty, bool focused) const {
         if (items.empty()) return;
@@ -199,17 +213,22 @@ struct ComboBox {
         if (!dropdown_open || items.empty()) return;
 
         int sx = startx + x;
-        int sy = starty + y + 1;
         int dw = w;
         int visible = std::min((int)items.size(), MAX_DD_ROWS);
         int dh      = visible + 2;
+        // Below the header by default; above it when open_up (list bottom border
+        // ends on the row just above the header).
+        int sy = open_up ? (starty + y - dh) : (starty + y + 1);
 
         // Scroll window to keep dropdown_cursor visible
         int top = std::max(0, dropdown_cursor - visible + 1);
         top = std::min(top, std::max(0, (int)items.size() - visible));
         if (dropdown_cursor < top) top = dropdown_cursor;
 
-        renderer.drawShadow(sx, sy, dw, dh);
+        // The drop-down shadow's bottom row would fall on the header when opening
+        // upward, so only cast a shadow for the downward case.
+        if (!open_up)
+            renderer.drawShadow(sx, sy, dw, dh);
         renderer.drawBox(sx, sy, dw, dh, Renderer::CP_DIALOG, Renderer::SINGLE);
 
         // Fill interior with list background
@@ -246,22 +265,21 @@ struct ComboBox {
                 return true;
             }
             if (ch == KEY_ENTER || ch == 10 || ch == 13) {
-                selected_idx  = dropdown_cursor;
-                dropdown_open = false;
+                selected_idx = dropdown_cursor;
+                close();
                 return true;
             }
             if (ch == 27) {           // Esc — cancel
-                dropdown_open = false;
+                close();
                 return true;
             }
             // Any other key: close without change, let it propagate
-            dropdown_open = false;
+            close();
             return false;
         }
 
         if (ch == KEY_CTRL_DOWN) {    // open dropdown
-            dropdown_open   = true;
-            dropdown_cursor = selected_idx;
+            open();
             return true;
         }
 
@@ -281,6 +299,48 @@ struct ComboBox {
     const std::string& selectedText() const {
         static const std::string empty;
         return items.empty() ? empty : items[selected_idx];
+    }
+
+    // Handle a left-button click at (ev_x, ev_y) with the dialog origin
+    // startx/starty. Mirrors draw()/drawDropdown() geometry:
+    //   - closed, click on the header row  -> open the dropdown
+    //   - open,   click on a list item     -> select it and close
+    //   - open,   click on the header      -> close
+    //   - open,   click anywhere else      -> close (not consumed)
+    // Returns true when the click was consumed.
+    bool handleMouse(int startx, int starty, int ev_x, int ev_y) {
+        if (items.empty()) return false;
+
+        const int hx = startx + x, hy = starty + y;      // header cell
+        const bool on_header = (ev_y == hy && ev_x >= hx && ev_x < hx + w);
+
+        if (dropdown_open) {
+            const int sx = startx + x;
+            const int visible = std::min((int)items.size(), MAX_DD_ROWS);
+            const int sy = open_up ? (starty + y - (visible + 2)) : (starty + y + 1);
+            int top = std::max(0, dropdown_cursor - visible + 1);
+            top = std::min(top, std::max(0, (int)items.size() - visible));
+            if (dropdown_cursor < top) top = dropdown_cursor;
+
+            if (ev_x >= sx + 1 && ev_x < sx + w - 1 &&
+                ev_y >= sy + 1 && ev_y <= sy + visible) {
+                int idx = top + (ev_y - (sy + 1));
+                if (idx >= 0 && idx < (int)items.size()) {
+                    selected_idx    = idx;
+                    dropdown_cursor = idx;
+                }
+                close();
+                return true;
+            }
+            close();                     // click off the list closes it
+            return on_header;            // consume only if it was on the header
+        }
+
+        if (on_header) {
+            open();
+            return true;
+        }
+        return false;
     }
 };
 
@@ -492,9 +552,9 @@ struct FocusGroup {
         for (const auto& rl : radiolists)
             rl.draw(renderer, startx, starty, focused);
 
-        // Draw open combo dropdowns last so they float above all other widget content
-        for (const auto& combo : comboboxes)
-            combo.drawDropdown(renderer, startx, starty);
+        // NOTE: an open combo dropdown is NOT drawn here. DialogBase draws the
+        // single globally-open dropdown (ComboBox::s_open) last, after every
+        // group and box, so nothing can paint over it.
     }
 
     bool handleKey(wint_t ch) {
@@ -505,7 +565,7 @@ struct FocusGroup {
         // Tab/Shift-Tab closes the dropdown (consuming the key) instead of moving focus.
         for (auto& combo : comboboxes) {
             if (combo.dropdown_open) {
-                if (ch == 9 || ch == KEY_BTAB) { combo.dropdown_open = false; return true; }
+                if (ch == 9 || ch == KEY_BTAB) { combo.close(); return true; }
                 return combo.handleKey(ch);
             }
         }

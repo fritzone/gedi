@@ -179,3 +179,15 @@ std::vector<std::pair<std::string, std::string>> listEditorFonts() {
     for (auto& f : found) fonts.push_back(std::move(f));
     return fonts;
 }
+
+int utf8Len(unsigned char lead) {
+    if (lead < 0x80)          return 1;
+    if ((lead & 0xE0) == 0xC0) return 2;
+    if ((lead & 0xF0) == 0xE0) return 3;
+    if ((lead & 0xF8) == 0xF0) return 4;
+    return 1;   // invalid lead byte → treat as a single byte
+}
+
+bool utf8IsCont(unsigned char b) { return (b & 0xC0) == 0x80; }
+
+bool isWordChar(unsigned char c) { return std::isalnum(c) || c == '_'; }

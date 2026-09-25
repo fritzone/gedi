@@ -68,7 +68,7 @@ void KeyBindings::loadDefaults() {
     addBinding(EditorAction::ACT_NEXT_DIAGNOSTIC, KEY_ALT(KEY_F(8)), "Alt+F8");
     addBinding(EditorAction::ACT_PREV_DIAGNOSTIC, SHIFTF(8), "Shift+F8");
 
-    // Debugger — Borland Turbo C++ layout.
+    // Debugger - Borland Turbo C++ layout.
     addBinding(EditorAction::ACT_DEBUG_START, KEY_F(9), "F9");           // Run / Go
     addBinding(EditorAction::ACT_DEBUG_START, CTRLF(9), "Ctrl+F9");      //   (also Ctrl+F9)
     addBinding(EditorAction::ACT_DEBUG_STEP_INTO, KEY_F(7), "F7");       // Step Into (Trace)

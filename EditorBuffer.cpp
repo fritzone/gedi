@@ -50,6 +50,24 @@ EditorBuffer &EditorBuffer::operator=(const EditorBuffer &other) {
     return *this;
 }
 
+std::vector<std::string> EditorBuffer::snapshot_lines() const {
+    std::vector<std::string> snap;
+    snap.reserve(total_lines);
+    for (const Line* p = document_head; p; p = p->next)
+        snap.push_back(p->text);
+    return snap;
+}
+
+bool EditorBuffer::matches_saved() const {
+    if (total_lines != static_cast<int>(saved_lines.size())) return false;
+    const Line* p = document_head;
+    for (const auto& s : saved_lines) {
+        if (!p || p->text != s) return false;
+        p = p->next;
+    }
+    return true;
+}
+
 EditorBuffer::EditorBuffer(EditorBuffer &&other) noexcept :
     document_head(other.document_head), total_lines(other.total_lines),
     filename(std::move(other.filename)), changed(other.changed),

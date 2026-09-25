@@ -64,7 +64,7 @@ bool ProjectPropertiesDialog::show(Renderer& renderer, GediProject& project,
 
 //  rebuildLibEntries 
 // Builds the flat visible list used by the library panel. Ordering:
-//   1. Project library targets (static_library / shared_library) — not the focused one itself
+//   1. Project library targets (static_library / shared_library) - not the focused one itself
 //   2. System libraries already in the project  (marked [X])
 //   3. System libraries not yet in the project  (marked [ ])
 // Each section gets a header row only if it has ≥1 matching item.
@@ -95,8 +95,7 @@ void ProjectPropertiesDialog::rebuildLibEntries()
             if (i == tgt_cursor_) continue;           // skip self
             const auto& t = tgt_list_[i];
             if (t.type == "executable") continue;     // only lib targets
-            std::string abbr = (t.type == "static_library") ? "static" : "shared";
-            std::string lbl  = t.name + "  [" + abbr + "]";
+            std::string lbl  = t.name + "  [" + t.abbr();+ "]";
             if (contains_ci(t.name))
                 sec.push_back({LibEntry::Kind::PROJ_LIB, lbl, i});
         }
@@ -339,9 +338,7 @@ void ProjectPropertiesDialog::onDraw(Renderer& renderer, int startx, int starty)
                 int idx = tgt_scroll_ + row;
                 if (idx >= (int)tgt_list_.size()) break;
                 const auto& tgt = tgt_list_[idx];
-                std::string abbr = (tgt.type == "executable")    ? "exe" :
-                                   (tgt.type == "static_library") ? "lib" : "dll";
-                std::string text = "[" + abbr + "] " + tgt.name;
+                std::string text = "[" + tgt.abbr() + "] " + tgt.name;
                 if ((int)text.size() < box_w_inner)
                     text += std::string(box_w_inner - (int)text.size(), ' ');
                 else
@@ -415,8 +412,7 @@ void ProjectPropertiesDialog::onDraw(Renderer& renderer, int startx, int starty)
             }
         }
     }
-
-    cfg_combo_.drawDropdown(renderer, startx, starty);
+    // The combo's open dropdown is drawn by DialogBase, last of all.
 }
 
 //  onKey 
@@ -462,7 +458,7 @@ HandleResult ProjectPropertiesDialog::onKey(wint_t ch)
                 if (tgt_cursor_ >= tgt_scroll_ + TGT_VISIBLE)
                     tgt_scroll_ = tgt_cursor_ - TGT_VISIBLE + 1;
             }
-        } else if (ch == KEY_IC) {  // Ins — add new target
+        } else if (ch == KEY_IC) {  // Ins - add new target
             ProjectTarget t;
             if (TargetDialog::show(renderer_, t, true)) {
                 tgt_list_.push_back(std::move(t));
@@ -472,10 +468,10 @@ HandleResult ProjectPropertiesDialog::onKey(wint_t ch)
                 rebuildLibEntries();
             }
         } else if ((ch == KEY_ENTER || ch == 10 || ch == 13) &&
-                   tgt_cursor_ >= 0 && tgt_cursor_ < count) {  // Enter — edit target
+                   tgt_cursor_ >= 0 && tgt_cursor_ < count) {  // Enter - edit target
             TargetDialog::show(renderer_, tgt_list_[tgt_cursor_], false);
             rebuildLibEntries();
-        } else if (ch == KEY_DC) {  // Del — remove target
+        } else if (ch == KEY_DC) {  // Del - remove target
             if (tgt_cursor_ >= 0 && tgt_cursor_ < count) {
                 tgt_list_.erase(tgt_list_.begin() + tgt_cursor_);
                 if (tgt_cursor_ >= (int)tgt_list_.size() && tgt_cursor_ > 0)
@@ -568,7 +564,40 @@ bool ProjectPropertiesDialog::onPlaceCursor(Renderer& renderer, int sx, int sy)
     return false;
 }
 
-//  onTab 
+//  onMouseClick
+// Select the Build-system radio, or drive the C++ Standard combo, under the
+// pointer (both drawn manually, so DialogBase's generic handling misses them).
+
+bool ProjectPropertiesDialog::onMouseClick(const MEVENT& ev, int startx, int starty)
+{
+    const int inner_x = startx + 2;
+
+    // C++ Standard combo first: its open dropdown floats over nearby rows.
+    if (cfg_combo_.handleMouse(startx, starty, ev.x, ev.y)) {
+        setGroupFocus(GRP_CFG);
+        groups()[GRP_CFG].inner_focus = 1;
+        return true;
+    }
+
+    // Build-system radios (radio row)
+    const int fy = starty + CFG_BOX_Y + 1;
+    if (ev.y == fy) {
+        const char* bs_labels[] = {"CMake", "Make", "Meson"};
+        int rx = inner_x + 16;
+        for (int i = 0; i < 3; ++i) {
+            if (ev.x >= rx && ev.x < rx + 4 + (int)strlen(bs_labels[i])) {
+                bs_cursor_ = i;
+                setGroupFocus(GRP_CFG);
+                groups()[GRP_CFG].inner_focus = 0;
+                return true;
+            }
+            rx += 4 + (int)strlen(bs_labels[i]) + 1;
+        }
+    }
+    return false;
+}
+
+//  onTab
 
 bool ProjectPropertiesDialog::onTab(bool /*forward*/)
 {

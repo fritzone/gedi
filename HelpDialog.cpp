@@ -85,7 +85,7 @@ void HelpDialog::show(Renderer& renderer, HelpProvider& helpProvider, std::vecto
                         break;
                     }
 
-                    // Text overflows — find last space within the available width
+                    // Text overflows - find last space within the available width
                     size_t break_pos = remaining_text.rfind(' ', space_left - 1);
 
                     if (break_pos != std::string::npos && break_pos > 0) {
@@ -96,14 +96,14 @@ void HelpDialog::show(Renderer& renderer, HelpProvider& helpProvider, std::vecto
                         current_x = 0;
                         remaining_text = remaining_text.substr(break_pos + 1);
                     } else if (current_x > 0) {
-                        // No word boundary but not at line start — wrap and retry
+                        // No word boundary but not at line start - wrap and retry
                         render_lines.push_back(current_render_line);
                         current_render_line.segments.clear();
                         current_x = 0;
                         if (!remaining_text.empty() && remaining_text[0] == ' ')
                             remaining_text = remaining_text.substr(1);
                     } else {
-                        // At line start with no space — hard-break the long token
+                        // At line start with no space - hard-break the long token
                         std::string part = remaining_text.substr(0, space_left);
                         current_render_line.segments.push_back({part, segment.style, segment.target_id});
                         current_x += (int)part.length();
@@ -282,7 +282,7 @@ void HelpDialog::show(Renderer& renderer, HelpProvider& helpProvider, std::vecto
                 bool scroll_dn   = (ev.bstate & BUTTON5_PRESSED) != 0;
                 int  mx = ev.x, my = ev.y;
 
-                // Scroll wheel — 3 lines per tick
+                // Scroll wheel - 3 lines per tick
                 if (scroll_up || scroll_dn) {
                     for (int i = 0; i < 3; ++i) {
                         if (scroll_up && scroll_offset > 0) --scroll_offset;

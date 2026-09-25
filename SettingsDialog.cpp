@@ -131,7 +131,7 @@ void SettingsDialog::onInit()
         addGroup(std::move(g));
     }
 
-    //  Group 2: Display tab — checkbox section
+    //  Group 2: Display tab - checkbox section
     {
         FocusGroup g;
         g.title = " Display "; g.hotkey = '\0';
@@ -145,7 +145,7 @@ void SettingsDialog::onInit()
         addGroup(std::move(g));
     }
 
-    //  Group 3: Display tab — Syntax Highlighting radiolist
+    //  Group 3: Display tab - Syntax Highlighting radiolist
     {
         static std::vector<std::string> hl_items{ "None", "Basic", "Advanced (Clang)" };
         FocusGroup g;
@@ -169,7 +169,7 @@ void SettingsDialog::onInit()
     }
 
 #ifdef GEDI_GUI
-    //  Group 5: Display tab — editor font radiolist (right side)
+    //  Group 5: Display tab - editor font radiolist (right side)
     {
         FocusGroup g;
         g.title = " Display "; g.hotkey = '\0';
@@ -180,7 +180,7 @@ void SettingsDialog::onInit()
         addGroup(std::move(g));
     }
 
-    //  Group 6: Editing tab — Text Rendering radiolist
+    //  Group 6: Editing tab - Text Rendering radiolist
     {
         static std::vector<std::string> render_items{ "Pixelated", "Smooth", "Sharp" };
         FocusGroup g;

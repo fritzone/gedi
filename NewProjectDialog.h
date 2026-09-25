@@ -32,48 +32,68 @@ private:
     void onDraw(Renderer& renderer, int startx, int starty) override;
     HandleResult onKey(wint_t ch) override;
     bool onPlaceCursor(Renderer& renderer, int sx, int sy) override;
+    bool onMouseClick(const MEVENT& ev, int startx, int starty) override;
     bool onTab(bool forward) override;
 
-    //  Layout constants 
-    // Sized to fit an 80x25 screen (was 100 wide). H=18 already fits at 25 rows.
-    static constexpr int W            = 78;
-    static constexpr int H            = 18;
+    //  Layout constants
+    // Tabbed layout (mirrors the Editor Settings dialog): a tab bar at the top,
+    // then a shared content area. Tab 0 "Project" holds Name / Location /
+    // Configuration; tab 1 "Libraries" holds the (now full-width) library list.
+    // Sized to fit an 80x25 screen.
+    static constexpr int W            = 72;
+    static constexpr int H            = 22;
+    static constexpr int INNER_W      = W - 4;      // = 68
+    static constexpr int TAB_Y        = 2;          // tab-label row
+    static constexpr int CONTENT_Y    = 4;          // first content row (below tab separator)
+    static constexpr int CONTENT_H    = H - 7;      // = 15 content rows (4..18)
+    static constexpr int BTN_Y        = H - 3;      // = 19
+
     static constexpr int FIELD_X      = 9;    // left edge of fields (from inner_x = startx+2)
-    static constexpr int FIELD_W_NAME = 34;   // name field width
-    static constexpr int FIELD_W_PATH = 24;   // path field width
-    static constexpr int NAME_BOX_Y   = 1;
+    static constexpr int FIELD_W_NAME = 48;   // name field width
+    static constexpr int FIELD_W_PATH = 38;   // path field width
+
+    // Tab 0 - Project: box positions inside the content area.
+    static constexpr int NAME_BOX_Y   = CONTENT_Y;        // = 4
     static constexpr int NAME_BOX_H   = 3;
-    static constexpr int PATH_BOX_Y   = 5;
-    static constexpr int PATH_BOX_H   = 5;   // Browse row + shadow row + checkbox row
-    static constexpr int CFG_BOX_Y    = 10;
-    static constexpr int CFG_BOX_H    = 5;   // two content rows: radio + C++ Standard
-    static constexpr int BTN_Y        = H - 3;  // = 15
+    static constexpr int PATH_BOX_Y   = CONTENT_Y + 4;    // = 8
+    static constexpr int PATH_BOX_H   = 5;   // path/Browse row + shadow row + checkbox row
+    static constexpr int CFG_BOX_Y    = CONTENT_Y + 9;    // = 13
+    static constexpr int CFG_BOX_H    = 5;   // radios + C++ Standard + checkboxes
+    static constexpr int GRP_W        = INNER_W;          // tab-0 boxes span the content width
 
-    // Browse button inside the Location box
-    static constexpr int BROWSE_BTN_X = 2 + FIELD_X + FIELD_W_PATH + 1; // = 36
-    static constexpr int BROWSE_BTN_Y = PATH_BOX_Y + 1;                  // = 6
+    // Browse "button" drawn inside the Location box, right of the path field.
+    static constexpr int BROWSE_BTN_X = 2 + FIELD_X + FIELD_W_PATH + 1; // = 50
+    static constexpr int BROWSE_BTN_Y = PATH_BOX_Y + 1;                 // = 9
 
-    // Library panel (right side)
-    static constexpr int LIB_BOX_W   = 26;
-    static constexpr int LIB_BOX_X   = W - 2 - LIB_BOX_W;  // = 50
-    static constexpr int LIB_BOX_Y   = 1;
-    static constexpr int LIB_BOX_H   = H - 4;  // = 14
-    static constexpr int LIB_VISIBLE  = LIB_BOX_H - 3;   // = 11 visible rows (1 row for filter)
-    static constexpr int LIB_ITEM_W   = LIB_BOX_W - 2;   // = 24 usable chars
+    // Tab 1 - Libraries: the list fills the whole content area.
+    static constexpr int LIB_BOX_X   = 2;
+    static constexpr int LIB_BOX_Y   = CONTENT_Y;        // = 4
+    static constexpr int LIB_BOX_W   = INNER_W;          // = 68
+    static constexpr int LIB_BOX_H   = CONTENT_H;        // = 15
+    static constexpr int LIB_VISIBLE  = LIB_BOX_H - 3;   // = 12 visible rows (1 row for filter)
+    static constexpr int LIB_ITEM_W   = LIB_BOX_W - 2;   // = 66 usable chars
 
-    // Button positions (centered under left half)
-    static constexpr int BTN_CREATE_X = 14;
-    static constexpr int BTN_CANCEL_X = BTN_CREATE_X + 11 + 1;  // = 26
+    // Button positions (centered)
+    static constexpr int BTN_CREATE_X = 25;
+    static constexpr int BTN_CANCEL_X = BTN_CREATE_X + 11 + 1;  // = 37
 
-    static constexpr int GRP_NAME = 0;
-    static constexpr int GRP_PATH = 1;
-    static constexpr int GRP_CFG  = 2;
-    static constexpr int GRP_LIB  = 3;
+    // Focus groups: tab bar first, then the tab-0 content groups, then tab-1.
+    static constexpr int GRP_TABS = 0;
+    static constexpr int GRP_NAME = 1;
+    static constexpr int GRP_PATH = 2;
+    static constexpr int GRP_CFG  = 3;
+    static constexpr int GRP_LIB  = 4;
+
+    // GRP_PATH inner-focus items
+    static constexpr int PATH_INNER_FIELD  = 0;
+    static constexpr int PATH_INNER_BROWSE = 1;
+    static constexpr int PATH_INNER_CHECK  = 2;
 
     // Button indices within the ButtonRow
     static constexpr int BTN_IDX_CREATE = 0;
     static constexpr int BTN_IDX_CANCEL = 1;
-    static constexpr int BTN_IDX_BROWSE = 2;
+
+    int activeTab();   // convenience accessor for the tab control's active tab
 
     //  Application references 
     Renderer&        renderer_;
@@ -101,6 +121,7 @@ private:
     int                      m_lib_scroll = 0;
 
     void rebuildFilter();
+    void openBrowse();
 };
 
 #endif // NEWPROJECTDIALOG_H

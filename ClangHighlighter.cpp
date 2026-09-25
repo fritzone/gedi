@@ -76,7 +76,7 @@ static int colorForToken(CXTokenKind tokKind, CXCursor cursor, const std::string
     }
     if (tokKind == CXToken_Punctuation) return 0;
 
-    // CXToken_Identifier — resolve semantic meaning
+    // CXToken_Identifier - resolve semantic meaning
     CXCursorKind ck = clang_getCursorKind(cursor);
 
     // For reference / call expressions, follow to the declaration
@@ -121,7 +121,7 @@ void ClangHighlighter::requestHighlight(EditorBuffer& buffer, BuildSystem* build
 
     std::string abs_path = get_full_path(buffer.filename);
     // Snapshot the compiler settings (cheap copy of a plain struct).
-    // getClangArguments() — which may run a Python subprocess — is deliberately
+    // getClangArguments() - which may run a Python subprocess - is deliberately
     // deferred to the background thread so the main thread returns immediately.
     CompilerSettings settings_snap = buffer.compiler_settings;
 
@@ -265,7 +265,7 @@ void ClangHighlighter::requestHighlight(EditorBuffer& buffer, BuildSystem* build
                     CXSourceLocation loc = clang_getDiagnosticLocation(d);
                     unsigned line = 0, col = 0, off = 0;
                     clang_getSpellingLocation(loc, nullptr, &line, &col, &off);
-                    // "Is this in the file being edited?" — ask clang directly rather
+                    // "Is this in the file being edited?" - ask clang directly rather
                     // than matching file handles/paths, which is unreliable when the
                     // buffer path and clang's stored path differ.
                     if (line > 0 && clang_Location_isFromMainFile(loc)) {

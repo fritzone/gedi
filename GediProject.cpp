@@ -239,7 +239,6 @@ bool GediProject::load(const std::string& path, GediProject& out)
     if (proj.targets.empty() && !proj.sources.empty()) {
         ProjectTarget t;
         t.name    = proj.name;
-        t.type    = "executable";
         t.sources = proj.sources;
         proj.targets.push_back(std::move(t));
     }
@@ -254,4 +253,252 @@ std::string GediProject::buildFile() const
     else if (build_system == "make")  return "Makefile";
     else if (build_system == "meson") return "meson.build";
     else return "unknown";
+}
+
+std::string GediProject::buildFilePath() const
+{
+   return (std::filesystem::path(root) / buildFile() ).string();
+}
+
+bool GediProject::removeFileFromBuildSystem(const std::string &file_to_remove, const std::string& rel)
+{
+    if (build_system == "cmake") {
+        return removeFileFromCMakeLists(file_to_remove, rel);
+    } else if (build_system == "make") {
+        return removeFileFromMakefile(file_to_remove, rel);
+    } else if (build_system == "meson") {
+        return removeFileFromMesonBuild(file_to_remove, rel);
+    }
+    return false;
+}
+
+bool GediProject::removeFileFromCMakeLists(const std::string &cmake_path, const std::string &rel_path)
+{
+    std::ifstream fin(cmake_path);
+    if (!fin) return false;
+    std::string content((std::istreambuf_iterator<char>(fin)), {});
+    fin.close();
+
+    size_t pos = content.find(rel_path);
+    if (pos == std::string::npos) return false;
+
+    // If the filename occupies its own line (only whitespace before it), remove the whole line
+    size_t line_start = content.rfind('\n', pos);
+    line_start = (line_start == std::string::npos) ? 0 : line_start + 1;
+    size_t line_end = content.find('\n', pos);
+    if (line_end == std::string::npos) line_end = content.size();
+
+    std::string before_on_line = content.substr(line_start, pos - line_start);
+    bool only_ws = before_on_line.find_first_not_of(" \t") == std::string::npos;
+    std::string after_on_line = content.substr(pos + rel_path.size(),
+                                               line_end - pos - rel_path.size());
+    bool rest_ws = after_on_line.find_first_not_of(" \t") == std::string::npos;
+
+    if (only_ws && rest_ws) {
+        content.erase(line_start, line_end - line_start + (line_end < content.size() ? 1 : 0));
+    } else {
+        // Inline: remove " rel_path" (prefer eating the leading space)
+        size_t sp = content.rfind(' ', pos);
+        if (sp != std::string::npos && sp == pos - 1)
+            content.erase(sp, rel_path.size() + 1);
+        else
+            content.erase(pos, rel_path.size());
+    }
+
+    std::ofstream fout(cmake_path);
+    if (!fout) return false;
+    fout << content;
+    return true;
+}
+
+bool GediProject::removeFileFromMakefile(const std::string &project_root, const std::string &rel_path)
+{
+    std::string makefile_path = (std::filesystem::path(project_root) / "Makefile").string();
+    std::ifstream fin(makefile_path);
+    if (!fin) return false;
+    std::string content((std::istreambuf_iterator<char>(fin)), {});
+    fin.close();
+
+    // Try " rel_path" (with leading space, most common)
+    size_t pos = content.find(" " + rel_path);
+    if (pos != std::string::npos) {
+        content.erase(pos, rel_path.size() + 1);
+    } else {
+        pos = content.find(rel_path);
+        if (pos == std::string::npos) return false;
+        content.erase(pos, rel_path.size());
+    }
+
+    std::ofstream fout(makefile_path);
+    if (!fout) return false;
+    fout << content;
+    return true;
+}
+
+bool GediProject::removeFileFromMesonBuild(const std::string &project_root, const std::string &rel_path)
+{
+    std::string meson_path = (std::filesystem::path(project_root) / "meson.build").string();
+    std::ifstream fin(meson_path);
+    if (!fin) return false;
+    std::string content((std::istreambuf_iterator<char>(fin)), {});
+    fin.close();
+
+    // Try ", 'rel_path'" (not the first entry)
+    std::string p1 = ", '" + rel_path + "'";
+    size_t pos = content.find(p1);
+    if (pos != std::string::npos) {
+        content.erase(pos, p1.size());
+    } else {
+        // Try "'rel_path', " (first entry)
+        std::string p2 = "'" + rel_path + "', ";
+        pos = content.find(p2);
+        if (pos != std::string::npos) {
+            content.erase(pos, p2.size());
+        } else {
+            // Last entry alone
+            std::string p3 = "'" + rel_path + "'";
+            pos = content.find(p3);
+            if (pos == std::string::npos) return false;
+            content.erase(pos, p3.size());
+        }
+    }
+
+    std::ofstream fout(meson_path);
+    if (!fout) return false;
+    fout << content;
+    return true;
+}
+
+bool GediProject::addFileToMakefile(const std::string &project_root, const std::string &rel_path)
+{
+    std::string makefile_path = (std::filesystem::path(project_root) / "Makefile").string();
+    std::ifstream fin(makefile_path);
+    if (!fin) return false;
+    std::string content((std::istreambuf_iterator<char>(fin)), {});
+    fin.close();
+
+    // Locate the SRCS line
+    size_t pos = content.find("SRCS");
+    if (pos == std::string::npos) return false;
+    size_t line_end = content.find('\n', pos);
+    if (line_end == std::string::npos) line_end = content.size();
+
+    // Already listed?
+    if (content.substr(pos, line_end - pos).find(rel_path) != std::string::npos)
+        return true;
+
+    content.insert(line_end, " " + rel_path);
+
+    std::ofstream fout(makefile_path);
+    if (!fout) return false;
+    fout << content;
+    return true;
+}
+
+bool GediProject::addFileToMesonBuild(const std::string &project_root, const std::string &rel_path)
+{
+    std::string meson_path = (std::filesystem::path(project_root) / "meson.build").string();
+    std::ifstream fin(meson_path);
+    if (!fin) return false;
+    std::string content((std::istreambuf_iterator<char>(fin)), {});
+    fin.close();
+
+    // Find the opening [ of the sources list
+    size_t pos = content.find("sources:");
+    if (pos == std::string::npos) return false;
+    size_t open_br  = content.find('[', pos);
+    size_t close_br = content.find(']', open_br);
+    if (open_br == std::string::npos || close_br == std::string::npos) return false;
+
+    std::string sources_section = content.substr(open_br, close_br - open_br);
+    if (sources_section.find("'" + rel_path + "'") != std::string::npos ||
+        sources_section.find("\"" + rel_path + "\"") != std::string::npos)
+        return true;   // already listed
+
+    content.insert(close_br, ", '" + rel_path + "'");
+
+    std::ofstream fout(meson_path);
+    if (!fout) return false;
+    fout << content;
+    return true;
+}
+
+bool GediProject::addFileToCMakeLists(const std::string &cmake_path, const std::string &new_file)
+{
+    namespace fs = std::filesystem;
+
+    std::ifstream fin(cmake_path);
+    if (!fin) return false;
+    std::string content((std::istreambuf_iterator<char>(fin)), {});
+    fin.close();
+
+    // Compute relative path from cmake dir to the new file
+    std::string rel;
+    try { rel = fs::relative(new_file, fs::path(cmake_path).parent_path()).string(); }
+    catch (...) { rel = new_file; }
+
+    for (const char* kw : {"add_executable(", "add_library("}) {
+        size_t pos = content.find(kw);
+        if (pos == std::string::npos) continue;
+
+        // Find the matching closing ')' using depth tracking
+        int depth = 0;
+        size_t close = std::string::npos;
+        for (size_t i = pos; i < content.size(); ++i) {
+            if      (content[i] == '(') ++depth;
+            else if (content[i] == ')') { if (--depth == 0) { close = i; break; } }
+        }
+        if (close == std::string::npos) continue;
+
+        // Already listed between the call and its closing ')'?
+        if (content.find(rel, pos) < close) return true;
+
+        // Decide how to insert: if ')' is on its own line, indent to match; else inline.
+        size_t line_start = content.rfind('\n', close);
+        std::string ins;
+        if (line_start != std::string::npos) {
+            std::string before = content.substr(line_start + 1, close - line_start - 1);
+            bool only_ws = before.find_first_not_of(" \t") == std::string::npos;
+            if (only_ws && !before.empty()) {
+                ins = before + rel + "\n";   // same indent as ')'
+            } else {
+                ins = " " + rel;             // all on one line → just append
+            }
+        } else {
+            ins = " " + rel;
+        }
+        content.insert(close, ins);
+
+        std::ofstream fout(cmake_path);
+        if (!fout) return false;
+        fout << content;
+        return true;
+    }
+    return false;
+}
+
+ProjectTarget::ProjectTarget(const std::string &name, const std::vector<std::string> &sources) : name(name), sources(sources)
+{
+}
+
+ProjectTarget::ProjectTarget(const std::string &name) : ProjectTarget(name, {}) {}
+
+bool ProjectTarget::isExecutable() const
+{
+    return type == TYPE_KEYS[0];
+}
+
+bool ProjectTarget::isSharedLibrary() const
+{
+    return type == TYPE_KEYS[2];
+}
+
+bool ProjectTarget::isStaticLibrary() const
+{
+    return type == TYPE_KEYS[1];
+}
+
+std::string ProjectTarget::abbr() const
+{
+    return (type == "executable") ? "exe" : (type == "static_library") ? "lib" : "dll";
 }

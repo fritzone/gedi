@@ -13,7 +13,7 @@ static std::vector<std::string> wrapParagraph(const std::string& para, int max_w
         int cut = max_w;
         // Walk back to find a space to break on
         while (cut > 0 && remaining[cut] != ' ') --cut;
-        if (cut == 0) cut = max_w;   // no space found — hard cut
+        if (cut == 0) cut = max_w;   // no space found - hard cut
         out.push_back(remaining.substr(0, cut));
         remaining = remaining.substr(remaining[cut] == ' ' ? cut + 1 : cut);
     }
@@ -122,7 +122,7 @@ void MessageDialog::show(Renderer& renderer, const std::string& message) {
         }
         if (ch == KEY_MOUSE) {
             // Always drain the mouse-event queue, even for events we don't act
-            // on — otherwise unconsumed events pile up while this dialog is
+            // on - otherwise unconsumed events pile up while this dialog is
             // open and desync every click the editor receives after it closes.
             MEVENT ev;
             if (getmouse(&ev) != OK) continue;

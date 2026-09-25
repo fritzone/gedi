@@ -4,6 +4,7 @@
 #include "FileBrowser.h"
 #include "PickTargetDialog.h"
 #include "utils.h"
+#include "TemplateEngine.h"
 
 #include "curses_compat.h"
 #include <clang-c/Index.h>
@@ -21,6 +22,7 @@
 #include <chrono>
 #include <iostream>
 #include "platform_compat.h"
+#include "utils.h"
 #ifdef _WIN32
 // Not <conio.h>: its deprecated getch()/ungetch() aliases collide with the
 // identically-named functions curses_compat.h declares for the GUI build.
@@ -36,10 +38,11 @@ extern "C" int _getch(void);
 #include <cstdio>
 #include <regex>
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <sstream>
 // The pseudo-terminal live-run path is POSIX-only. The graphical build also
-// runs on Windows (where GEDI_GUI is defined too), so guard these out there —
+// runs on Windows (where GEDI_GUI is defined too), so guard these out there -
 // Windows uses run_process_captured() from platform_compat instead.
 #if defined(GEDI_GUI) && !defined(_WIN32)
 #include <pty.h>          // forkpty
@@ -49,40 +52,6 @@ extern "C" int _getch(void);
 #include <csignal>
 #include <cerrno>
 #endif
-
-
-//  UTF-8 byte helpers 
-// The buffer stores text as UTF-8. cursor_col / char indices are byte offsets, so
-// editing and rendering must step over whole multi-byte sequences (otherwise
-// accented characters — ø, ä, é … — get split into bytes and corrupted).
-static inline int utf8Len(unsigned char lead) {
-    if (lead < 0x80)          return 1;
-    if ((lead & 0xE0) == 0xC0) return 2;
-    if ((lead & 0xF0) == 0xE0) return 3;
-    if ((lead & 0xF8) == 0xF0) return 4;
-    return 1;   // invalid lead byte → treat as a single byte
-}
-static inline bool utf8IsCont(unsigned char b) { return (b & 0xC0) == 0x80; }
-
-// Build a flat vector of line strings from a buffer's linked list.
-static std::vector<std::string> snapshot_lines(const EditorBuffer& buf) {
-    std::vector<std::string> snap;
-    snap.reserve(buf.total_lines);
-    for (const Line* p = buf.document_head; p; p = p->next)
-        snap.push_back(p->text);
-    return snap;
-}
-
-// True when the current buffer content matches the on-disk saved snapshot.
-static bool matches_saved(const EditorBuffer& buf) {
-    if (buf.total_lines != static_cast<int>(buf.saved_lines.size())) return false;
-    const Line* p = buf.document_head;
-    for (const auto& s : buf.saved_lines) {
-        if (!p || p->text != s) return false;
-        p = p->next;
-    }
-    return true;
-}
 
 // --- Key Code Defines ---
 #define KEY_CTRL_F 6
@@ -458,7 +427,7 @@ void TextEditor::read_file(EditorBuffer& buffer) {
     }
     buffer.current_line = buffer.first_visible_line = buffer.document_head;
     buffer.current_line_num = 1; buffer.cursor_col = 1; buffer.cursor_screen_y = m_text_area_start_y; buffer.changed = false;
-    buffer.saved_lines = snapshot_lines(buffer);
+    buffer.saved_lines = buffer.snapshot_lines();
     
     // Check if it's a system file
     if (buffer.filename.rfind("/usr/include", 0) == 0 || buffer.filename.rfind("/usr/local/include", 0) == 0) {
@@ -479,7 +448,7 @@ void TextEditor::write_file(EditorBuffer& buffer) {
     f.close();
     buffer.changed = false;
     buffer.is_new_file = false;
-    buffer.saved_lines = snapshot_lines(buffer);
+    buffer.saved_lines = buffer.snapshot_lines();
 
     // Invalidate the compile command cache for this file, as its content has changed.
     m_buildSystem->invalidateCache(buffer.filename);
@@ -541,8 +510,8 @@ void TextEditor::insertSemanticLine(EditorBuffer& buffer, int split_line_0based)
 
     // New layout (size n+1):
     //   [0 .. split-1]      = old (unchanged)
-    //   [split]             = {} (split line — content changed)
-    //   [split+1]           = {} (new line — no colors yet)
+    //   [split]             = {} (split line - content changed)
+    //   [split+1]           = {} (new line - no colors yet)
     //   [split+2 .. n]      = old[split+1 .. n-1] (shifted down, content unchanged)
     auto new_ptr = std::make_shared<std::vector<std::vector<uint8_t>>>(n + 1);
     auto& nv = *new_ptr;
@@ -575,7 +544,7 @@ void TextEditor::removeSemanticLines(EditorBuffer& buffer, int merge_target_0bas
 
     // New layout (size n - lines_removed):
     //   [0 .. merge_target-1]            = old (unchanged)
-    //   [merge_target]                   = {} (merge target — content changed)
+    //   [merge_target]                   = {} (merge target - content changed)
     //   [merge_target+1 .. new_size-1]   = old[merge_target+lines_removed+1 .. n-1] (shifted up)
     auto new_ptr = std::make_shared<std::vector<std::vector<uint8_t>>>(new_size);
     auto& nv = *new_ptr;
@@ -707,7 +676,7 @@ void TextEditor::drawTextArea() {
     }
 
     // Grab a lock-free snapshot of the semantic color table (may be nullptr).
-    // Use it even on a dirty buffer — stale-by-a-few-chars colours are far better
+    // Use it even on a dirty buffer - stale-by-a-few-chars colours are far better
     // than no semantic highlighting. A debounced re-request will refresh them.
     std::shared_ptr<std::vector<std::vector<uint8_t>>> sem_snap;
     std::shared_ptr<std::vector<Diagnostic>>           diag_snap;
@@ -899,7 +868,7 @@ void TextEditor::drawTextArea() {
                     } else {
                         // Draw the whole UTF-8 sequence as a single cell so accented
                         // characters render as one glyph (not byte-by-byte garbage).
-                        // Editor text uses the selected font (A_FONT_EDITOR) — but never
+                        // Editor text uses the selected font (A_FONT_EDITOR) - but never
                         // box-drawing/block code points, which stay on the default
                         // font so frames look the same regardless of the chosen font.
                         int altf = A_FONT_EDITOR;
@@ -1691,7 +1660,7 @@ void TextEditor::main_loop() {
 #ifdef GEDI_GUI
             // Graphical build: render the captured output full-window and handle
             // its own input (scroll / select / copy / toggle). The terminal-based
-            // ShowOutputScreen() can't run here — endwin() would destroy the window.
+            // ShowOutputScreen() can't run here - endwin() would destroy the window.
             drawRunOutputPane();
             m_renderer->refresh();
             wint_t oc = m_renderer->getChar();
@@ -1866,13 +1835,13 @@ void TextEditor::main_loop() {
                 while ((next_ch = m_renderer->getChar()) != (wint_t)ERR) { input_buffer.push_back(next_ch); }
                 timeout(-1); nodelay(stdscr, TRUE);
                 // A burst of characters is a paste (or an escape sequence), not
-                // interactive typing — don't pop autocomplete for every '.' in it.
+                // interactive typing - don't pop autocomplete for every '.' in it.
                 m_batch_input = input_buffer.size() > 1;
                 for (wint_t key_press : input_buffer) { process_key(key_press); }
                 m_batch_input = false;
             }
         } else {
-            // Idle — check whether a debounced semantic re-highlight is due.
+            // Idle - check whether a debounced semantic re-highlight is due.
             if (currentBufferIdx() != -1) {
                 auto& buf = currentBuffer();
                 if (m_config.syntax_highlight >= 2 &&
@@ -2287,7 +2256,7 @@ void TextEditor::RestoreStateFromRecord(EditorBuffer& buffer, const UndoRecord& 
         buffer.document_head = new Line();
     }
     buffer.total_lines = record.lines.size();
-    clearSemanticColors(buffer);  // document rebuilt — old line/col indices are invalid
+    clearSemanticColors(buffer);  // document rebuilt - old line/col indices are invalid
 
     buffer.current_line_num = record.cursor_line_num;
     buffer.cursor_col = record.cursor_col;
@@ -2310,7 +2279,7 @@ void TextEditor::RestoreStateFromRecord(EditorBuffer& buffer, const UndoRecord& 
 
     update_cursor_and_scroll();
 
-    buffer.changed = !matches_saved(buffer);
+    buffer.changed = !buffer.matches_saved();
 }
 
 void TextEditor::GoToDefinition() {
@@ -2351,7 +2320,7 @@ void TextEditor::GoToDefinition() {
             for (const auto& d : it->second) candidates.push_back(d);
         }
 
-        // Deduplicate by (file, line) — the same header definition can appear
+        // Deduplicate by (file, line) - the same header definition can appear
         // in the index of multiple open buffers.
         std::sort(candidates.begin(), candidates.end(),
                   [](const SymbolDef& a, const SymbolDef& b) {
@@ -2365,7 +2334,7 @@ void TextEditor::GoToDefinition() {
             candidates.end());
 
         if (candidates.size() == 1) {
-            // Unambiguous — navigate instantly, no re-parse needed.
+            // Unambiguous - navigate instantly, no re-parse needed.
             const SymbolDef& hit = candidates.front();
             std::string full_path = get_full_path(hit.file);
             bool found_buf = false;
@@ -2549,7 +2518,7 @@ void TextEditor::GoToDefinition() {
         return;
     }
 
-    // 5. Act on the result — all back on the main thread
+    // 5. Act on the result - all back on the main thread
     if (!result->error_msg.empty()) {
         msgwin(result->error_msg);
         return;
@@ -2808,7 +2777,7 @@ void TextEditor::GoToDiagnostic(bool forward) {
     handleResize();   // scroll the target into view + repaint
 }
 
-//  Debugger integration (dbg::IDebugger — GDB today, MSVC later)
+//  Debugger integration (dbg::IDebugger - GDB today, MSVC later)
 
 bool TextEditor::lineHasBreakpoint(const std::string& absfile, int line) const {
     auto it = m_breakpoints.find(absfile);
@@ -2870,8 +2839,16 @@ bool TextEditor::startDebugSession() {
 }
 
 void TextEditor::DebugStartOrContinue() {
-    if (m_debugging && m_debugger) { m_debugger->run(); return; }   // continue
-    if (startDebugSession()) m_debugger->run();                     // start
+    if (m_debugging && m_debugger) { m_debugger->run(); return; }   // resume a stopped session
+
+    // Turbo "Run/Go": with no breakpoints set, just run the program normally
+    // (visible/interactive in the output pane). Only start the debugger when there
+    // are breakpoints to stop at — otherwise gdb would run it invisibly to exit.
+    bool any_bp = false;
+    for (const auto& kv : m_breakpoints) if (!kv.second.empty()) { any_bp = true; break; }
+    if (!any_bp) { compileAndRun(); return; }
+
+    if (startDebugSession()) m_debugger->run();                     // start debugging
 }
 
 void TextEditor::DebugRunToCursor() {
@@ -3204,8 +3181,6 @@ void TextEditor::handleDebugPanelKey(wint_t ch) {
     }
 }
 
-// Word character for C++ navigation: identifiers are [A-Za-z0-9_]
-static bool isWordChar(unsigned char c) { return std::isalnum(c) || c == '_'; }
 
 void TextEditor::GoToNextWord() {
     if (currentBufferIdx() == -1) return;
@@ -3531,7 +3506,7 @@ void TextEditor::process_key(wint_t ch) {
     // NOTE: we deliberately do NOT treat bytes 128–255 as 8-bit "Meta+key" here.
     // That legacy encoding collides with Latin-1/UTF-8 code points: e.g. ø=0xF8
     // would be read as Alt+x (exit), æ=0xE6 as Alt+f, å=0xE5 as Alt+e, ö=0xF6 as
-    // Alt+v — breaking Norwegian/German/etc. keyboards. Alt is delivered via the
+    // Alt+v - breaking Norwegian/German/etc. keyboards. Alt is delivered via the
     // ESC-prefix path above (and push_alt() in the SDL build), so these code points
     // fall through to normal character insertion below.
 
@@ -3729,7 +3704,7 @@ void TextEditor::process_key(wint_t ch) {
                 int cc = currentBuffer().cursor_col;   // 1-based, just past the char
                 char before = (cc >= 3) ? tl[cc - 3] : '\0';   // char before the operator
                 bool trig = !m_batch_input && (
-                    // "." after an identifier or expression end — but not a number (3.14)
+                    // "." after an identifier or expression end - but not a number (3.14)
                     (ch == '.' && (std::isalpha((unsigned char)before) || before == '_' ||
                                    before == ')' || before == ']')) ||
                     (ch == '>' && before == '-') ||
@@ -3744,59 +3719,7 @@ void TextEditor::process_key(wint_t ch) {
 
 //  Project helpers 
 
-static bool addFileToCMakeLists(const std::string& cmake_path, const std::string& new_file)
-{
-    namespace fs = std::filesystem;
 
-    std::ifstream fin(cmake_path);
-    if (!fin) return false;
-    std::string content((std::istreambuf_iterator<char>(fin)), {});
-    fin.close();
-
-    // Compute relative path from cmake dir to the new file
-    std::string rel;
-    try { rel = fs::relative(new_file, fs::path(cmake_path).parent_path()).string(); }
-    catch (...) { rel = new_file; }
-
-    for (const char* kw : {"add_executable(", "add_library("}) {
-        size_t pos = content.find(kw);
-        if (pos == std::string::npos) continue;
-
-        // Find the matching closing ')' using depth tracking
-        int depth = 0;
-        size_t close = std::string::npos;
-        for (size_t i = pos; i < content.size(); ++i) {
-            if      (content[i] == '(') ++depth;
-            else if (content[i] == ')') { if (--depth == 0) { close = i; break; } }
-        }
-        if (close == std::string::npos) continue;
-
-        // Already listed between the call and its closing ')'?
-        if (content.find(rel, pos) < close) return true;
-
-        // Decide how to insert: if ')' is on its own line, indent to match; else inline.
-        size_t line_start = content.rfind('\n', close);
-        std::string ins;
-        if (line_start != std::string::npos) {
-            std::string before = content.substr(line_start + 1, close - line_start - 1);
-            bool only_ws = before.find_first_not_of(" \t") == std::string::npos;
-            if (only_ws && !before.empty()) {
-                ins = before + rel + "\n";   // same indent as ')'
-            } else {
-                ins = " " + rel;             // all on one line → just append
-            }
-        } else {
-            ins = " " + rel;
-        }
-        content.insert(close, ins);
-
-        std::ofstream fout(cmake_path);
-        if (!fout) return false;
-        fout << content;
-        return true;
-    }
-    return false;
-}
 
 void TextEditor::CreateNewProject()
 {
@@ -3858,123 +3781,27 @@ void TextEditor::CreateNewProject()
               << "}\n";
         }
 
-        //  Build file 
-        std::filesystem::path buildFile;
-
-        if (temp.build_system == 0) {
-            //  CMakeLists.txt 
-            buildFile = root / "CMakeLists.txt";
-
-            std::string std_num = temp.cpp_standard;
-            if (std_num.substr(0, 3) == "c++") std_num = std_num.substr(3);
-
-            std::ofstream cm(buildFile);
-            cm << "cmake_minimum_required(VERSION 3.10)\n"
-               << "project(" << temp.name << ")\n\n"
-               << "set(CMAKE_CXX_STANDARD " << std_num << ")\n"
-               << "set(CMAKE_CXX_STANDARD_REQUIRED ON)\n\n";
-
-            if (!temp.selected_libraries.empty()) {
-                cm << "find_package(PkgConfig REQUIRED)\n";
-                for (const auto& lib : temp.selected_libraries)
-                    cm << lib.cmake_find_package_hint << "\n";
-                cm << "\n";
-            }
-
-            cm << "add_executable(" << temp.name << " main.cpp)\n";
-
-            for (const auto& lib : temp.selected_libraries) {
-                if (!lib.include_directories.empty()) {
-                    cm << "target_include_directories(" << temp.name << " PRIVATE";
-                    for (const auto& d : lib.include_directories) cm << " " << d;
-                    cm << ")\n";
-                }
-                if (!lib.link_libraries.empty()) {
-                    cm << "target_link_libraries(" << temp.name << " PRIVATE";
-                    for (const auto& l : lib.link_libraries) cm << " " << l;
-                    cm << ")\n";
-                }
-                if (!lib.compiler_flags.empty()) {
-                    cm << "target_compile_options(" << temp.name << " PRIVATE";
-                    for (const auto& f : lib.compiler_flags) cm << " " << f;
-                    cm << ")\n";
-                }
-                if (!lib.link_directories.empty()) {
-                    cm << "target_link_directories(" << temp.name << " PRIVATE";
-                    for (const auto& d : lib.link_directories) cm << " " << d;
-                    cm << ")\n";
-                }
-            }
-
-        } else if (temp.build_system == 1) {
-            //  Makefile 
-            buildFile = root / "Makefile";
-
-            std::string cxxflags = "-std=" + temp.cpp_standard + " -Wall -Wextra";
-            std::string ldflags;
-            for (const auto& lib : temp.selected_libraries) {
-                for (const auto& d : lib.include_directories)
-                    cxxflags += " -I" + d;
-                for (const auto& f : lib.compiler_flags)
-                    cxxflags += " " + f;
-                for (const auto& d : lib.link_directories)
-                    ldflags += " -L" + d;
-                for (const auto& l : lib.link_libraries)
-                    ldflags += " -l" + l;
-            }
-
-            std::ofstream mk(buildFile);
-            mk << "CXX      = g++\n"
-               << "CXXFLAGS = " << cxxflags << "\n"
-               << "LDFLAGS  =" << ldflags << "\n"
-               << "TARGET   = " << temp.name << "\n"
-               << "SRCS     = main.cpp\n"
-               << "OBJS     = $(SRCS:.cpp=.o)\n\n"
-               << "all: $(TARGET)\n\n"
-               << "$(TARGET): $(OBJS)\n"
-               << "\t$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)\n\n"
-               << "%.o: %.cpp\n"
-               << "\t$(CXX) $(CXXFLAGS) -c $<\n\n"
-               << "clean:\n"
-               << "\trm -f $(OBJS) $(TARGET)\n\n"
-               << ".PHONY: all clean\n";
-
-        } else {
-            //  meson.build 
-            buildFile = root / "meson.build";
-
-            std::ofstream mb(buildFile);
-            mb << "project('" << temp.name << "', 'cpp',\n"
-               << "  default_options: ['cpp_std=" << temp.cpp_standard << "'])\n\n";
-
-            if (!temp.selected_libraries.empty()) {
-                for (const auto& lib : temp.selected_libraries) {
-                    std::string dep_name = lib.short_name;
-                    for (auto& c : dep_name) c = (char)std::tolower((unsigned char)c);
-                    mb << "dep_" << dep_name << " = dependency('" << dep_name << "')\n";
-                }
-                mb << "\n";
-            }
-
-            mb << "executable('" << temp.name << "',\n"
-               << "  sources: ['main.cpp']";
-
-            if (!temp.selected_libraries.empty()) {
-                mb << ",\n  dependencies: [";
-                bool first = true;
-                for (const auto& lib : temp.selected_libraries) {
-                    std::string dep_name = lib.short_name;
-                    for (auto& c : dep_name) c = (char)std::tolower((unsigned char)c);
-                    if (!first) mb << ", ";
-                    mb << "dep_" << dep_name;
-                    first = false;
-                }
-                mb << "]";
-            }
-            mb << ")\n";
+        //  Project model - the single source of truth the build file is
+        //  rendered from (see regenerateBuildFile / the templates/ engine).
+        const char* bs_names[] = {"cmake", "make", "meson"};
+        m_project              = GediProject{};
+        m_project.name         = temp.name;
+        m_project.root         = root.string();
+        m_project.build_system = bs_names[temp.build_system];
+        m_project.cpp_standard = temp.cpp_standard;
+        m_project.compiler_settings.cpp_standard = temp.cpp_standard;
+        if (temp.create_main) {
+            ProjectTarget t{temp.name, {"main.cpp"} };
+            m_project.targets.push_back(t);
         }
+        m_project.libraries    = temp.selected_libraries;
+        m_project.save();
 
-        //  Git init (optional) 
+        //  Build file - rendered from the shared cmake/make/meson templates.
+        regenerateBuildFile();
+        std::filesystem::path buildFile = root / m_project.buildFile();
+
+        //  Git init (optional)
         if (temp.init_git) {
 #ifdef _WIN32
             std::string cmd = "git -C \"" + root.string() + "\" init -q 2>NUL";
@@ -3995,25 +3822,7 @@ void TextEditor::CreateNewProject()
             }
         }
 
-        //  .gproj project file 
-        const char* bs_names[] = {"cmake", "make", "meson"};
-        m_project              = GediProject{};
-        m_project.name         = temp.name;
-        m_project.root         = root.string();
-        m_project.build_system = bs_names[temp.build_system];
-        m_project.cpp_standard = temp.cpp_standard;
-        m_project.compiler_settings.cpp_standard = temp.cpp_standard;
-        if (temp.create_main) {
-            ProjectTarget t;
-            t.name    = temp.name;
-            t.type    = "executable";
-            t.sources = {"main.cpp"};
-            m_project.targets.push_back(t);
-        }
-        m_project.libraries    = temp.selected_libraries;
-        m_project.save();
-
-        //  Open source + build file in the editor 
+        //  Open source + build file in the editor
         if (temp.create_main) {
             m_bufferManager->addBuffer();
             currentBuffer().filename = srcFile.string();
@@ -4083,156 +3892,7 @@ void TextEditor::OpenProject()
     handleResize();
 }
 
-static bool addFileToMakefile(const std::string& project_root, const std::string& rel_path)
-{
-    std::string makefile_path = (std::filesystem::path(project_root) / "Makefile").string();
-    std::ifstream fin(makefile_path);
-    if (!fin) return false;
-    std::string content((std::istreambuf_iterator<char>(fin)), {});
-    fin.close();
 
-    // Locate the SRCS line
-    size_t pos = content.find("SRCS");
-    if (pos == std::string::npos) return false;
-    size_t line_end = content.find('\n', pos);
-    if (line_end == std::string::npos) line_end = content.size();
-
-    // Already listed?
-    if (content.substr(pos, line_end - pos).find(rel_path) != std::string::npos)
-        return true;
-
-    content.insert(line_end, " " + rel_path);
-
-    std::ofstream fout(makefile_path);
-    if (!fout) return false;
-    fout << content;
-    return true;
-}
-
-static bool addFileToMesonBuild(const std::string& project_root, const std::string& rel_path)
-{
-    std::string meson_path = (std::filesystem::path(project_root) / "meson.build").string();
-    std::ifstream fin(meson_path);
-    if (!fin) return false;
-    std::string content((std::istreambuf_iterator<char>(fin)), {});
-    fin.close();
-
-    // Find the opening [ of the sources list
-    size_t pos = content.find("sources:");
-    if (pos == std::string::npos) return false;
-    size_t open_br  = content.find('[', pos);
-    size_t close_br = content.find(']', open_br);
-    if (open_br == std::string::npos || close_br == std::string::npos) return false;
-
-    std::string sources_section = content.substr(open_br, close_br - open_br);
-    if (sources_section.find("'" + rel_path + "'") != std::string::npos ||
-        sources_section.find("\"" + rel_path + "\"") != std::string::npos)
-        return true;   // already listed
-
-    content.insert(close_br, ", '" + rel_path + "'");
-
-    std::ofstream fout(meson_path);
-    if (!fout) return false;
-    fout << content;
-    return true;
-}
-
-static bool removeFileFromCMakeLists(const std::string& cmake_path, const std::string& rel_path)
-{
-    std::ifstream fin(cmake_path);
-    if (!fin) return false;
-    std::string content((std::istreambuf_iterator<char>(fin)), {});
-    fin.close();
-
-    size_t pos = content.find(rel_path);
-    if (pos == std::string::npos) return false;
-
-    // If the filename occupies its own line (only whitespace before it), remove the whole line
-    size_t line_start = content.rfind('\n', pos);
-    line_start = (line_start == std::string::npos) ? 0 : line_start + 1;
-    size_t line_end = content.find('\n', pos);
-    if (line_end == std::string::npos) line_end = content.size();
-
-    std::string before_on_line = content.substr(line_start, pos - line_start);
-    bool only_ws = before_on_line.find_first_not_of(" \t") == std::string::npos;
-    std::string after_on_line = content.substr(pos + rel_path.size(),
-                                                line_end - pos - rel_path.size());
-    bool rest_ws = after_on_line.find_first_not_of(" \t") == std::string::npos;
-
-    if (only_ws && rest_ws) {
-        content.erase(line_start, line_end - line_start + (line_end < content.size() ? 1 : 0));
-    } else {
-        // Inline: remove " rel_path" (prefer eating the leading space)
-        size_t sp = content.rfind(' ', pos);
-        if (sp != std::string::npos && sp == pos - 1)
-            content.erase(sp, rel_path.size() + 1);
-        else
-            content.erase(pos, rel_path.size());
-    }
-
-    std::ofstream fout(cmake_path);
-    if (!fout) return false;
-    fout << content;
-    return true;
-}
-
-static bool removeFileFromMakefile(const std::string& project_root, const std::string& rel_path)
-{
-    std::string makefile_path = (std::filesystem::path(project_root) / "Makefile").string();
-    std::ifstream fin(makefile_path);
-    if (!fin) return false;
-    std::string content((std::istreambuf_iterator<char>(fin)), {});
-    fin.close();
-
-    // Try " rel_path" (with leading space, most common)
-    size_t pos = content.find(" " + rel_path);
-    if (pos != std::string::npos) {
-        content.erase(pos, rel_path.size() + 1);
-    } else {
-        pos = content.find(rel_path);
-        if (pos == std::string::npos) return false;
-        content.erase(pos, rel_path.size());
-    }
-
-    std::ofstream fout(makefile_path);
-    if (!fout) return false;
-    fout << content;
-    return true;
-}
-
-static bool removeFileFromMesonBuild(const std::string& project_root, const std::string& rel_path)
-{
-    std::string meson_path = (std::filesystem::path(project_root) / "meson.build").string();
-    std::ifstream fin(meson_path);
-    if (!fin) return false;
-    std::string content((std::istreambuf_iterator<char>(fin)), {});
-    fin.close();
-
-    // Try ", 'rel_path'" (not the first entry)
-    std::string p1 = ", '" + rel_path + "'";
-    size_t pos = content.find(p1);
-    if (pos != std::string::npos) {
-        content.erase(pos, p1.size());
-    } else {
-        // Try "'rel_path', " (first entry)
-        std::string p2 = "'" + rel_path + "', ";
-        pos = content.find(p2);
-        if (pos != std::string::npos) {
-            content.erase(pos, p2.size());
-        } else {
-            // Last entry alone
-            std::string p3 = "'" + rel_path + "'";
-            pos = content.find(p3);
-            if (pos == std::string::npos) return false;
-            content.erase(pos, p3.size());
-        }
-    }
-
-    std::ofstream fout(meson_path);
-    if (!fout) return false;
-    fout << content;
-    return true;
-}
 
 void TextEditor::CloseProject()
 {
@@ -4307,14 +3967,12 @@ void TextEditor::AddFileToProject()
 
         // Ensure there is at least one target
         if (m_project.targets.empty()) {
-            ProjectTarget t;
-            t.name = m_project.name;
-            t.type = "executable";
+            ProjectTarget t {m_project.name};
             m_project.targets.push_back(t);
         }
 
         // Pick target (auto-select if only one)
-        int target_idx = pickTarget("add file");
+        int target_idx = PickTargetDialog::show(*m_renderer, m_project.targets, "Select Target", -1);
         if (target_idx < 0) return;
 
         // Add to project target sources if not already tracked
@@ -4329,18 +3987,16 @@ void TextEditor::AddFileToProject()
         // Update the build file
         bool build_ok = false;
         std::string build_file;
-        std::string target_name = m_project.targets[target_idx].name;
         if (m_project.build_system == "cmake") {
             build_file = (fs::path(m_project.root) / "CMakeLists.txt").string();
-            build_ok   = addFileToCMakeLists(build_file, info.filepath);
+            build_ok   = m_project.addFileToCMakeLists(build_file, info.filepath);
         } else if (m_project.build_system == "make") {
             build_file = (fs::path(m_project.root) / "Makefile").string();
-            build_ok   = addFileToMakefile(m_project.root, rel);
+            build_ok   = m_project.addFileToMakefile(m_project.root, rel);
         } else if (m_project.build_system == "meson") {
             build_file = (fs::path(m_project.root) / "meson.build").string();
-            build_ok   = addFileToMesonBuild(m_project.root, rel);
+            build_ok   = m_project.addFileToMesonBuild(m_project.root, rel);
         }
-        (void)target_name;
 
         // Reload the build file in the editor if it is currently open
         if (!build_file.empty()) {
@@ -4449,7 +4105,7 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
         if (item_disabled.size() > 6) item_disabled[6] = true; // disable "Recent Files" when empty
     }
 
-    if (menu_id == 6) { // Project — disable certain items when no project is loaded
+    if (menu_id == 6) { // Project - disable certain items when no project is loaded
         bool no_project = m_project.name.empty();
         if (no_project && item_disabled.size() > 2) item_disabled[2] = true; // Project Properties
         if (no_project && item_disabled.size() > 3) item_disabled[3] = true; // Close Project
@@ -4542,7 +4198,7 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
         case 27: {
             // Peek for an Alt+key follow-up (same 50 ms window the main loop uses).
             // If found, push both characters back via unget_wch so the main loop
-            // processes the Alt+key action in its own clean top-level context —
+            // processes the Alt+key action in its own clean top-level context -
             // avoids calling TryExit / dialogs from deep inside the menu call stack.
             timeout(50);
             wint_t next_ch = m_renderer->getChar();
@@ -5333,7 +4989,7 @@ void TextEditor::finishRunProgram() {
     if (!m_run_temp_exe.empty()) { std::remove(m_run_temp_exe.c_str()); m_run_temp_exe.clear(); }
     if (m_run_output_lines.empty() || !m_run_output_lines.back().empty())
         m_run_output_lines.emplace_back();
-    m_run_output_lines.emplace_back("[program finished — F5/Esc: editor]");
+    m_run_output_lines.emplace_back("[program finished - F5/Esc: editor]");
     m_run_cur_col = 0;
 }
 
@@ -5492,7 +5148,7 @@ void TextEditor::compileAndRun() {
     refresh();
 
     // 4. On failure, show the scrollable build log so the user can see what
-    //    went wrong. On success, skip straight to running the program — no
+    //    went wrong. On success, skip straight to running the program - no
     //    intermediate dialogs to dismiss first.
     if (!result.success) {
         showScrollableOutputDialog(result.output_lines);
@@ -5515,7 +5171,7 @@ void TextEditor::compileAndRun() {
 #if defined(GEDI_GUI) && !defined(_WIN32)
     // Graphical (SDL) build on POSIX: run the program on a pseudo-terminal so
     // it can read stdin and stream output live into the in-window pane.
-    // Asynchronous — it does NOT block the GUI or touch the launching console,
+    // Asynchronous - it does NOT block the GUI or touch the launching console,
     // and endwin() (which would tear down SDL) is never used.
     startRunProgram(exe, result.temp_exe);
     m_output_screen_visible = true;
@@ -5527,7 +5183,7 @@ void TextEditor::compileAndRun() {
     std::string temp_output_file = "tedit_run_output.tmp";
 #ifdef _WIN32
     // Runs the program directly (no shell), so no console window ever flashes
-    // on screen — the program's output only ever appears in gedi's own output
+    // on screen - the program's output only ever appears in gedi's own output
     // screen below.
     run_process_captured(exe, temp_output_file);
 #else
@@ -6038,16 +5694,27 @@ void TextEditor::AboutBox() {
     AboutDialog::show(*m_renderer, iconPath);
 }
 
+#include <filesystem>
+#include <vector>
+
 void TextEditor::loadHelpFile() {
-    std::string helpPath = "help.hlp";
-    if (!std::filesystem::exists(helpPath) && !m_exe_dir.empty())
-        helpPath = (m_exe_dir / "help.hlp").string();
-    if (!std::filesystem::exists(helpPath) && !m_exe_dir.empty())
-        helpPath = (m_exe_dir.parent_path() / "share/gedi/help.hlp").string();
-    if (!std::filesystem::exists(helpPath))
-        helpPath = "/usr/share/gedi/help.hlp";
-    
-    m_helpProvider->loadHelpFile(helpPath);
+    static constexpr std::string_view kHelpFileName = "help.hlp";
+    static constexpr std::string_view kAppName      = "gedi";
+    std::vector<std::filesystem::path> candidatePaths;
+    candidatePaths.reserve(4);
+    candidatePaths.emplace_back(kHelpFileName);
+    if (!m_exe_dir.empty()) {
+        candidatePaths.emplace_back(m_exe_dir / kHelpFileName);
+        candidatePaths.emplace_back(m_exe_dir.parent_path() / "share" / kAppName / kHelpFileName);
+    }
+    candidatePaths.emplace_back(std::filesystem::path("/usr/share") / kAppName / kHelpFileName);
+    for (const auto& path : candidatePaths) {
+        if (std::filesystem::exists(path)) {
+            m_helpProvider->loadHelpFile(path.string());
+            return;
+        }
+    }
+    m_helpProvider->loadHelpFile(candidatePaths.back().string());
 }
 
 void TextEditor::showHelpDialog() {
@@ -6088,21 +5755,10 @@ std::vector<PanelEntry> TextEditor::buildPanelEntries() const
     // One TARGET_HEADER + SOURCE_FILE entries per target
     for (int ti = 0; ti < (int)m_project.targets.size(); ++ti) {
         const auto& tgt = m_project.targets[ti];
-        PanelEntry hdr;
-        hdr.kind       = PanelEntry::TARGET_HEADER;
-        hdr.target_idx = ti;
-        std::string abbr = (tgt.type == "executable")     ? "exe" :
-                           (tgt.type == "static_library")  ? "lib" : "dll";
-        hdr.display = tgt.name + " [" + abbr + "]";
-        entries.push_back(std::move(hdr));
+        entries.push_back( PanelEntry{PanelEntry::TARGET_HEADER, tgt.name + " [" + tgt.abbr() + "]", ti} );
 
         for (int si = 0; si < (int)tgt.sources.size(); ++si) {
-            PanelEntry src;
-            src.kind       = PanelEntry::SOURCE_FILE;
-            src.target_idx = ti;
-            src.source_idx = si;
-            src.display    = tgt.sources[si];
-            entries.push_back(std::move(src));
+            entries.push_back( PanelEntry{PanelEntry::SOURCE_FILE, tgt.sources[si], ti, si} );
         }
     }
     return entries;
@@ -6274,18 +5930,8 @@ void TextEditor::handleProjectPanelKey(wint_t ch) {
                              "The file will not be deleted from disk.") != 1)
                 break;
 
-            // Update the build file on disk (best effort)
-            std::string build_file_path;
-            if (m_project.build_system == "cmake") {
-                build_file_path = (std::filesystem::path(m_project.root) / "CMakeLists.txt").string();
-                removeFileFromCMakeLists(build_file_path, rel);
-            } else if (m_project.build_system == "make") {
-                build_file_path = (std::filesystem::path(m_project.root) / "Makefile").string();
-                removeFileFromMakefile(m_project.root, rel);
-            } else if (m_project.build_system == "meson") {
-                build_file_path = (std::filesystem::path(m_project.root) / "meson.build").string();
-                removeFileFromMesonBuild(m_project.root, rel);
-            }
+            std::string build_file_path = m_project.buildFilePath();
+            m_project.removeFileFromBuildSystem(build_file_path, rel);
 
             // Reload the build file in any open buffer
             if (!build_file_path.empty()) {
@@ -6317,7 +5963,8 @@ void TextEditor::handleProjectPanelKey(wint_t ch) {
         if (from_ti >= (int)m_project.targets.size()) break;
         if (from_si >= (int)m_project.targets[from_ti].sources.size()) break;
 
-        int to_ti = pickTarget("move to", from_ti);
+        int to_ti = PickTargetDialog::show(*m_renderer, m_project.targets, "Select Target", from_ti);
+
         if (to_ti < 0) break;
 
         const std::string rel = m_project.targets[from_ti].sources[from_si];
@@ -6362,7 +6009,7 @@ void TextEditor::openProjectPanelFile(int index) {
     if (index < 0 || index >= (int)entries.size()) return;
     const PanelEntry& e = entries[index];
 
-    // TARGET_HEADER entries don't open a file — just ignore
+    // TARGET_HEADER entries don't open a file - just ignore
     if (e.kind == PanelEntry::TARGET_HEADER) return;
 
     std::string rel;
@@ -6397,10 +6044,25 @@ void TextEditor::openProjectPanelFile(int index) {
     handleResize();
 }
 
-int TextEditor::pickTarget(const std::string& /*action_label*/, int exclude_idx)
+std::string TextEditor::locateTemplate(const std::string& name) const
 {
-    return PickTargetDialog::show(*m_renderer, m_project.targets,
-                                  "Select Target", exclude_idx);
+    namespace fs = std::filesystem;
+    // Search order mirrors config.json/colors.json resolution: alongside the
+    // executable, its parent dirs, the system share dir, then the cwd.
+    std::vector<fs::path> candidates;
+    if (!m_exe_dir.empty()) {
+        candidates.push_back(m_exe_dir / "templates" / name);
+        candidates.push_back(m_exe_dir.parent_path() / "templates" / name);
+        candidates.push_back(m_exe_dir.parent_path() / "share/gedi/templates" / name);
+    }
+    candidates.push_back(fs::path("/usr/share/gedi/templates") / name);
+    candidates.push_back(fs::path("/usr/local/share/gedi/templates") / name);
+    candidates.push_back(fs::path("templates") / name);
+
+    std::error_code ec;
+    for (const auto& c : candidates)
+        if (fs::exists(c, ec)) return c.string();
+    return "";
 }
 
 void TextEditor::regenerateBuildFile()
@@ -6408,114 +6070,107 @@ void TextEditor::regenerateBuildFile()
     namespace fs = std::filesystem;
     if (m_project.root.empty()) return;
 
-    const std::string& root = m_project.root;
-    std::string std_num = m_project.compiler_settings.cpp_standard;
-    if (std_num.rfind("c++", 0) == 0) std_num = std_num.substr(3);
+    using json = nlohmann::json;
 
-    if (m_project.build_system == "cmake") {
-        std::ofstream f(root + "/CMakeLists.txt");
-        if (!f) return;
-        f << "cmake_minimum_required(VERSION 3.10)\n"
-          << "project(" << m_project.name << ")\n\n"
-          << "set(CMAKE_CXX_STANDARD " << std_num << ")\n"
-          << "set(CMAKE_CXX_STANDARD_REQUIRED ON)\n\n";
+    // ── Build the data model the templates render against ────────────────────
+    std::string cpp_standard = m_project.compiler_settings.cpp_standard; // e.g. "c++17"
+    std::string std_num = cpp_standard;
+    if (std_num.rfind("c++", 0) == 0) std_num = std_num.substr(3);       // "17"
 
-        if (!m_project.libraries.empty()) {
-            f << "find_package(PkgConfig REQUIRED)\n";
-            for (const auto& lib : m_project.libraries)
-                f << lib.cmake_find_package_hint << "\n";
-            f << "\n";
-        }
+    json data;
+    data["project"] = {
+        {"name",         m_project.name},
+        {"cpp_standard", cpp_standard},
+        {"std_num",      std_num}
+    };
+    data["has_libraries"] = !m_project.libraries.empty();
 
-        for (const auto& tgt : m_project.targets) {
-            if (tgt.type == "executable") {
-                f << "add_executable(" << tgt.name;
-            } else if (tgt.type == "static_library") {
-                f << "add_library(" << tgt.name << " STATIC";
-            } else {
-                f << "add_library(" << tgt.name << " SHARED";
-            }
-            for (const auto& src : tgt.sources)
-                f << "\n    " << src;
-            f << ")\n";
-
-            // Include dirs and compiler flags per library
-            for (const auto& lib : m_project.libraries) {
-                if (!lib.include_directories.empty()) {
-                    f << "target_include_directories(" << tgt.name << " PRIVATE";
-                    for (const auto& d : lib.include_directories) f << " " << d;
-                    f << ")\n";
-                }
-                if (!lib.compiler_flags.empty()) {
-                    f << "target_compile_options(" << tgt.name << " PRIVATE";
-                    for (const auto& fl : lib.compiler_flags) f << " " << fl;
-                    f << ")\n";
-                }
-                if (!lib.link_directories.empty()) {
-                    f << "target_link_directories(" << tgt.name << " PRIVATE";
-                    for (const auto& d : lib.link_directories) f << " " << d;
-                    f << ")\n";
-                }
-            }
-            // Consolidated link line: project-target deps first, then system libs
-            {
-                std::vector<std::string> all_links(tgt.link_targets);
-                for (const auto& lib : m_project.libraries)
-                    for (const auto& l : lib.link_libraries)
-                        all_links.push_back(l);
-                if (!all_links.empty()) {
-                    f << "target_link_libraries(" << tgt.name << " PRIVATE";
-                    for (const auto& l : all_links) f << " " << l;
-                    f << ")\n";
-                }
-            }
-            f << "\n";
-        }
-
-    } else if (m_project.build_system == "make") {
-        std::ofstream f(root + "/Makefile");
-        if (!f) return;
-        f << "CXX = g++\n"
-          << "CXXFLAGS = -std=" << m_project.compiler_settings.cpp_standard << " -Wall -Wextra\n\n"
-          << "all:";
-        for (const auto& t : m_project.targets) f << " " << t.name;
-        f << "\n\n";
-        for (const auto& t : m_project.targets) {
-            std::string objs;
-            for (const auto& s : t.sources) {
-                auto stem = fs::path(s).stem().string();
-                objs += stem + ".o ";
-            }
-            f << t.name << ": " << objs << "\n"
-              << "\t$(CXX) $(CXXFLAGS) -o $@ $^\n\n";
-            for (const auto& s : t.sources) {
-                auto stem = fs::path(s).stem().string();
-                f << stem << ".o: " << s << "\n"
-                  << "\t$(CXX) $(CXXFLAGS) -c $<\n\n";
-            }
-        }
-        f << "clean:\n\trm -f *.o";
-        for (const auto& t : m_project.targets) f << " " << t.name;
-        f << "\n.PHONY: all clean\n";
-
-    } else if (m_project.build_system == "meson") {
-        std::ofstream f(root + "/meson.build");
-        if (!f) return;
-        f << "project('" << m_project.name << "', 'cpp',\n"
-          << "  default_options: ['cpp_std=" << m_project.compiler_settings.cpp_standard << "'])\n\n";
-        for (const auto& t : m_project.targets) {
-            std::string fn = (t.type == "executable")    ? "executable" :
-                             (t.type == "static_library") ? "static_library" : "shared_library";
-            f << fn << "('" << t.name << "',\n  sources: [";
-            bool first = true;
-            for (const auto& s : t.sources) {
-                if (!first) f << ", ";
-                f << "'" << s << "'";
-                first = false;
-            }
-            f << "])\n\n";
-        }
+    // Libraries (with a lowercased dependency name for Meson / pkg-config).
+    json libs = json::array();
+    for (const auto& lib : m_project.libraries) {
+        std::string dep = lib.short_name;
+        std::transform(dep.begin(), dep.end(), dep.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        libs.push_back({
+            {"short_name",              lib.short_name},
+            {"dep_name",                dep},
+            {"cmake_find_package_hint", lib.cmake_find_package_hint},
+            {"include_directories",     lib.include_directories},
+            {"link_libraries",          lib.link_libraries},
+            {"link_directories",        lib.link_directories},
+            {"compiler_flags",          lib.compiler_flags}
+        });
     }
+    data["libraries"] = libs;
+
+    // Targets, with the derived fields the templates expect.
+    json targets = json::array();
+    for (const auto& tgt : m_project.targets) {
+        std::string cmake_open = tgt.isExecutable() ? "add_executable" : "add_library";
+        std::string cmake_kind = tgt.isExecutable() ? ""
+                                : tgt.isStaticLibrary() ? " STATIC" : " SHARED";
+        std::string meson_func = tgt.isExecutable() ? "executable"
+                                : tgt.isStaticLibrary() ? "static_library" : "shared_library";
+
+        json objects  = json::array();
+        json compiles = json::array();
+        for (const auto& s : tgt.sources) {
+            std::string obj = fs::path(s).stem().string() + ".o";
+            objects.push_back(obj);
+            compiles.push_back({{"obj", obj}, {"src", s}});
+        }
+
+        // Consolidated link line: project-target deps first, then system libs.
+        std::vector<std::string> all_links(tgt.link_targets);
+        for (const auto& lib : m_project.libraries)
+            for (const auto& l : lib.link_libraries)
+                all_links.push_back(l);
+
+        targets.push_back({
+            {"name",         tgt.name},
+            {"type",         tgt.type},
+            {"cmake_open",   cmake_open},
+            {"cmake_kind",   cmake_kind},
+            {"meson_func",   meson_func},
+            {"sources",      tgt.sources},
+            {"objects",      objects},
+            {"compiles",     compiles},
+            {"link_targets", tgt.link_targets},
+            {"all_links",    all_links}
+        });
+    }
+    data["targets"] = targets;
+
+    // Makefile flag lines: standard + warnings + include dirs / lib flags.
+    {
+        std::string cxxflags = "-std=" + cpp_standard + " -Wall -Wextra";
+        std::string ldflags;
+        for (const auto& lib : m_project.libraries) {
+            for (const auto& d : lib.include_directories) cxxflags += " -I" + d;
+            for (const auto& f : lib.compiler_flags)      cxxflags += " " + f;
+            for (const auto& d : lib.link_directories)    ldflags  += " -L" + d;
+            for (const auto& l : lib.link_libraries)      ldflags  += " -l" + l;
+        }
+        data["make"] = {{"cxxflags", cxxflags}, {"ldflags", ldflags}};
+    }
+
+    // ── Pick the template, render, and write the build file ──────────────────
+    std::string tmpl_name;
+    if      (m_project.build_system == "cmake") tmpl_name = "cmake.tmpl";
+    else if (m_project.build_system == "make")  tmpl_name = "make.tmpl";
+    else if (m_project.build_system == "meson") tmpl_name = "meson.tmpl";
+    else return;
+
+    std::string tmpl_path = locateTemplate(tmpl_name);
+    if (tmpl_path.empty()) return;
+
+    bool ok = false;
+    std::string rendered = tmpl::renderFile(tmpl_path, data, ok);
+    if (!ok) return;
+
+    std::ofstream f(m_project.root + "/" + m_project.buildFile());
+    if (!f) return;
+    f << rendered;
 }
 
 void TextEditor::ProjectProperties()
@@ -6544,9 +6199,7 @@ void TextEditor::ProjectProperties()
         regenerateBuildFile();
 
         // Reload build file buffer if open
-        std::string build_file_name =
-            m_project.build_system == "cmake" ? "CMakeLists.txt" :
-            m_project.build_system == "make"  ? "Makefile" : "meson.build";
+        std::string build_file_name = m_project.buildFile();
         std::string bfp = (std::filesystem::path(m_project.root) / build_file_name).string();
         for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
             if (m_bufferManager->getBuffer(i).filename == bfp) {

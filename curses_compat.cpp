@@ -148,6 +148,9 @@ static unsigned char uni_to_cp437(wchar_t c) {
         case 0x2192: return 0x1A; // right arrow
         case 0x2191: return 0x18; // up arrow
         case 0x2193: return 0x19; // down arrow
+        case 0x2194: return 0x1D; // left-right arrow
+        case 0x25B2: return 0x1E; // up-pointing triangle
+        case 0x25BC: return 0x1F; // down-pointing triangle (combo dropdown marker)
         case 0x2026: return 0xFA; // ellipsis -> dot
         case 0x1FB98: return 0xB1;// hatched block (whitespace tab marker)
     }
@@ -500,13 +503,13 @@ static int color_dist2(SDL_Color a, SDL_Color b) {
 
 int gui_show_image_overlay(const char* path, int cell_x, int cell_y, int cell_w, int cell_h,
                            int body_pair, int accent_pair) {
-    // body_pair < 0 means "no tint" — show the image with its own colours.
+    // body_pair < 0 means "no tint" - show the image with its own colours.
     bool tint = body_pair >= 0;
     SDL_Color body   = tint ? pair_fg_color(body_pair)   : SDL_Color{ 255, 255, 255, 255 };
     SDL_Color accent = tint ? pair_fg_color(accent_pair) : SDL_Color{ 255, 255, 255, 255 };
     if (tint) {
         // The body colour is the dialog's own text colour, so it always reads on
-        // the dialog background. The accent (title colour) does not always — some
+        // the dialog background. The accent (title colour) does not always - some
         // schemes would put e.g. white "++" on a white dialog. If the accent is too
         // close to the dialog background to stand out, fall back to the body colour.
         SDL_Color dlg_bg = pair_bg_color(body_pair);
@@ -831,7 +834,7 @@ int wget_wch(WINDOW*, wint_t* wch) {
         // pointer motion and the cursor keeps blinking while a modal menu/dialog is
         // blocked on a key.  Plain pointer motion enqueues no input event, so
         // without re-presenting here the screen would freeze until the next
-        // keystroke or click — which is why the red mouse cursor appeared stuck
+        // keystroke or click - which is why the red mouse cursor appeared stuck
         // whenever a menu was open.
         int waited = 0;
         while (g_input.empty()) {

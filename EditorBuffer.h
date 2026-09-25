@@ -81,6 +81,12 @@ public:
 
     EditorBuffer& operator=(EditorBuffer&& other) noexcept;
 
+    // Build a flat vector of line strings from a buffer's linked list.
+    std::vector<std::string> snapshot_lines() const;
+
+    // True when the current buffer content matches the on-disk saved snapshot.
+    bool matches_saved() const;
+
 public:
     Line *document_head = nullptr;
     int total_lines = 1;

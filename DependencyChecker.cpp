@@ -131,7 +131,7 @@ static void printInstallInstructions(const std::vector<std::string>& missing)
     fprintf(stderr, "%s", msg.c_str());
 
 #ifdef _WIN32
-    // gedi-gui has no console window, so stderr is otherwise invisible —
+    // gedi-gui has no console window, so stderr is otherwise invisible -
     // make sure the user actually sees why the app didn't start.
     MessageBoxA(nullptr, msg.c_str(), "gedi - missing dependencies", MB_OK | MB_ICONERROR);
 #endif
@@ -192,7 +192,7 @@ bool DependencyChecker::check(Toolchain& out, bool ignore)
                 return true;
             // Fall through to re-probe if the file looks incomplete.
         } catch (...) {
-            // Corrupted file — re-probe.
+            // Corrupted file - re-probe.
         }
     }
 
@@ -265,7 +265,7 @@ bool DependencyChecker::check(Toolchain& out, bool ignore)
         return false;
     }
 
-    // All good — persist to ~/.config/gedi/toolchain.json.
+    // All good - persist to ~/.config/gedi/toolchain.json.
     try {
         std::filesystem::create_directories(std::filesystem::path(path).parent_path());
         json j;

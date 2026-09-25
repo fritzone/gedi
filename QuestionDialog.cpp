@@ -51,14 +51,14 @@ int QuestionDialog::ask(Renderer&          renderer,
 
 void QuestionDialog::onInit()
 {
-    // This is a button-only dialog — the ButtonRow is the sole Tab stop.
+    // This is a button-only dialog - the ButtonRow is the sole Tab stop.
     // focus_count=1 means Tab/Shift-Tab cycle within the row (Yes↔No),
     // handled by the special case in DialogBase::dispatchKey.
     setFocusCount(1);
     setFocus(0);
     setButtonRowFocusIndex(0);
 
-    //  Button positions — centred, computed from label widths 
+    //  Button positions - centred, computed from label widths 
     const std::string yes_label  = " &Yes ";
     const std::string no_label   = " &No ";
     const int gap        = 4;
@@ -106,7 +106,7 @@ void QuestionDialog::onDraw(Renderer& renderer, int startx, int starty)
 //
 // Reached for any printable character that no input field consumed
 // (dispatchChar fall-through). Handles Y/N direct activation so the user
-// doesn't have to press Alt — matching the original dialog's behaviour.
+// doesn't have to press Alt - matching the original dialog's behaviour.
 //
 // Routes through activateButtonByIndex() so the press animation (dip + rise)
 // runs before the on_activate lambda is called, exactly as for Enter.

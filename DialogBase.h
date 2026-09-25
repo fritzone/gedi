@@ -69,6 +69,14 @@ protected:
     // Return true to take over cursor placement (hides/shows cursor yourself).
     virtual bool onPlaceCursor(Renderer&, int /*sx*/, int /*sy*/) { return false; }
 
+    // Called on a left-button PRESS (dialog-relative origin startx/starty), after
+    // the button-row and tab-bar hit-tests but before the generic widget/box
+    // handling. Return true if the subclass consumed the click - e.g. selecting a
+    // manually-drawn radio row - which stops the default "click focuses the box"
+    // fallthrough. Framework RadioList/CheckBox widgets are handled generically;
+    // this is only for controls a subclass paints itself.
+    virtual bool onMouseClick(const MEVENT& /*ev*/, int /*startx*/, int /*starty*/) { return false; }
+
     // Optional: set a callback that redraws the background each frame before the
     // dialog is painted on top. Used by dialogs (e.g. Replace) that need the
     // editor content to stay live while the dialog is open.

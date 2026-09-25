@@ -301,7 +301,7 @@ std::vector<SyntaxToken> SyntaxHighlighter::parseLine(EditorBuffer& buffer, cons
             }
 
             // In CMake mode a keyword immediately followed by '.' is a filename
-            // component (e.g. config.cpp, module.so) — don't highlight it.
+            // component (e.g. config.cpp, module.so) - don't highlight it.
             bool is_filename_part = buffer.syntax_type == EditorBuffer::ST_CMAKE
                                     && i < line.length() && line[i] == '.';
 
@@ -319,7 +319,7 @@ std::vector<SyntaxToken> SyntaxHighlighter::parseLine(EditorBuffer& buffer, cons
         if (buffer.syntax_type == EditorBuffer::ST_CMAKE && line[i] == '$') {
             size_t start = i++;
             if (i < line.length() && line[i] == '<') {
-                // Generator expression $<...> — handle nesting
+                // Generator expression $<...> - handle nesting
                 int depth = 1; ++i;
                 while (i < line.length() && depth > 0) {
                     if (line[i] == '<') ++depth;
@@ -339,7 +339,7 @@ std::vector<SyntaxToken> SyntaxHighlighter::parseLine(EditorBuffer& buffer, cons
                     }
                     tokens.push_back({line.substr(start, i - start), Renderer::CP_SYNTAX_REGISTER_VAR});
                 } else {
-                    // Bare '$' — emit as default and reset position
+                    // Bare '$' - emit as default and reset position
                     i = start + 1;
                     tokens.push_back({"$", Renderer::CP_DEFAULT_TEXT});
                 }

@@ -35,6 +35,8 @@ DialogResult DialogBase::run(Renderer& renderer)
     WINDOW* behind = newwin(h_ + 1, w_ + 1, starty, startx);
     copywin(stdscr, behind, starty, startx, 0, 0, h_, w_, FALSE);
 
+    ComboBox::s_open = nullptr;   // no dropdown open when a dialog starts
+
     onInit();
 
     // Draw the (static) frame that lives behind the per-frame interior. For
@@ -87,7 +89,7 @@ DialogResult DialogBase::run(Renderer& renderer)
         // The backing screen has been blanked and its dimensions changed. Re-centre
         // the dialog for the new size, recapture the (now blank) backdrop so the
         // close-time restore stays consistent, and repaint the frame. Without this
-        // the frame is gone and the interior renders at a stale, off-centre spot —
+        // the frame is gone and the interior renders at a stale, off-centre spot -
         // leaving visual garbage on screen.
         if (ch == KEY_RESIZE) {
             renderer.updateDimensions();   // refresh cached size from the resized stdscr
@@ -98,7 +100,7 @@ DialogResult DialogBase::run(Renderer& renderer)
             // Relayout + repaint the backdrop at the new size before snapshotting
             // under the dialog. This recomputes the editor's text-area/scrollbar
             // bounds (only done in its resize handler), which even background_fn_
-            // dialogs need — otherwise the editor chrome redraws at the old size.
+            // dialogs need - otherwise the editor chrome redraws at the old size.
             renderer.repaintBackground();
             if (behind) delwin(behind);
             behind = newwin(h_ + 1, w_ + 1, starty, startx);
@@ -120,7 +122,7 @@ DialogResult DialogBase::run(Renderer& renderer)
             if (next == (wint_t)ERR) { result_.cancel(); break; }
 
             if (next == '[') {
-                // CSI sequence — read until the final byte (0x40–0x7E)
+                // CSI sequence - read until the final byte (0x40–0x7E)
                 std::string csi;
                 timeout(30);
                 wint_t c;
@@ -172,6 +174,10 @@ void DialogBase::drawFrame(Renderer& renderer, int sx, int sy, bool pressed)
     } else {
         drawGroups(renderer, sx, sy, show_pressed);
     }
+    // An open combo dropdown is drawn last of all, on top of every component
+    // (including group-box borders), so nothing paints over the open list.
+    if (ComboBox::s_open)
+        ComboBox::s_open->drawDropdown(renderer, sx, sy);
     placeCursor(renderer, sx, sy);
     renderer.refresh();
 }
@@ -398,7 +404,7 @@ HandleResult DialogBase::dispatchChar(wint_t ch)
         appendUtf8(inp.buffer, ch);
         return HandleResult::CONTINUE;
     }
-    // No input field consumed this character — give the subclass a chance.
+    // No input field consumed this character - give the subclass a chance.
     return onKey(ch);
 }
 
@@ -512,7 +518,7 @@ HandleResult DialogBase::dispatchGroupKey(wint_t ch)
             if (consumed) return HandleResult::CONTINUE;
         }
 
-        // Key was not consumed by any widget — give the subclass a chance.
+        // Key was not consumed by any widget - give the subclass a chance.
         return onKey(ch);
     }
 
@@ -647,6 +653,11 @@ HandleResult DialogBase::dispatchMouse(const MEVENT& ev, int startx, int starty)
         }
     }
 
+    // Subclass-painted controls (e.g. manual radio rows) get first chance at a
+    // press, before the generic widget/box hit-tests below.
+    if (is_press && onMouseClick(ev, startx, starty))
+        return HandleResult::CONTINUE;
+
     // Mode A: input field focus on click
     if (groups_.empty() && is_press) {
         for (int i = 0; i < (int)inputs_.size(); ++i) {
@@ -664,7 +675,7 @@ HandleResult DialogBase::dispatchMouse(const MEVENT& ev, int startx, int starty)
     // it. Groups can share the same box region (e.g. the Settings "Display" tab,
     // where the checkbox group and the syntax-highlight RadioList group overlap),
     // so we must hit-test every group's widgets before letting a bare box click
-    // consume the event — otherwise the first box-matching group swallows clicks
+    // consume the event - otherwise the first box-matching group swallows clicks
     // meant for a widget in an overlapping group.
     if (!groups_.empty() && is_press) {
         int box_focus = -1;   // group whose box contains the click (no widget hit)
@@ -718,7 +729,7 @@ HandleResult DialogBase::dispatchMouse(const MEVENT& ev, int startx, int starty)
                     }
                 }
             }
-            // RadioList click — select the clicked item (e.g. the theme list and
+            // RadioList click - select the clicked item (e.g. the theme list and
             // the syntax-highlighting list in the Settings dialog).
             for (auto& rl : groups_[g].radiolists) {
                 int top = rl.scrollOffset();
@@ -740,7 +751,7 @@ HandleResult DialogBase::dispatchMouse(const MEVENT& ev, int startx, int starty)
             if (box_focus < 0) box_focus = g;
         }
 
-        // No widget was hit — a bare click inside a group box just focuses it.
+        // No widget was hit - a bare click inside a group box just focuses it.
         if (box_focus >= 0) {
             group_focus_ = box_focus;
             return HandleResult::CONTINUE;

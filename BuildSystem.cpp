@@ -18,7 +18,7 @@ static std::string asciiForCodepoint(uint32_t cp) {
     switch (cp) {
         case 0x2018: case 0x2019: case 0x201B: return "'";    // ' ' ‛
         case 0x201C: case 0x201D: case 0x201F: return "\"";   // " " ‟
-        case 0x2013: case 0x2014: case 0x2015: case 0x2212: return "-";  // – — ― −
+        case 0x2013: case 0x2014: case 0x2015: case 0x2212: return "-";  // – - ― −
         case 0x2026:                            return "...";  // …
         case 0x2192:                            return "->";   // →
         case 0x2190:                            return "<-";   // ←
@@ -78,7 +78,7 @@ bool BuildSystem::isMsvcCompiler(const std::string& compilerPath) {
     return stem == "cl";
 }
 
-// First whitespace-delimited (quote-aware) token of a shell command line —
+// First whitespace-delimited (quote-aware) token of a shell command line -
 // the compiler executable.
 static std::string firstCommandToken(const std::string& cmd) {
     if (cmd.empty()) return "";
@@ -347,7 +347,7 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
         }
         if (build_dir.empty()) {
             build_dir = root + "/build";
-            result.output_lines.push_back("No CMake build directory found — configuring...");
+            result.output_lines.push_back("No CMake build directory found - configuring...");
         }
         // Always (re)configure so setting changes are picked up
         std::string cmake_args;
@@ -374,7 +374,7 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
         build_dir = root + "/builddir";
         std::string buildtype = (bt == "Release") ? "release" : "debug";
         if (!std::filesystem::exists(build_dir + "/build.ninja")) {
-            result.output_lines.push_back("No Meson build directory found — setting up...");
+            result.output_lines.push_back("No Meson build directory found - setting up...");
             if (!run_cmd("meson setup \"" + build_dir + "\" \"" + root + "\" --buildtype=" + buildtype + " 2>&1")) {
                 result.output_lines.push_back("=== Meson setup failed ===");
                 return result;
@@ -399,7 +399,7 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
     result.output_lines.push_back(result.success ? "=== Build successful ===" : "=== Build failed ===");
 
     if (result.success) {
-        // Replace the pre-build guess with the actual binary location — the
+        // Replace the pre-build guess with the actual binary location - the
         // guess doesn't account for per-config output subdirectories (CMake's
         // Visual Studio generator) or the platform's executable suffix.
         std::string found = findBuiltExecutable(build_dir, project.name);
@@ -622,7 +622,7 @@ std::string BuildSystem::get_full_compile_command(const std::string& base_comman
     if (!rest.empty()) flags += (flags.empty() ? "" : " ") + rest;
     if (flags.empty()) return base_command;
 
-    // Split right after the compiler token, not on the first bare space — a
+    // Split right after the compiler token, not on the first bare space - a
     // Windows compiler path like "C:\Program Files\...\cl.exe" is itself
     // quoted and contains spaces, so naively splitting on the first space
     // would cut the command in half mid-path.

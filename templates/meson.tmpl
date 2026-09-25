@@ -1,0 +1,15 @@
+project('{{ project.name }}', 'cpp',
+  default_options: ['cpp_std={{ project.cpp_standard }}'])
+
+{% if has_libraries %}
+{% for lib in libraries %}
+dep_{{ lib.dep_name }} = dependency('{{ lib.dep_name }}')
+{% endfor %}
+
+{% endif %}
+{% for target in targets %}
+{{ target.meson_func }}('{{ target.name }}',
+  sources: [{% for src in target.sources %}{% if loop.first %}{% else %}, {% endif %}'{{ src }}'{% endfor %}]{% if has_libraries %},
+  dependencies: [{% for lib in libraries %}{% if loop.first %}{% else %}, {% endif %}dep_{{ lib.dep_name }}{% endfor %}]{% endif %})
+
+{% endfor %}

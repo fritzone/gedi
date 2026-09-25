@@ -1,7 +1,7 @@
 {
     "color_scheme": "Borland Classic",
     "compile_mode": -1,
-    "editor_font": "Simpagar",
+    "editor_font": "Default",
     "extra_compile_flags": "",
     "indentation_width": 4,
     "keybindings": {
@@ -43,10 +43,11 @@
         true,
         true
     ],
-    "show_line_numbers": false,
-    "show_whitespace": true,
+    "show_inline_diagnostics": true,
+    "show_line_numbers": true,
+    "show_whitespace": false,
     "smart_indentation": true,
-    "text_render_mode": 0,
     "syntax_highlight": 2,
+    "text_render_mode": 2,
     "use_tab_character": true
 }

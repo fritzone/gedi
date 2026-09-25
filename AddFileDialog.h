@@ -17,6 +17,7 @@ private:
     void onDraw(Renderer& renderer, int sx, int sy) override;
     HandleResult onKey(wint_t ch) override;
     bool onPlaceCursor(Renderer& renderer, int sx, int sy) override;
+    bool onMouseClick(const MEVENT& ev, int startx, int starty) override;
     bool onTab(bool forward) override;
 
     //  Layout constants 

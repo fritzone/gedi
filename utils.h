@@ -30,4 +30,15 @@ std::string get_filename_from_path(const std::string& full_path);
 // (human-readable name, full path) pairs, with ("Default", "") first.
 std::vector<std::pair<std::string, std::string>> listEditorFonts();
 
+//  UTF-8 byte helpers
+// The buffer stores text as UTF-8. cursor_col / char indices are byte offsets, so
+// editing and rendering must step over whole multi-byte sequences (otherwise
+// accented characters - ø, ä, é … - get split into bytes and corrupted).
+int utf8Len(unsigned char lead);
+
+bool utf8IsCont(unsigned char b);
+
+// Word character for C++ navigation: identifiers are [A-Za-z0-9_]
+bool isWordChar(unsigned char c);
+
 #endif // UTILS_H

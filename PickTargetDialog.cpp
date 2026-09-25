@@ -8,9 +8,7 @@ PickTargetDialog::PickTargetDialog(const std::vector<ProjectTarget>& targets,
     for (int i = 0; i < (int)targets.size(); ++i) {
         if (i == exclude_idx) continue;
         const auto& t = targets[i];
-        std::string abbr = (t.type == "executable")     ? "exe"
-                         : (t.type == "static_library") ? "lib" : "dll";
-        items_.push_back(t.name + "  [" + abbr + "]");
+        items_.push_back(t.name + "  [" + t.abbr() + "]");
         real_idx_.push_back(i);
     }
 }

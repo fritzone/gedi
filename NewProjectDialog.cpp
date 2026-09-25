@@ -189,6 +189,7 @@ NewProjectDialog::NewProjectDialog(Renderer& renderer, ProjectTemplate& t)
 
     cfg_combo_ = ComboBox(standards_, std_idx_,
                           /*x=*/18, /*y=*/CFG_BOX_Y + 2, /*w=*/12);
+    cfg_combo_.open_up = true;   // combo sits low; drop the list upward
 
     adjustScroll(name_cursor_, FIELD_W_NAME, name_scroll_);
     adjustScroll(path_cursor_, FIELD_W_PATH, path_scroll_);
@@ -218,39 +219,53 @@ bool NewProjectDialog::show(Renderer& renderer, ProjectTemplate& out_template,
 
 //  onInit 
 
+int NewProjectDialog::activeTab()
+{
+    return groups()[GRP_TABS].tabcontrols[0].activeTab();
+}
+
 void NewProjectDialog::onInit()
 {
-    //  Group 0: Project Name 
+    //  Group 0: Tab bar
+    {
+        FocusGroup g;
+        g.title = ""; g.hotkey = '\0';
+        g.box_x = 0; g.box_y = 0; g.box_w = 0; g.box_h = 0;
+        g.tabcontrols.push_back(TabControl({"Project", "Libraries"}, 2, TAB_Y, INNER_W));
+        addGroup(std::move(g));
+    }
+
+    //  Group 1: Project Name  (tab 0)
     {
         FocusGroup g;
         g.title                = " Project Name ";
         g.box_x                = 2; g.box_y = NAME_BOX_Y;
-        g.box_w                = W - 4 - (LIB_BOX_W + 2); g.box_h = NAME_BOX_H;
+        g.box_w                = GRP_W; g.box_h = NAME_BOX_H;
         g.draw_widgets_manually = true;
         addGroup(std::move(g));
     }
 
-    //  Group 1: Location 
+    //  Group 2: Location  (tab 0)
     {
         FocusGroup g;
         g.title                = " Location ";
         g.box_x                = 2; g.box_y = PATH_BOX_Y;
-        g.box_w                = W - 4 - (LIB_BOX_W + 2); g.box_h = PATH_BOX_H;
+        g.box_w                = GRP_W; g.box_h = PATH_BOX_H;
         g.draw_widgets_manually = true;
         addGroup(std::move(g));
     }
 
-    //  Group 2: Configuration 
+    //  Group 3: Configuration  (tab 0)
     {
         FocusGroup g;
         g.title                = " Configuration ";
         g.box_x                = 2; g.box_y = CFG_BOX_Y;
-        g.box_w                = W - 4 - (LIB_BOX_W + 2); g.box_h = CFG_BOX_H;
+        g.box_w                = GRP_W; g.box_h = CFG_BOX_H;
         g.draw_widgets_manually = true;
         addGroup(std::move(g));
     }
 
-    //  Group 3: Libraries 
+    //  Group 4: Libraries  (tab 1)
     {
         FocusGroup g;
         g.title                = " Libraries ";
@@ -260,7 +275,7 @@ void NewProjectDialog::onInit()
         addGroup(std::move(g));
     }
 
-    //  Button row 
+    //  Button row
     addButtons(ButtonRow{
         .buttons = {
             Button{
@@ -282,25 +297,23 @@ void NewProjectDialog::onInit()
                     return HandleResult::CLOSE;
                 }
             },
-            Button{
-                .label = " &Browse ",
-                .x = BROWSE_BTN_X, .y = BROWSE_BTN_Y,
-                .on_activate = [this]() -> HandleResult {
-                    std::string chosen = FileBrowser::selectDirectory(renderer_);
-                    if (!chosen.empty()) {
-                        m_template.path = chosen;
-                        path_cursor_ = (int)chosen.size();
-                        path_scroll_ = 0;
-                        adjustScroll(path_cursor_, FIELD_W_PATH, path_scroll_);
-                    }
-                    return HandleResult::CONTINUE;
-                }
-            },
         }
     });
 
-    setGroupFocus(GRP_NAME);
+    setGroupFocus(GRP_TABS);
     setGroupBtnFocus(0);
+}
+
+//  openBrowse - shared by the Browse control and its mouse handler
+void NewProjectDialog::openBrowse()
+{
+    std::string chosen = FileBrowser::selectDirectory(renderer_);
+    if (!chosen.empty()) {
+        m_template.path = chosen;
+        path_cursor_ = (int)chosen.size();
+        path_scroll_ = 0;
+        adjustScroll(path_cursor_, FIELD_W_PATH, path_scroll_);
+    }
 }
 
 //  onDraw 
@@ -308,87 +321,113 @@ void NewProjectDialog::onInit()
 void NewProjectDialog::onDraw(Renderer& renderer, int startx, int starty)
 {
     const int inner_x = startx + 2;
+    const int active   = activeTab();
 
-    //  Name field 
-    {
-        const int fy = starty + NAME_BOX_Y + 1;
-        adjustScroll(name_cursor_, FIELD_W_NAME, name_scroll_);
+    // The tab bar (group 0) and the content-group boxes are painted by
+    // DialogBase::drawGroups() after this hook runs; here we only lay out the
+    // per-tab contents and set which boxes are live for this frame.
 
-        renderer.drawText(inner_x + 2, fy, "Name:", Renderer::CP_DIALOG);
-        renderer.drawText(inner_x + FIELD_X, fy,
-                          std::string(FIELD_W_NAME, ' '), Renderer::CP_LIST_BOX);
+    // Expose only the active tab's content groups for mouse hit-testing; collapse
+    // the others so their (stale) coordinates never intercept clicks.
+    auto setBox = [&](int g, bool expose, int bx, int by, int bw, int bh) {
+        if (expose) { groups()[g].box_x = bx; groups()[g].box_y = by;
+                      groups()[g].box_w = bw; groups()[g].box_h = bh; }
+        else        { groups()[g].box_w = 0;  groups()[g].box_h = 0; }
+    };
+    setBox(GRP_NAME, active == 0, 2, NAME_BOX_Y, GRP_W, NAME_BOX_H);
+    setBox(GRP_PATH, active == 0, 2, PATH_BOX_Y, GRP_W, PATH_BOX_H);
+    setBox(GRP_CFG,  active == 0, 2, CFG_BOX_Y,  GRP_W, CFG_BOX_H);
+    setBox(GRP_LIB,  active == 1, LIB_BOX_X, LIB_BOX_Y, LIB_BOX_W, LIB_BOX_H);
 
-        if ((int)m_template.name.size() > name_scroll_) {
-            std::string disp = m_template.name.substr(name_scroll_, FIELD_W_NAME);
-            renderer.drawText(inner_x + FIELD_X, fy, disp, Renderer::CP_LIST_BOX);
-        }
-    }
+    // ─────────────────────────────────────────────────────────── Tab 0: Project
+    if (active == 0) {
+        //  Name field
+        {
+            const int fy = starty + NAME_BOX_Y + 1;
+            adjustScroll(name_cursor_, FIELD_W_NAME, name_scroll_);
 
-    //  Path field 
-    {
-        const int  fy          = starty + PATH_BOX_Y + 1;
-        const bool grp_focused = (getFocusedGroup() == GRP_PATH);
-        const int  inner_focus = groups()[GRP_PATH].inner_focus;
-        adjustScroll(path_cursor_, FIELD_W_PATH, path_scroll_);
+            renderer.drawText(inner_x + 2, fy, "Name:", Renderer::CP_DIALOG);
+            renderer.drawText(inner_x + FIELD_X, fy,
+                              std::string(FIELD_W_NAME, ' '), Renderer::CP_LIST_BOX);
 
-        renderer.drawText(inner_x + 2, fy, "Path:", Renderer::CP_DIALOG);
-        renderer.drawText(inner_x + FIELD_X, fy,
-                          std::string(FIELD_W_PATH, ' '), Renderer::CP_LIST_BOX);
-
-        if ((int)m_template.path.size() > path_scroll_) {
-            std::string disp = m_template.path.substr(path_scroll_, FIELD_W_PATH);
-            renderer.drawText(inner_x + FIELD_X, fy, disp, Renderer::CP_LIST_BOX);
-        }
-
-        // Checkbox row — below the Browse button shadow row
-        const int fy3      = starty + PATH_BOX_Y + 3;
-        const bool chk_focused = grp_focused && (inner_focus == 1);
-        renderer.drawText(inner_x + 2, fy3,
-                          std::string(m_template.create_project_dir ? "[X]" : "[ ]")
-                              + " Create project directory",
-                          chk_focused ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
-    }
-
-    //  Configuration 
-    {
-        const int fy         = starty + CFG_BOX_Y + 1;
-        bool      grp_focused = (getFocusedGroup() == GRP_CFG);
-        int       inner_focus = groups()[GRP_CFG].inner_focus;
-
-        // Row 1: Build system radios
-        renderer.drawText(inner_x + 2, fy, "Build system:", Renderer::CP_DIALOG);
-        const char* bs_labels[] = {"CMake", "Make", "Meson"};
-        int rx = inner_x + 16;
-        for (int i = 0; i < 3; ++i) {
-            bool is_selected = (m_template.build_system == i);
-            bool is_cursor   = grp_focused && (inner_focus == 0) && (bs_cursor_ == i);
-            std::string mark = is_selected ? "(•)" : "( )";
-            renderer.drawText(rx, fy, mark + " " + bs_labels[i],
-                              is_cursor ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
-            rx += 4 + (int)strlen(bs_labels[i]) + 1;  // mark(3) + space + label + gap
+            if ((int)m_template.name.size() > name_scroll_) {
+                std::string disp = m_template.name.substr(name_scroll_, FIELD_W_NAME);
+                renderer.drawText(inner_x + FIELD_X, fy, disp, Renderer::CP_LIST_BOX);
+            }
         }
 
-        // Row 2: C++ Standard combo
-        const int fy2 = starty + CFG_BOX_Y + 2;
-        renderer.drawText(inner_x + 2, fy2, "C++ Standard:", Renderer::CP_DIALOG);
-        cfg_combo_.draw(renderer, startx, starty,
-                        grp_focused && (inner_focus == 1));
+        //  Path field + Browse + checkbox
+        {
+            const int  fy          = starty + PATH_BOX_Y + 1;
+            const bool grp_focused = (getFocusedGroup() == GRP_PATH);
+            const int  inner_focus = groups()[GRP_PATH].inner_focus;
+            adjustScroll(path_cursor_, FIELD_W_PATH, path_scroll_);
 
-        // Row 3: Checkboxes
-        const int fy3 = starty + CFG_BOX_Y + 3;
-        const bool git_focused  = grp_focused && (inner_focus == 2) && (cfg_chk_cursor_ == 0);
-        const bool main_focused = grp_focused && (inner_focus == 2) && (cfg_chk_cursor_ == 1);
+            renderer.drawText(inner_x + 2, fy, "Path:", Renderer::CP_DIALOG);
+            renderer.drawText(inner_x + FIELD_X, fy,
+                              std::string(FIELD_W_PATH, ' '), Renderer::CP_LIST_BOX);
 
-        renderer.drawText(inner_x + 2, fy3,
-                          std::string(m_template.init_git   ? "[X]" : "[ ]") + " Initialize git",
-                          git_focused  ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
-        renderer.drawText(inner_x + 22, fy3,
-                          std::string(m_template.create_main ? "[X]" : "[ ]") + " Create main.cpp",
-                          main_focused ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
+            if ((int)m_template.path.size() > path_scroll_) {
+                std::string disp = m_template.path.substr(path_scroll_, FIELD_W_PATH);
+                renderer.drawText(inner_x + FIELD_X, fy, disp, Renderer::CP_LIST_BOX);
+            }
+
+            // Browse control (right of the path field)
+            const bool browse_focused = grp_focused && (inner_focus == PATH_INNER_BROWSE);
+            renderer.drawText(startx + BROWSE_BTN_X, starty + BROWSE_BTN_Y, "[ Browse ]",
+                              browse_focused ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
+
+            // Checkbox row
+            const int fy3 = starty + PATH_BOX_Y + 3;
+            const bool chk_focused = grp_focused && (inner_focus == PATH_INNER_CHECK);
+            renderer.drawText(inner_x + 2, fy3,
+                              std::string(m_template.create_project_dir ? "[X]" : "[ ]")
+                                  + " Create project directory",
+                              chk_focused ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
+        }
+
+        //  Configuration
+        {
+            const int fy         = starty + CFG_BOX_Y + 1;
+            bool      grp_focused = (getFocusedGroup() == GRP_CFG);
+            int       inner_focus = groups()[GRP_CFG].inner_focus;
+
+            // Row 1: Build system radios
+            renderer.drawText(inner_x + 2, fy, "Build system:", Renderer::CP_DIALOG);
+            const char* bs_labels[] = {"CMake", "Make", "Meson"};
+            int rx = inner_x + 16;
+            for (int i = 0; i < 3; ++i) {
+                bool is_selected = (m_template.build_system == i);
+                bool is_cursor   = grp_focused && (inner_focus == 0) && (bs_cursor_ == i);
+                std::string mark = is_selected ? "(•)" : "( )";
+                renderer.drawText(rx, fy, mark + " " + bs_labels[i],
+                                  is_cursor ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
+                rx += 4 + (int)strlen(bs_labels[i]) + 1;  // mark(3) + space + label + gap
+            }
+
+            // Row 2: C++ Standard combo
+            const int fy2 = starty + CFG_BOX_Y + 2;
+            renderer.drawText(inner_x + 2, fy2, "C++ Standard:", Renderer::CP_DIALOG);
+            cfg_combo_.draw(renderer, startx, starty,
+                            grp_focused && (inner_focus == 1));
+
+            // Row 3: Checkboxes
+            const int fy3 = starty + CFG_BOX_Y + 3;
+            const bool git_focused  = grp_focused && (inner_focus == 2) && (cfg_chk_cursor_ == 0);
+            const bool main_focused = grp_focused && (inner_focus == 2) && (cfg_chk_cursor_ == 1);
+
+            renderer.drawText(inner_x + 2, fy3,
+                              std::string(m_template.init_git   ? "[X]" : "[ ]") + " Initialize git",
+                              git_focused  ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
+            renderer.drawText(inner_x + 26, fy3,
+                              std::string(m_template.create_main ? "[X]" : "[ ]") + " Create main.cpp",
+                              main_focused ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
+        }
+        // The combo's open dropdown is drawn by DialogBase, last of all.
     }
 
-    //  Library list 
-    {
+    // ───────────────────────────────────────────────────────── Tab 1: Libraries
+    if (active == 1) {
         const int lib_x   = startx + LIB_BOX_X + 1;
         const int lib_y0  = starty + LIB_BOX_Y + 1;
         bool grp_focused  = (getFocusedGroup() == GRP_LIB);
@@ -437,8 +476,6 @@ void NewProjectDialog::onDraw(Renderer& renderer, int startx, int starty)
             }
         }
     }
-
-    cfg_combo_.drawDropdown(renderer, startx, starty);
 }
 
 //  onPlaceCursor 
@@ -455,13 +492,13 @@ bool NewProjectDialog::onPlaceCursor(Renderer& renderer, int sx, int sy)
     }
 
     if (grp == GRP_PATH) {
-        if (groups()[GRP_PATH].inner_focus == 0) {
+        if (groups()[GRP_PATH].inner_focus == PATH_INNER_FIELD) {
             renderer.showCursor();
             move(sy + PATH_BOX_Y + 1,
                  sx + 2 + FIELD_X + (path_cursor_ - path_scroll_));
             return true;
         }
-        return false;  // checkbox row: highlight only, no text cursor
+        return false;  // Browse / checkbox rows: highlight only, no text cursor
     }
 
     if (grp == GRP_LIB) {
@@ -501,16 +538,20 @@ HandleResult NewProjectDialog::onKey(wint_t ch)
         return HandleResult::CONTINUE;
     }
 
-    //  Path field 
+    //  Path field / Browse / checkbox
     if (grp == GRP_PATH) {
         auto& g = groups()[GRP_PATH];
 
-        if (ch == KEY_UP || ch == KEY_DOWN) {
-            g.inner_focus = (g.inner_focus == 0) ? 1 : 0;
+        if (ch == KEY_UP) {
+            if (g.inner_focus > PATH_INNER_FIELD) --g.inner_focus;
+            return HandleResult::CONTINUE;
+        }
+        if (ch == KEY_DOWN) {
+            if (g.inner_focus < PATH_INNER_CHECK) ++g.inner_focus;
             return HandleResult::CONTINUE;
         }
 
-        if (g.inner_focus == 0) {
+        if (g.inner_focus == PATH_INNER_FIELD) {
             if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
                 eraseUtf8Before(m_template.path, path_cursor_);
             } else if (ch == KEY_DC) {
@@ -526,7 +567,10 @@ HandleResult NewProjectDialog::onKey(wint_t ch)
             } else if (ch > 31 && ch < KEY_MIN) {
                 insertUtf8At(m_template.path, path_cursor_, ch);
             }
-        } else {
+        } else if (g.inner_focus == PATH_INNER_BROWSE) {
+            if (ch == ' ' || ch == KEY_ENTER || ch == 10 || ch == 13)
+                openBrowse();
+        } else {  // PATH_INNER_CHECK
             if (ch == ' ')
                 m_template.create_project_dir = !m_template.create_project_dir;
         }
@@ -605,51 +649,153 @@ HandleResult NewProjectDialog::onKey(wint_t ch)
     return HandleResult::CONTINUE;
 }
 
-//  onTab 
-// Custom Tab cycle:
-//   Forward:  Name → Path → Browse → Config → Lib → Create → Cancel → Name
-//   Backward: Name → Cancel → Create → Lib → Config → Browse → Path → Name
+//  onMouseClick
+// Select/toggle the manually-drawn controls under the pointer (radios,
+// checkboxes and library rows), which the generic widget handling in
+// DialogBase doesn't cover. A control's clickable span is "mark + space +
+// label" = 4 + strlen(label) columns, matching the CheckBox/RadioList widgets.
+
+bool NewProjectDialog::onMouseClick(const MEVENT& ev, int startx, int starty)
+{
+    const int inner_x = startx + 2;
+    const int active  = activeTab();
+
+    // Hit-test a "[mark] label" control at (x0, y).
+    auto hit = [&](int x0, int y, const char* label) {
+        return ev.y == y && ev.x >= x0 && ev.x < x0 + 4 + (int)strlen(label);
+    };
+
+    if (active == 0) {
+        // C++ Standard combo. Handle it first: when open, its dropdown floats
+        // over the controls below, so clicks there must reach the list.
+        if (cfg_combo_.handleMouse(startx, starty, ev.x, ev.y)) {
+            setGroupFocus(GRP_CFG);
+            groups()[GRP_CFG].inner_focus = 1;
+            return true;
+        }
+
+        // Build-system radios
+        const int radio_y = starty + CFG_BOX_Y + 1;
+        if (ev.y == radio_y) {
+            const char* bs_labels[] = {"CMake", "Make", "Meson"};
+            int rx = inner_x + 16;
+            for (int i = 0; i < 3; ++i) {
+                if (ev.x >= rx && ev.x < rx + 4 + (int)strlen(bs_labels[i])) {
+                    bs_cursor_ = i;
+                    m_template.build_system = i;
+                    setGroupFocus(GRP_CFG);
+                    groups()[GRP_CFG].inner_focus = 0;
+                    return true;
+                }
+                rx += 4 + (int)strlen(bs_labels[i]) + 1;
+            }
+        }
+
+        // "[ Browse ]" control (Location box) - opens the directory picker.
+        if (ev.y == starty + BROWSE_BTN_Y &&
+            ev.x >= startx + BROWSE_BTN_X &&
+            ev.x <  startx + BROWSE_BTN_X + (int)std::string("[ Browse ]").size()) {
+            setGroupFocus(GRP_PATH);
+            groups()[GRP_PATH].inner_focus = PATH_INNER_BROWSE;
+            openBrowse();
+            return true;
+        }
+
+        // "Create project directory" checkbox (Location box)
+        if (hit(inner_x + 2, starty + PATH_BOX_Y + 3, "Create project directory")) {
+            m_template.create_project_dir = !m_template.create_project_dir;
+            setGroupFocus(GRP_PATH);
+            groups()[GRP_PATH].inner_focus = PATH_INNER_CHECK;
+            return true;
+        }
+
+        // "Initialize git" / "Create main.cpp" checkboxes (Configuration box)
+        const int chk_y = starty + CFG_BOX_Y + 3;
+        if (hit(inner_x + 2, chk_y, "Initialize git")) {
+            m_template.init_git = !m_template.init_git;
+            setGroupFocus(GRP_CFG);
+            groups()[GRP_CFG].inner_focus = 2;
+            cfg_chk_cursor_ = 0;
+            return true;
+        }
+        if (hit(inner_x + 26, chk_y, "Create main.cpp")) {
+            m_template.create_main = !m_template.create_main;
+            setGroupFocus(GRP_CFG);
+            groups()[GRP_CFG].inner_focus = 2;
+            cfg_chk_cursor_ = 1;
+            return true;
+        }
+        return false;
+    }
+
+    // active == 1: Libraries tab - click a row to toggle its selection.
+    const int lib_x  = startx + LIB_BOX_X + 1;
+    const int lib_y0 = starty + LIB_BOX_Y + 1;
+    if (ev.x >= lib_x && ev.x < lib_x + LIB_ITEM_W) {
+        if (ev.y == lib_y0) {          // filter line - just focus the list
+            setGroupFocus(GRP_LIB);
+            return true;
+        }
+        int row = ev.y - (lib_y0 + 1);
+        if (row >= 0 && row < LIB_VISIBLE) {
+            int filt_idx = m_lib_scroll + row;
+            if (filt_idx < (int)m_lib_filtered.size()) {
+                int real_idx = m_lib_filtered[filt_idx];
+                m_lib_selected[real_idx] = !m_lib_selected[real_idx];
+                m_lib_cursor = filt_idx;
+                setGroupFocus(GRP_LIB);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+//  onTab
+// Tab cycle honours the active tab (like the Settings dialog):
+//   Tab 0 (Project):   Tabs → Name → Path → Config → [Create → Cancel] → Tabs
+//   Tab 1 (Libraries): Tabs → Lib → [Create → Cancel] → Tabs
+// The tab bar is switched with Left/Right while it holds focus.
 
 bool NewProjectDialog::onTab(bool forward)
 {
-    const int btn_row = groupCount();   // = 4; groups_.size()
+    const int btn_row = groupCount();   // button row is the stop after all groups
+    const int active  = activeTab();
+    const int cur     = getFocusedGroup();
 
     if (forward) {
-        // Path → Browse
-        if (getFocusedGroup() == GRP_PATH) {
-            setGroupFocus(btn_row);
-            setGroupBtnFocus(BTN_IDX_BROWSE);
+        if (cur == GRP_TABS) {
+            setGroupFocus(active == 0 ? GRP_NAME : GRP_LIB);
             return true;
         }
-        // Browse → Config
-        if (inButtonRow() && getBtnInnerFocus() == BTN_IDX_BROWSE) {
-            setGroupFocus(GRP_CFG);
-            return true;
+        if (active == 0) {
+            if (cur == GRP_NAME) { setGroupFocus(GRP_PATH); return true; }
+            if (cur == GRP_PATH) { setGroupFocus(GRP_CFG);  return true; }
+            if (cur == GRP_CFG)  { setGroupFocus(btn_row); setGroupBtnFocus(BTN_IDX_CREATE); return true; }
+        } else {
+            if (cur == GRP_LIB)  { setGroupFocus(btn_row); setGroupBtnFocus(BTN_IDX_CREATE); return true; }
         }
-        // Cancel → Name  (skip over Browse in the default row cycle)
-        if (inButtonRow() && getBtnInnerFocus() == BTN_IDX_CANCEL) {
-            setGroupFocus(GRP_NAME);
-            return true;
-        }
-    } else {
-        // Config → Browse
-        if (getFocusedGroup() == GRP_CFG) {
-            setGroupFocus(btn_row);
-            setGroupBtnFocus(BTN_IDX_BROWSE);
-            return true;
-        }
-        // Browse → Path
-        if (inButtonRow() && getBtnInnerFocus() == BTN_IDX_BROWSE) {
-            setGroupFocus(GRP_PATH);
-            return true;
-        }
-        // Name → Cancel  (skip over Browse in the default row cycle)
-        if (getFocusedGroup() == GRP_NAME) {
-            setGroupFocus(btn_row);
-            setGroupBtnFocus(BTN_IDX_CANCEL);
-            return true;
-        }
+        // In the button row: let the default logic step Create → Cancel, then
+        // wrap to group 0 (the tab bar).
+        return false;
     }
 
+    // Backward
+    if (inButtonRow()) {
+        // Leaving the row backward from the first button lands on the last
+        // content group of the active tab; otherwise step Cancel → Create.
+        if (getBtnInnerFocus() == BTN_IDX_CREATE) {
+            setGroupFocus(active == 0 ? GRP_CFG : GRP_LIB);
+            return true;
+        }
+        return false;
+    }
+    if (active == 0) {
+        if (cur == GRP_CFG)  { setGroupFocus(GRP_PATH); return true; }
+        if (cur == GRP_PATH) { setGroupFocus(GRP_NAME); return true; }
+        if (cur == GRP_NAME) { setGroupFocus(GRP_TABS); return true; }
+    } else {
+        if (cur == GRP_LIB)  { setGroupFocus(GRP_TABS); return true; }
+    }
     return false;   // let DialogBase handle the rest
 }

@@ -119,7 +119,7 @@ void FileBrowser::drawPathHeader(Renderer& renderer,
     renderer.drawText(x + 1, y + 1, std::string(w - 2, ' '), Renderer::CP_HIGHLIGHT);
 
     // When a type-ahead search is active, reserve space on the right for it.
-    // "  /foo_" — 2 leading spaces + '/' + text + '_' cursor indicator
+    // "  /foo_" - 2 leading spaces + '/' + text + '_' cursor indicator
     std::string search_indicator;
     int search_cols = 0;
     if (!type_search.empty()) {
@@ -236,9 +236,9 @@ void FileBrowser::drawFilterCombo(Renderer& renderer,
                                    const std::vector<FilterEntry>& filters,
                                    int idx, bool focused)
 {
-    // Prefix " Type: [ " — 9 ASCII chars → 9 display columns.
-    // Suffix " ▼ ]"      — 6 bytes (▼ = \xe2\x96\xbc), 4 display columns.
-    // Suffix "   ]"      — 4 bytes, 4 display columns.
+    // Prefix " Type: [ " - 9 ASCII chars → 9 display columns.
+    // Suffix " ▼ ]"      - 6 bytes (▼ = \xe2\x96\xbc), 4 display columns.
+    // Suffix "   ]"      - 4 bytes, 4 display columns.
     // Use display-column counts for layout, not byte sizes.
     static constexpr int PREFIX_COLS = 9;
     static constexpr int SUFFIX_COLS = 4;
@@ -692,7 +692,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
                 break;
             }
 
-            if (!is_press) break;  // release or position-report with no capture — ignore
+            if (!is_press) break;  // release or position-report with no capture - ignore
 
             // Double-click detection
             auto now = std::chrono::steady_clock::now();
@@ -750,7 +750,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
                 break;
             }
 
-            // Button press: capture — show pressed, don't fire yet.
+            // Button press: capture - show pressed, don't fire yet.
             if (overOK())        { btn_capture = 0; btn_hover_pressed = true; focus = FB_OK;     }
             else if (overCan())  { btn_capture = 1; btn_hover_pressed = true; focus = FB_CANCEL; }
             break;

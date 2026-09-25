@@ -38,7 +38,7 @@ void AboutDialog::show(Renderer& renderer, const std::string& image_path) {
     bool has_image = false;
 #ifdef GEDI_GUI
     // Probe: try to load the logo now so the layout can reserve space only when it
-    // will really be shown. gui_show_image_overlay is idempotent — it is called
+    // will really be shown. gui_show_image_overlay is idempotent - it is called
     // again with the final position once the box is laid out.
     if (!image_path.empty())
         has_image = gui_show_image_overlay(image_path.c_str(), 0, 0, LOGO_CW, LOGO_CH,

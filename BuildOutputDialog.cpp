@@ -53,7 +53,7 @@ void BuildOutputDialog::show(Renderer& renderer, const std::vector<std::string>&
         wint_t ch = renderer.getChar();
         if (ch == KEY_MOUSE) {
             // Always drain the mouse-event queue, even for events we don't act
-            // on — otherwise unconsumed events pile up while this dialog is
+            // on - otherwise unconsumed events pile up while this dialog is
             // open and desync every click the editor receives after it closes.
             MEVENT ev;
             if (getmouse(&ev) != OK) continue;
@@ -86,7 +86,7 @@ void BuildOutputDialog::show(Renderer& renderer, const std::vector<std::string>&
             continue;
         }
         if (ch == KEY_RESIZE) {
-            // Screen was blanked and resized — recompute geometry, recapture the
+            // Screen was blanked and resized - recompute geometry, recapture the
             // backdrop and repaint the frame so no stale garbage is left behind.
             renderer.updateDimensions();
             renderer.repaintBackground();   // redraw the editor behind at the new size

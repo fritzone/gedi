@@ -95,7 +95,7 @@ Node parseValue(const std::string& s, size_t& i) {
         ++i; parseMembers(s, i, "]", n);
         if (i < s.size() && s[i] == ']') ++i;
     } else {
-        // Bare token (rare) — read to next delimiter.
+        // Bare token (rare) - read to next delimiter.
         size_t j = i;
         while (j < s.size() && s[j] != ',' && s[j] != '}' && s[j] != ']') ++j;
         n.value = s.substr(i, j - i);
@@ -314,9 +314,9 @@ void GdbDebugger::handleLine(const std::string& line) {
             Event e; e.type = Event::Output; e.text = text; pushEvent(e);
             break;
         }
-        case '=':   // notify async (breakpoint-created, thread events, …) — ignore
-        case '&':   // log stream — ignore
-        case '(':   // "(gdb)" prompt — ignore
+        case '=':   // notify async (breakpoint-created, thread events, …) - ignore
+        case '&':   // log stream - ignore
+        case '(':   // "(gdb)" prompt - ignore
             break;
         default: {
             // A line that is not an MI record: inferior stdout/stderr.
@@ -426,7 +426,7 @@ std::string GdbDebugger::evaluate(const std::string& expr) {
     return parseRecord(payload).str("value");
 }
 
-#else  // _WIN32 — GDB backend not built for the MSVC/Windows target.
+#else  // _WIN32 - GDB backend not built for the MSVC/Windows target.
 
 bool GdbDebugger::spawnGdb() { return false; }
 bool GdbDebugger::load(const std::string&, const std::string&, const std::string&) { return false; }

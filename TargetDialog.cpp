@@ -1,9 +1,7 @@
 #include "TargetDialog.h"
 #include <string>
 
-static const char* kTypeKeys[] = {
-    "executable", "static_library", "shared_library"
-};
+
 
 //  Constructor 
 
@@ -13,7 +11,7 @@ TargetDialog::TargetDialog(const ProjectTarget& initial, bool is_new)
     , name_(initial.name)
 {
     for (int i = 0; i < 3; ++i)
-        if (std::string(kTypeKeys[i]) == initial.type) {
+        if (std::string(ProjectTarget::TYPE_KEYS[i]) == initial.type) {
             type_sel_ = type_cur_ = i;
             break;
         }
@@ -27,7 +25,7 @@ bool TargetDialog::show(Renderer& renderer, ProjectTarget& target, bool is_new)
     DialogResult res = dlg.run(renderer);
     if (res.accepted()) {
         target.name = dlg.name_;
-        target.type = kTypeKeys[dlg.type_sel_];
+        target.type = ProjectTarget::TYPE_KEYS[dlg.type_sel_];
     }
     return res.accepted();
 }
@@ -48,7 +46,7 @@ void TargetDialog::onInit()
         addGroup(std::move(g));
     }
 
-    // Group 1: Target type — RadioList (x/y are relative to dialog origin)
+    // Group 1: Target type - RadioList (x/y are relative to dialog origin)
     {
         FocusGroup g;
         g.title  = " Target type ";

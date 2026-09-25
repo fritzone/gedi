@@ -1,4 +1,4 @@
-// platform_compat.cpp — Windows-only implementations declared in platform_compat.h.
+// platform_compat.cpp - Windows-only implementations declared in platform_compat.h.
 // Compiled as a no-op translation unit on every other platform.
 #include "platform_compat.h"
 

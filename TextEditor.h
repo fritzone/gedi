@@ -298,7 +298,9 @@ private:
     void openFileAtLine(const std::string& abs_path, int line, int col);
     void ProjectProperties();
     void regenerateBuildFile();
-    int  pickTarget(const std::string& action_label, int exclude_idx = -1);
+    // Resolve a bundled template file (templates/<name>) against the exe dir,
+    // its parents, and the system share dir; returns "" if none is found.
+    std::string locateTemplate(const std::string& name) const;
     std::vector<PanelEntry> buildPanelEntries() const;
     void handleMouseEvent();
 

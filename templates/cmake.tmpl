@@ -1,0 +1,35 @@
+cmake_minimum_required(VERSION 3.10)
+project({{ project.name }})
+
+set(CMAKE_CXX_STANDARD {{ project.std_num }})
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+{% if has_libraries %}
+find_package(PkgConfig REQUIRED)
+{% for lib in libraries %}
+{{ lib.cmake_find_package_hint }}
+{% endfor %}
+
+{% endif %}
+{% for target in targets %}
+{{ target.cmake_open }}({{ target.name }}{{ target.cmake_kind }}
+{% for src in target.sources %}
+    {{ src }}
+{% endfor %}
+)
+{% for lib in libraries %}
+{% if lib.include_directories %}
+target_include_directories({{ target.name }} PRIVATE{% for d in lib.include_directories %} {{ d }}{% endfor %})
+{% endif %}
+{% if lib.compiler_flags %}
+target_compile_options({{ target.name }} PRIVATE{% for f in lib.compiler_flags %} {{ f }}{% endfor %})
+{% endif %}
+{% if lib.link_directories %}
+target_link_directories({{ target.name }} PRIVATE{% for d in lib.link_directories %} {{ d }}{% endfor %})
+{% endif %}
+{% endfor %}
+{% if target.all_links %}
+target_link_libraries({{ target.name }} PRIVATE{% for l in target.all_links %} {{ l }}{% endfor %})
+{% endif %}
+
+{% endfor %}

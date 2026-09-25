@@ -88,6 +88,7 @@ set(GEDI_COMMON_SOURCES
     TargetDialog.cpp
     PickTargetDialog.cpp
     utils.cpp
+    TemplateEngine.cpp
     DialogBase.cpp
     DependencyChecker.cpp
     platform_compat.cpp
@@ -106,8 +107,18 @@ function(copy_data_files target)
     endforeach()
 endfunction()
 
+# Copies the build-system template files (templates/*.tmpl) next to a target so
+# regenerateBuildFile() can find them at runtime alongside the executable.
+function(copy_templates target)
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_SOURCE_DIR}/templates
+            $<TARGET_FILE_DIR:${target}>/templates
+        COMMENT "Copying build-system templates to ${target} build directory")
+endfunction()
+
 # ===========================================================================
-#  Target 1: gedi  — the classic text-mode (ncurses) application
+#  Target 1: gedi  - the classic text-mode (ncurses) application
 # ===========================================================================
 set(CURSES_NEED_WIDE TRUE)
 find_package(Curses)
@@ -116,13 +127,14 @@ if(CURSES_FOUND)
     target_include_directories(gedi PRIVATE ${CURSES_INCLUDE_DIRS} ${CLANG_INCLUDE_DIR})
     target_link_libraries(gedi ${CURSES_LIBRARIES} ${CLANG_LIBRARY})
     copy_data_files(gedi colors.json config.json help.hlp)
+    copy_templates(gedi)
     install(TARGETS gedi DESTINATION bin)
 else()
-    message(WARNING "ncurses not found — skipping the text-mode 'gedi' target.")
+    message(WARNING "ncurses not found - skipping the text-mode 'gedi' target.")
 endif()
 
 # ===========================================================================
-#  Target 2: gedi-gui — the graphical (SDL) application
+#  Target 2: gedi-gui - the graphical (SDL) application
 #
 #  Re-uses every shared source but swaps the ncurses backend for the
 #  curses_compat emulation layer running on top of the SDL VgaTextEngine.
@@ -148,9 +160,9 @@ if(SDL2_FOUND)
 
     # Optional SDL2_image: enables loading the About-box logo (a PNG). When it is
     # not available (e.g. a system SDL2 without the matching -image package) the
-    # About box still works — it just omits the image (or can load a .bmp via
+    # About box still works - it just omits the image (or can load a .bmp via
     # core SDL). The vendored Windows SDL2 does ship it, but only under
-    # GEDI_SDL2_ROOT, which is not on any default search path — hence the hint.
+    # GEDI_SDL2_ROOT, which is not on any default search path - hence the hint.
     if(WIN32)
         find_library(SDL2_IMAGE_LIBRARY NAMES SDL2_image HINTS "${GEDI_SDL2_ROOT}/lib")
     else()
@@ -161,15 +173,15 @@ if(SDL2_FOUND)
         target_compile_definitions(gedi-gui PRIVATE GEDI_HAVE_SDL_IMAGE)
         target_include_directories(gedi-gui PRIVATE ${SDL2_IMAGE_INCLUDE_DIR})
         target_link_libraries(gedi-gui ${SDL2_IMAGE_LIBRARY})
-        message(STATUS "SDL2_image found — About-box logo (PNG) enabled.")
+        message(STATUS "SDL2_image found - About-box logo (PNG) enabled.")
     else()
-        message(STATUS "SDL2_image not found — About-box logo will be omitted.")
+        message(STATUS "SDL2_image not found - About-box logo will be omitted.")
     endif()
 
     # It's a graphical app: run it under the Windows subsystem so no console
     # window is allocated. The code is written against a plain int main(argc,argv),
     # so keep that as the actual entry point (mainCRTStartup) rather than requiring
-    # a WinMain — only the subsystem (no console) changes.
+    # a WinMain - only the subsystem (no console) changes.
     if(WIN32)
         set_target_properties(gedi-gui PROPERTIES WIN32_EXECUTABLE TRUE)
         if(MSVC)
@@ -177,6 +189,7 @@ if(SDL2_FOUND)
         endif()
     endif()
     copy_data_files(gedi-gui colors.json config.json help.hlp icons/gedi_1.0-icon.png)
+    copy_templates(gedi-gui)
     # The VGA fonts live in graphics_engine/; copy them next to the binary.
     add_custom_command(TARGET gedi-gui POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -193,7 +206,7 @@ if(SDL2_FOUND)
     install(FILES graphics_engine/VGA9.F16 DESTINATION share/gedi)
     install(FILES icons/gedi_1.0-icon.png DESTINATION share/gedi/icons)
 
-    # Windows has no system libclang/SDL2 — drop the vendored DLLs next to the
+    # Windows has no system libclang/SDL2 - drop the vendored DLLs next to the
     # freshly built executable so it runs without extra PATH setup.
     if(WIN32)
         if(CLANG_DLL)
@@ -210,7 +223,7 @@ if(SDL2_FOUND)
         endforeach()
     endif()
 else()
-    message(WARNING "SDL2 not found — skipping the graphical 'gedi-gui' target. Install libsdl2-dev to enable it.")
+    message(WARNING "SDL2 not found - skipping the graphical 'gedi-gui' target. Install libsdl2-dev to enable it.")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -219,6 +232,11 @@ endif()
 install(
     FILES help.hlp colors.json config.json librarian.py
     DESTINATION share/gedi
+)
+install(
+    DIRECTORY templates
+    DESTINATION share/gedi
+    FILES_MATCHING PATTERN "*.tmpl"
 )
 install(
     FILES cguess.py

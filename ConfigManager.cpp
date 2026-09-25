@@ -10,7 +10,7 @@ ConfigManager::ConfigManager(const std::string& configPath, const std::string& c
 {
     // Pin the paths to absolute now, at startup. The file browser chdir()s as the
     // user navigates, so a relative path like "config.json" would otherwise be
-    // saved into whatever directory happens to be current — losing the settings.
+    // saved into whatever directory happens to be current - losing the settings.
     std::error_code ec;
     auto absCfg = std::filesystem::absolute(m_configPath, ec);
     if (!ec) m_configPath = absCfg.string();

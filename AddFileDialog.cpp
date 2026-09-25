@@ -165,7 +165,10 @@ void AddFileDialog::onDraw(Renderer& renderer, int sx, int sy)
             std::string mark = sel ? "(•)" : "( )";
             renderer.drawText(rx, fy, mark + " " + labels[i],
                               cur ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
-            rx += (int)(mark.size() + 1 + strlen(labels[i]) + 2);
+            // Advance by DISPLAY width: "(o)" is 3 columns (the bullet is one col
+            // but 3 bytes), + 1 space + label + 2 gap. Using mark.size() (bytes)
+            // here would shift the next radio when selection toggled the mark.
+            rx += 3 + 1 + (int)strlen(labels[i]) + 2;
         }
     }
 
@@ -196,7 +199,30 @@ bool AddFileDialog::onPlaceCursor(Renderer& renderer, int sx, int sy)
     return false;
 }
 
-//  onKey 
+//  onMouseClick
+// Select the file-type radio under the pointer (drawn manually).
+
+bool AddFileDialog::onMouseClick(const MEVENT& ev, int startx, int starty)
+{
+    const int inner_x = startx + 2;
+    const int fy      = starty + TYPE_BOX_Y + 1;
+    if (ev.y != fy) return false;
+
+    const char* labels[] = {"New file", "Existing file"};
+    int rx = inner_x + 2;
+    for (int i = 0; i < 2; ++i) {
+        int visible_w = 4 + (int)strlen(labels[i]);   // "(o) " + label
+        if (ev.x >= rx && ev.x < rx + visible_w) {
+            type_cursor_ = i;
+            setGroupFocus(GRP_TYPE);
+            return true;
+        }
+        rx += 3 + 1 + (int)strlen(labels[i]) + 2;
+    }
+    return false;
+}
+
+//  onKey
 
 HandleResult AddFileDialog::onKey(wint_t ch)
 {
