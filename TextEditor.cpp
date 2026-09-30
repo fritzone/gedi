@@ -1115,6 +1115,7 @@ void TextEditor::drawEditorState(int active_menu_id) {
     m_renderer->clear();
     if (currentBufferIdx() == -1) {
         drawEmptyDesktop();
+        if (m_project_panel_open) drawProjectPanel();   // still usable with no window open
     } else {
         drawMainUI();
         drawTextArea();
@@ -1441,7 +1442,7 @@ void TextEditor::handleMouseEvent() {
         return;
     }
 
-    if (is_press && m_project_panel_open && mx >= PANEL_W)
+    if (is_press && m_project_panel_open && mx >= PANEL_W && currentBufferIdx() != -1)
         m_project_panel_focused = false;
 
     if (currentBufferIdx() == -1) return;
@@ -1759,7 +1760,8 @@ void TextEditor::main_loop() {
                     }
                     break;
                 }
-                case 27: // ESC
+                case 27: // ESC (or Alt+<key>)
+                    if (handleEscOrAlt()) break;
                     // Restore original view state
                     currentBuffer().current_line_num = m_pre_compile_view_state.line_num;
                     currentBuffer().cursor_col = m_pre_compile_view_state.col;
@@ -1811,7 +1813,8 @@ void TextEditor::main_loop() {
                 case KEY_NPAGE:
                     m_refs_cursor_pos = std::min((int)m_refs_lines.size() - 1, m_refs_cursor_pos + 10);
                     break;
-                case 27: // ESC
+                case 27: // ESC (or Alt+<key>)
+                    if (handleEscOrAlt()) break;
                     m_refs_visible = false;
                     m_renderer->showCursor();
                     handleResize();
@@ -1920,6 +1923,37 @@ void TextEditor::update_cursor_and_scroll() {
         buffer.horizontal_scroll_offset =
             charColAtVisual(cur_text, cur_vcol - text_area_width + 1);
     }
+}
+
+// Terminals and the SDL layer both deliver Alt+<key> as ESC followed by <key>.
+// After reading an ESC, wait briefly for that follow-up: ERR means a lone Escape.
+wint_t TextEditor::readAltFollower() {
+    nodelay(stdscr, FALSE);
+    timeout(50);
+    wint_t next = m_renderer->getChar();
+    timeout(-1);
+    nodelay(stdscr, TRUE);
+    return next;
+}
+
+// A popup with its own key loop got ESC and is closing: if it was Alt+<key>,
+// push the pair back so the editor's main loop handles it once the popup is gone.
+void TextEditor::requeueAltKey() {
+    wint_t next = readAltFollower();
+    if (next == (wint_t)ERR) return;
+    unget_wch(next);            // unget is LIFO: ESC must end up first
+    unget_wch(27);
+}
+
+// A panel got ESC: Alt+<key> is handled as everywhere else (Alt+X exits, Alt+F
+// opens File, ...) and returns true; a lone Escape returns false so the panel
+// can close. Without this, the panel closed on the ESC and <key> was typed into
+// the editor.
+bool TextEditor::handleEscOrAlt() {
+    wint_t next = readAltFollower();
+    if (next == (wint_t)ERR) return false;
+    HandleAltKey(next);
+    return true;
 }
 
 void TextEditor::HandleAltKey(wint_t key) {
@@ -2507,7 +2541,7 @@ void TextEditor::GoToDefinition() {
         wget_wch(stdscr, &ch);
         timeout(-1);
 
-        if (ch == 27) { cancelled = true; break; }
+        if (ch == 27) { requeueAltKey(); cancelled = true; break; }
 
         spin_idx = (spin_idx + 1) % 4;
         show_status("Looking for definition of", symbol_name, spinner[spin_idx]);
@@ -2611,7 +2645,7 @@ void TextEditor::TriggerCompletion() {
     show_spin(spin[0]);
     while (!result->done.load()) {
         timeout(80); wint_t ch = ERR; wget_wch(stdscr, &ch); timeout(-1);
-        if (ch == 27) { cancelled = true; break; }
+        if (ch == 27) { requeueAltKey(); cancelled = true; break; }
         si = (si + 1) % 4; show_spin(spin[si]);
     }
     if (cancelled) { handleResize(); drawEditorState(); m_renderer->refresh(); return; }
@@ -2695,7 +2729,7 @@ void TextEditor::TriggerCompletion() {
         m_renderer->refresh();
 
         wint_t ch = m_renderer->getChar();
-        if (ch == 27) break;
+        if (ch == 27) { requeueAltKey(); break; }
         else if (ch == KEY_UP)    { if (sel > 0) { --sel; if (sel < top) top = sel; } }
         else if (ch == KEY_DOWN)  { if (sel < (int)filtered.size() - 1) { ++sel; if (sel >= top + MAX_ROWS) top = sel - MAX_ROWS + 1; } }
         else if (ch == KEY_PPAGE) { sel = std::max(0, sel - MAX_ROWS); if (sel < top) top = sel; }
@@ -3094,7 +3128,7 @@ bool TextEditor::promptLine(const std::string& label, std::string& out) {
         m_renderer->setCursor(std::min((int)shown.size(), w - 1), h - 1);
         m_renderer->refresh();
         wint_t c = m_renderer->getChar();
-        if (c == 27) break;
+        if (c == 27) { requeueAltKey(); break; }
         if (c == KEY_ENTER || c == 10 || c == 13) { ok = !out.empty(); break; }
         if (c == KEY_BACKSPACE || c == 127 || c == 8) { if (!out.empty()) out.pop_back(); continue; }
         if (c >= 32 && c < 127) out += (char)c;
@@ -3139,7 +3173,9 @@ void TextEditor::handleDebugPanelKey(wint_t ch) {
     };
 
     switch (ch) {
-        case 27: m_debug_panel_focused = false; m_renderer->showCursor(); return;
+        case 27:
+            if (handleEscOrAlt()) return;
+            m_debug_panel_focused = false; m_renderer->showCursor(); return;
         case '\t':              m_dbg_section = (m_dbg_section + 1) % 3; return;
         case KEY_BTAB:          m_dbg_section = (m_dbg_section + 2) % 3; return;
         case KEY_UP:    cur--;        clamp(); return;
@@ -3363,6 +3399,8 @@ void TextEditor::process_key(wint_t ch) {
             case EditorAction::ACT_OPEN_PROJECT: OpenProject();        return;
             case EditorAction::ACT_OPEN:         selectfile();         return;
             case EditorAction::ACT_EXIT:         TryExit();            return;
+            case EditorAction::ACT_TOGGLE_PROJECT_PANEL: ToggleProjectPanel(); return;
+            case EditorAction::ACT_CLOSE_PROJECT:        CloseProject();       return;
             case EditorAction::ACT_SETTINGS:     EditorSettingsDialog(); return;
             case EditorAction::ACT_HELP:         showHelpDialog();     return;
             case EditorAction::ACT_ABOUT:        AboutBox();           return;
@@ -3498,15 +3536,8 @@ void TextEditor::process_key(wint_t ch) {
         if (currentBufferIdx() != -1 && currentBuffer().selecting) {
             ClearSelection();
         } else {
-            nodelay(stdscr, FALSE);
-            timeout(50);
-            wint_t next_ch = m_renderer->getChar();
-            timeout(-1);
-            nodelay(stdscr, TRUE);
-
-            if (next_ch != (wint_t)ERR) {
-                HandleAltKey(next_ch);
-            }
+            wint_t next_ch = readAltFollower();
+            if (next_ch != (wint_t)ERR) HandleAltKey(next_ch);
         }
         return;
     }
@@ -4777,6 +4808,12 @@ void TextEditor::CloseWindow() {
     }
 
     m_bufferManager->removeBuffer(currentBufferIdx());
+
+    // No window left: an open project panel is the only thing that can take keys
+    if (currentBufferIdx() == -1 && m_project_panel_open) {
+        m_project_panel_focused = true;
+        m_renderer->hideCursor();
+    }
 }
 
 void TextEditor::SwitchToBuffer(int index) {
@@ -6066,6 +6103,8 @@ void TextEditor::drawProjectPanel() {
     }
 
     // Junction connectors where panel's right border meets editor box's left border
+    // (with no window open there is no editor box: keep the panel's own corners)
+    if (currentBufferIdx() == -1) return;
     cchar_t top_conn, bot_conn;
     setcchar(&top_conn, L"╦", WA_NORMAL, Renderer::CP_DIALOG_TITLE, NULL);
     setcchar(&bot_conn, L"╩", WA_NORMAL, Renderer::CP_DIALOG_TITLE, NULL);
@@ -6221,10 +6260,12 @@ void TextEditor::handleProjectPanelKey(wint_t ch) {
         break;
     }
     case '\t':
+        if (currentBufferIdx() == -1) break;   // no window to move the focus to
         m_project_panel_focused = false;
         m_renderer->showCursor();
         break;
     case 27:
+        if (handleEscOrAlt()) break;
         ToggleProjectPanel();
         break;
     default:

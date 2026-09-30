@@ -215,6 +215,10 @@ private:
     void insert_line_after(EditorBuffer& buffer, Line* current_p, const std::string& s);
     void process_key(wint_t ch);
     void HandleAltKey(wint_t key);
+    // ESC handling that keeps Alt+<key> (sent as ESC, <key>) working everywhere
+    wint_t readAltFollower();   // key following an ESC within 50 ms, or ERR
+    bool   handleEscOrAlt();    // panels: runs Alt+<key> and returns true; lone ESC → false
+    void   requeueAltKey();     // popups: pushes Alt+<key> back for the main loop
     void handleSmartBlockClose(wint_t closing_char);
     void update_cursor_and_scroll();
     void handleResize();
