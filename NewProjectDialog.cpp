@@ -210,7 +210,7 @@ bool NewProjectDialog::show(Renderer& renderer, ProjectTemplate& out_template,
     if (res.accepted()) {
         out_template.selected_libraries.clear();
         for (size_t i = 0; i < dlg.m_libraries.size(); ++i)
-            if (dlg.m_lib_selected[i])
+            if (dlg.m_lib_selected[i] && !dlg.isWatcom())   // Linux libraries mean nothing to Watcom
                 out_template.selected_libraries.push_back(dlg.m_libraries[i]);
     }
 
@@ -304,6 +304,23 @@ void NewProjectDialog::onInit()
     setGroupBtnFocus(0);
 }
 
+//  pressBrowse - Enter/Space, click or Alt+B on the Browse button: focus it,
+//  play the standard button press animation, then open the directory picker.
+void NewProjectDialog::pressBrowse()
+{
+    if (activeTab() != 0) return;
+    setGroupFocus(GRP_PATH);
+    groups()[GRP_PATH].inner_focus = PATH_INNER_BROWSE;
+    armCustomPress([this]() { openBrowse(); return HandleResult::CONTINUE; });
+}
+
+bool NewProjectDialog::onAltKey(char lower)
+{
+    if (lower != 'b' || activeTab() != 0) return false;
+    pressBrowse();
+    return true;
+}
+
 //  openBrowse - shared by the Browse control and its mouse handler
 void NewProjectDialog::openBrowse()
 {
@@ -372,10 +389,10 @@ void NewProjectDialog::onDraw(Renderer& renderer, int startx, int starty)
                 renderer.drawText(inner_x + FIELD_X, fy, disp, Renderer::CP_LIST_BOX);
             }
 
-            // Browse control (right of the path field)
+            // Browse button (right of the path field; its shadow uses the row below)
             const bool browse_focused = grp_focused && (inner_focus == PATH_INNER_BROWSE);
-            renderer.drawText(startx + BROWSE_BTN_X, starty + BROWSE_BTN_Y, "[ Browse ]",
-                              browse_focused ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
+            renderer.drawButton(startx + BROWSE_BTN_X, starty + BROWSE_BTN_Y, BROWSE_LABEL,
+                                browse_focused, customPressed());
 
             // Checkbox row
             const int fy3 = starty + PATH_BOX_Y + 3;
@@ -394,22 +411,25 @@ void NewProjectDialog::onDraw(Renderer& renderer, int startx, int starty)
 
             // Row 1: Build system radios
             renderer.drawText(inner_x + 2, fy, "Build system:", Renderer::CP_DIALOG);
-            const char* bs_labels[] = {"CMake", "Make", "Meson"};
             int rx = inner_x + 16;
-            for (int i = 0; i < 3; ++i) {
+            for (int i = 0; i < kBuildSystemCount; ++i) {
                 bool is_selected = (m_template.build_system == i);
                 bool is_cursor   = grp_focused && (inner_focus == 0) && (bs_cursor_ == i);
                 std::string mark = is_selected ? "(•)" : "( )";
-                renderer.drawText(rx, fy, mark + " " + bs_labels[i],
+                renderer.drawText(rx, fy, mark + " " + kBuildSystemLabels[i],
                                   is_cursor ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
-                rx += 4 + (int)strlen(bs_labels[i]) + 1;  // mark(3) + space + label + gap
+                rx += 4 + (int)strlen(kBuildSystemLabels[i]) + 1;  // mark(3) + space + label + gap
             }
 
-            // Row 2: C++ Standard combo
+            // Row 2: C++ Standard combo (Watcom's wpp has no -std= switch)
             const int fy2 = starty + CFG_BOX_Y + 2;
             renderer.drawText(inner_x + 2, fy2, "C++ Standard:", Renderer::CP_DIALOG);
-            cfg_combo_.draw(renderer, startx, starty,
-                            grp_focused && (inner_focus == 1));
+            if (isWatcom())
+                renderer.drawText(inner_x + 16, fy2, "n/a - set by Open Watcom's compiler",
+                                  Renderer::CP_DIALOG);
+            else
+                cfg_combo_.draw(renderer, startx, starty,
+                                grp_focused && (inner_focus == 1));
 
             // Row 3: Checkboxes
             const int fy3 = starty + CFG_BOX_Y + 3;
@@ -427,7 +447,14 @@ void NewProjectDialog::onDraw(Renderer& renderer, int startx, int starty)
     }
 
     // ───────────────────────────────────────────────────────── Tab 1: Libraries
-    if (active == 1) {
+    if (active == 1 && isWatcom()) {
+        const int lib_x  = startx + LIB_BOX_X + 1;
+        const int lib_y0 = starty + LIB_BOX_Y + 1;
+        renderer.drawText(lib_x + 1, lib_y0 + 1,
+                          "System libraries are not used by Open Watcom projects.", Renderer::CP_DIALOG);
+        renderer.drawText(lib_x + 1, lib_y0 + 2,
+                          "Add Watcom libraries to the generated makefile instead.", Renderer::CP_DIALOG);
+    } else if (active == 1) {
         const int lib_x   = startx + LIB_BOX_X + 1;
         const int lib_y0  = starty + LIB_BOX_Y + 1;
         bool grp_focused  = (getFocusedGroup() == GRP_LIB);
@@ -569,7 +596,7 @@ HandleResult NewProjectDialog::onKey(wint_t ch)
             }
         } else if (g.inner_focus == PATH_INNER_BROWSE) {
             if (ch == ' ' || ch == KEY_ENTER || ch == 10 || ch == 13)
-                openBrowse();
+                pressBrowse();
         } else {  // PATH_INNER_CHECK
             if (ch == ' ')
                 m_template.create_project_dir = !m_template.create_project_dir;
@@ -584,13 +611,15 @@ HandleResult NewProjectDialog::onKey(wint_t ch)
         if (ch == KEY_UP || ch == KEY_DOWN) {
             if (ch == KEY_DOWN) g.inner_focus = (g.inner_focus + 1) % 3;
             else                g.inner_focus = (g.inner_focus == 0) ? 2 : g.inner_focus - 1;
+            if (g.inner_focus == 1 && isWatcom())          // no C++ standard to pick
+                g.inner_focus = (ch == KEY_DOWN) ? 2 : 0;
             return HandleResult::CONTINUE;
         }
 
         if (g.inner_focus == 0) {
             if (ch == KEY_LEFT  && bs_cursor_ > 0)
             { --bs_cursor_; m_template.build_system = bs_cursor_; return HandleResult::CONTINUE; }
-            if (ch == KEY_RIGHT && bs_cursor_ < 2)
+            if (ch == KEY_RIGHT && bs_cursor_ < kBuildSystemCount - 1)
             { ++bs_cursor_; m_template.build_system = bs_cursor_; return HandleResult::CONTINUE; }
         } else if (g.inner_focus == 1) {
             cfg_combo_.handleKey(ch);
@@ -606,6 +635,7 @@ HandleResult NewProjectDialog::onKey(wint_t ch)
     }
 
     //  Library list 
+    if (grp == GRP_LIB && isWatcom()) return HandleResult::CONTINUE;
     if (grp == GRP_LIB) {
         const int count = (int)m_lib_filtered.size();
 
@@ -668,7 +698,7 @@ bool NewProjectDialog::onMouseClick(const MEVENT& ev, int startx, int starty)
     if (active == 0) {
         // C++ Standard combo. Handle it first: when open, its dropdown floats
         // over the controls below, so clicks there must reach the list.
-        if (cfg_combo_.handleMouse(startx, starty, ev.x, ev.y)) {
+        if (!isWatcom() && cfg_combo_.handleMouse(startx, starty, ev.x, ev.y)) {
             setGroupFocus(GRP_CFG);
             groups()[GRP_CFG].inner_focus = 1;
             return true;
@@ -677,9 +707,9 @@ bool NewProjectDialog::onMouseClick(const MEVENT& ev, int startx, int starty)
         // Build-system radios
         const int radio_y = starty + CFG_BOX_Y + 1;
         if (ev.y == radio_y) {
-            const char* bs_labels[] = {"CMake", "Make", "Meson"};
+            const char* const* bs_labels = kBuildSystemLabels;
             int rx = inner_x + 16;
-            for (int i = 0; i < 3; ++i) {
+            for (int i = 0; i < kBuildSystemCount; ++i) {
                 if (ev.x >= rx && ev.x < rx + 4 + (int)strlen(bs_labels[i])) {
                     bs_cursor_ = i;
                     m_template.build_system = i;
@@ -691,13 +721,11 @@ bool NewProjectDialog::onMouseClick(const MEVENT& ev, int startx, int starty)
             }
         }
 
-        // "[ Browse ]" control (Location box) - opens the directory picker.
+        // Browse button (Location box) - opens the directory picker.
         if (ev.y == starty + BROWSE_BTN_Y &&
             ev.x >= startx + BROWSE_BTN_X &&
-            ev.x <  startx + BROWSE_BTN_X + (int)std::string("[ Browse ]").size()) {
-            setGroupFocus(GRP_PATH);
-            groups()[GRP_PATH].inner_focus = PATH_INNER_BROWSE;
-            openBrowse();
+            ev.x <  startx + BROWSE_BTN_X + BROWSE_BTN_W) {
+            pressBrowse();
             return true;
         }
 
@@ -729,6 +757,7 @@ bool NewProjectDialog::onMouseClick(const MEVENT& ev, int startx, int starty)
     }
 
     // active == 1: Libraries tab - click a row to toggle its selection.
+    if (isWatcom()) return false;
     const int lib_x  = startx + LIB_BOX_X + 1;
     const int lib_y0 = starty + LIB_BOX_Y + 1;
     if (ev.x >= lib_x && ev.x < lib_x + LIB_ITEM_W) {
@@ -765,6 +794,11 @@ bool NewProjectDialog::onTab(bool forward)
 
     if (forward) {
         if (cur == GRP_TABS) {
+            if (active == 1 && isWatcom()) {           // nothing to focus on the Libraries tab
+                setGroupFocus(btn_row);
+                setGroupBtnFocus(BTN_IDX_CREATE);
+                return true;
+            }
             setGroupFocus(active == 0 ? GRP_NAME : GRP_LIB);
             return true;
         }
@@ -785,7 +819,7 @@ bool NewProjectDialog::onTab(bool forward)
         // Leaving the row backward from the first button lands on the last
         // content group of the active tab; otherwise step Cancel → Create.
         if (getBtnInnerFocus() == BTN_IDX_CREATE) {
-            setGroupFocus(active == 0 ? GRP_CFG : GRP_LIB);
+            setGroupFocus(active == 0 ? GRP_CFG : (isWatcom() ? GRP_TABS : GRP_LIB));
             return true;
         }
         return false;

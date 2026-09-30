@@ -16,14 +16,12 @@ ProjectPropertiesDialog::ProjectPropertiesDialog(Renderer& renderer,
     , m_sys_libs_(all_libs)
 {
     // Build system radio
-    if      (project.build_system == "make")  bs_cursor_ = 1;
-    else if (project.build_system == "meson") bs_cursor_ = 2;
-    else                                       bs_cursor_ = 0;
+    bs_cursor_ = buildSystemIndex(project.build_system);
 
     // C++ standard combo
     for (int i = 0; i < (int)standards_.size(); ++i)
         if (standards_[i] == project.compiler_settings.cpp_standard) { std_idx_ = i; break; }
-    cfg_combo_ = ComboBox(standards_, std_idx_, /*x=*/18, /*y=*/CFG_BOX_Y + 2, /*w=*/12);
+    cfg_combo_ = ComboBox(standards_, std_idx_, /*x=*/18, /*y=*/CFG_BOX_Y + 3, /*w=*/12);
 
     // Mark which system libs are already used by the project
     m_sys_lib_used_.assign(m_sys_libs_.size(), false);
@@ -47,15 +45,18 @@ bool ProjectPropertiesDialog::show(Renderer& renderer, GediProject& project,
     if (res.accepted()) {
         project.targets = dlg.tgt_list_;
 
-        const char* bs_names[] = {"cmake", "make", "meson"};
-        project.build_system = bs_names[dlg.bs_cursor_];
+        // Switching an imported makefile project to another build system hands
+        // the build over to gedi, which then generates the new build file.
+        if (project.build_system != kBuildSystemKeys[dlg.bs_cursor_])
+            project.build_file.clear();
+        project.build_system = kBuildSystemKeys[dlg.bs_cursor_];
 
         project.compiler_settings.cpp_standard = dlg.cfg_combo_.selectedText();
         project.cpp_standard = project.compiler_settings.cpp_standard;
 
         project.libraries.clear();
         for (int i = 0; i < (int)dlg.m_sys_libs_.size(); ++i)
-            if (dlg.m_sys_lib_used_[i])
+            if (dlg.m_sys_lib_used_[i] && !dlg.isWatcom())
                 project.libraries.push_back(dlg.m_sys_libs_[i]);
     }
 
@@ -105,8 +106,11 @@ void ProjectPropertiesDialog::rebuildLibEntries()
         }
     }
 
+    // Open Watcom projects don't use the host's (pkg-config) libraries
+    const bool sys_libs = !isWatcom();
+
     //  Section 2: system libs in use 
-    {
+    if (sys_libs) {
         std::vector<LibEntry> sec;
         for (int i = 0; i < (int)m_sys_libs_.size(); ++i) {
             if (!m_sys_lib_used_[i]) continue;
@@ -124,7 +128,7 @@ void ProjectPropertiesDialog::rebuildLibEntries()
     }
 
     //  Section 3: system libs available 
-    {
+    if (sys_libs) {
         std::vector<LibEntry> sec;
         for (int i = 0; i < (int)m_sys_libs_.size(); ++i) {
             if (m_sys_lib_used_[i]) continue;
@@ -307,20 +311,22 @@ void ProjectPropertiesDialog::onDraw(Renderer& renderer, int startx, int starty)
         int  inner_focus = groups()[GRP_CFG].inner_focus;
 
         renderer.drawText(inner_x + 2, fy, "Build system:", Renderer::CP_DIALOG);
-        const char* bs_labels[] = {"CMake", "Make", "Meson"};
-        int rx = inner_x + 16;
-        for (int i = 0; i < 3; ++i) {
+        // 2x2 grid - four radios don't fit on one row of this narrow box
+        for (int i = 0; i < kBuildSystemCount; ++i) {
             bool is_selected = (bs_cursor_ == i);
             bool is_cursor   = grp_focused && (inner_focus == 0) && is_selected;
             std::string mark = is_selected ? "(•)" : "( )";
-            renderer.drawText(rx, fy, mark + " " + bs_labels[i],
+            renderer.drawText(inner_x + BS_COL_X + (i % 2) * BS_COL_W, fy + i / 2,
+                              mark + " " + kBuildSystemLabels[i],
                               is_cursor ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
-            rx += 4 + (int)strlen(bs_labels[i]) + 1;
         }
 
-        const int fy2 = starty + CFG_BOX_Y + 2;
+        const int fy2 = starty + CFG_BOX_Y + 3;
         renderer.drawText(inner_x + 2, fy2, "C++ Standard:", Renderer::CP_DIALOG);
-        cfg_combo_.draw(renderer, startx, starty, grp_focused && (inner_focus == 1));
+        if (isWatcom())
+            renderer.drawText(inner_x + BS_COL_X, fy2, "n/a (Open Watcom)", Renderer::CP_DIALOG);
+        else
+            cfg_combo_.draw(renderer, startx, starty, grp_focused && (inner_focus == 1));
     }
 
     //  Targets box 
@@ -432,11 +438,14 @@ HandleResult ProjectPropertiesDialog::onKey(wint_t ch)
         if (ch == KEY_UP || ch == KEY_DOWN) {
             if (ch == KEY_DOWN) g.inner_focus = (g.inner_focus + 1) % 2;
             else                g.inner_focus = (g.inner_focus == 0) ? 1 : 0;
+            if (isWatcom()) g.inner_focus = 0;       // no C++ standard to pick
             return HandleResult::CONTINUE;
         }
         if (g.inner_focus == 0) {
-            if (ch == KEY_LEFT  && bs_cursor_ > 0) { --bs_cursor_; return HandleResult::CONTINUE; }
-            if (ch == KEY_RIGHT && bs_cursor_ < 2) { ++bs_cursor_; return HandleResult::CONTINUE; }
+            if (ch == KEY_LEFT  && bs_cursor_ > 0)
+            { --bs_cursor_; rebuildLibEntries(); return HandleResult::CONTINUE; }
+            if (ch == KEY_RIGHT && bs_cursor_ < kBuildSystemCount - 1)
+            { ++bs_cursor_; rebuildLibEntries(); return HandleResult::CONTINUE; }
         } else {
             cfg_combo_.handleKey(ch);
         }
@@ -573,25 +582,22 @@ bool ProjectPropertiesDialog::onMouseClick(const MEVENT& ev, int startx, int sta
     const int inner_x = startx + 2;
 
     // C++ Standard combo first: its open dropdown floats over nearby rows.
-    if (cfg_combo_.handleMouse(startx, starty, ev.x, ev.y)) {
+    if (!isWatcom() && cfg_combo_.handleMouse(startx, starty, ev.x, ev.y)) {
         setGroupFocus(GRP_CFG);
         groups()[GRP_CFG].inner_focus = 1;
         return true;
     }
 
-    // Build-system radios (radio row)
+    // Build-system radios (2x2 grid)
     const int fy = starty + CFG_BOX_Y + 1;
-    if (ev.y == fy) {
-        const char* bs_labels[] = {"CMake", "Make", "Meson"};
-        int rx = inner_x + 16;
-        for (int i = 0; i < 3; ++i) {
-            if (ev.x >= rx && ev.x < rx + 4 + (int)strlen(bs_labels[i])) {
-                bs_cursor_ = i;
-                setGroupFocus(GRP_CFG);
-                groups()[GRP_CFG].inner_focus = 0;
-                return true;
-            }
-            rx += 4 + (int)strlen(bs_labels[i]) + 1;
+    for (int i = 0; i < kBuildSystemCount; ++i) {
+        const int rx = inner_x + BS_COL_X + (i % 2) * BS_COL_W;
+        if (ev.y == fy + i / 2 && ev.x >= rx && ev.x < rx + 4 + (int)strlen(kBuildSystemLabels[i])) {
+            bs_cursor_ = i;
+            rebuildLibEntries();
+            setGroupFocus(GRP_CFG);
+            groups()[GRP_CFG].inner_focus = 0;
+            return true;
         }
     }
     return false;

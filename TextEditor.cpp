@@ -5,6 +5,7 @@
 #include "PickTargetDialog.h"
 #include "utils.h"
 #include "TemplateEngine.h"
+#include "MakefileImporter.h"
 
 #include "curses_compat.h"
 #include <clang-c/Index.h>
@@ -437,6 +438,7 @@ void TextEditor::read_file(EditorBuffer& buffer) {
     }
 
     SyntaxHighlighter::setSyntaxType(buffer);
+    applyProjectCodeModel(buffer);
     if (m_config.syntax_highlight >= 2)
         ClangHighlighter::requestHighlight(buffer, m_buildSystem.get());
 }
@@ -2785,6 +2787,7 @@ bool TextEditor::lineHasBreakpoint(const std::string& absfile, int line) const {
 }
 
 void TextEditor::ToggleBreakpoint() {
+    if (refuseForProject(EditorAction::ACT_DEBUG_TOGGLE_BREAKPOINT)) return;
     if (currentBufferIdx() == -1) return;
     EditorBuffer& buf = currentBuffer();
     if (buf.is_new_file) { msgwin("Save the file before setting breakpoints."); return; }
@@ -2840,6 +2843,7 @@ bool TextEditor::startDebugSession() {
 
 void TextEditor::DebugStartOrContinue() {
     if (m_debugging && m_debugger) { m_debugger->run(); return; }   // resume a stopped session
+    if (refuseForProject(EditorAction::ACT_DEBUG_START)) return;
 
     // Turbo "Run/Go": with no breakpoints set, just run the program normally
     // (visible/interactive in the output pane). Only start the debugger when there
@@ -2852,6 +2856,7 @@ void TextEditor::DebugStartOrContinue() {
 }
 
 void TextEditor::DebugRunToCursor() {
+    if (!m_debugging && refuseForProject(EditorAction::ACT_DEBUG_RUN_TO_CURSOR)) return;
     if (currentBufferIdx() == -1 || !currentBuffer().current_line) return;
     if (currentBuffer().is_new_file) { msgwin("Save the file before debugging."); return; }
     std::string file = get_full_path(currentBuffer().filename);
@@ -2929,6 +2934,7 @@ void TextEditor::refreshDebugData() {
 }
 
 void TextEditor::AddWatch() {
+    if (!m_debugging && refuseForProject(EditorAction::ACT_DEBUG_ADD_WATCH)) return;
     if (currentBufferIdx() == -1 || !currentBuffer().current_line) return;
     const std::string& t = currentBuffer().current_line->text;
     int c0 = currentBuffer().cursor_col - 1;
@@ -3065,6 +3071,7 @@ void TextEditor::drawDebugPanel() {
 }
 
 void TextEditor::FocusDebugPanel() {
+    if (!m_debugging && refuseForProject(EditorAction::ACT_DEBUG_FOCUS_PANEL)) return;
     if (!m_debugging || m_debug_running || m_debug_cur_line <= 0) {
         msgwin("The Variables window is available while the program is stopped.");
         return;
@@ -3771,23 +3778,34 @@ void TextEditor::CreateNewProject()
         }
 
         //  Source file (main.cpp, optional) 
+        const std::string bs_key = kBuildSystemKeys[temp.build_system];
+        const bool watcom = bs_key == "watcom";
         const std::filesystem::path srcFile = root / "main.cpp";
         if (temp.create_main) {
             std::ofstream s(srcFile);
-            s << "#include <iostream>\n\n"
-              << "int main() {\n"
-              << "    std::cout << \"Hello, " << temp.name << "!\" << std::endl;\n"
-              << "    return 0;\n"
-              << "}\n";
+            if (watcom) {
+                // stdio works with every Watcom target, including 16-bit DOS
+                s << "#include <stdio.h>\n\n"
+                  << "int main( void )\n"
+                  << "{\n"
+                  << "    printf( \"Hello, " << temp.name << "!\\n\" );\n"
+                  << "    return 0;\n"
+                  << "}\n";
+            } else {
+                s << "#include <iostream>\n\n"
+                  << "int main() {\n"
+                  << "    std::cout << \"Hello, " << temp.name << "!\" << std::endl;\n"
+                  << "    return 0;\n"
+                  << "}\n";
+            }
         }
 
         //  Project model - the single source of truth the build file is
         //  rendered from (see regenerateBuildFile / the templates/ engine).
-        const char* bs_names[] = {"cmake", "make", "meson"};
         m_project              = GediProject{};
         m_project.name         = temp.name;
         m_project.root         = root.string();
-        m_project.build_system = bs_names[temp.build_system];
+        m_project.build_system = bs_key;
         m_project.cpp_standard = temp.cpp_standard;
         m_project.compiler_settings.cpp_standard = temp.cpp_standard;
         if (temp.create_main) {
@@ -3812,7 +3830,9 @@ void TextEditor::CreateNewProject()
             (void)t;
 
             std::ofstream gi(root / ".gitignore");
-            if (temp.build_system == 0) {
+            if (watcom) {
+                gi << "*.obj\n*.exe\n*.lib\n*.map\n*.err\n";
+            } else if (temp.build_system == 0) {
                 gi << "build/\n.cache/\nCMakeFiles/\nCMakeCache.txt\n"
                       "cmake_install.cmake\ncompile_commands.json\n*.cmake\n";
             } else if (temp.build_system == 1) {
@@ -3842,16 +3862,19 @@ void TextEditor::CreateNewProject()
 
 void TextEditor::OpenProject()
 {
-    namespace fs = std::filesystem;
-
     std::string path = FileBrowser::open(*m_renderer, "Open Project", {
+        {"Projects & Makefiles",    "*.gproj;Makefile;makefile;GNUmakefile;*.mk;*.mak"},
         {"Project Files (*.gproj)", "*.gproj"},
+        {"Makefiles",               "Makefile;makefile;GNUmakefile;*.mk;*.mak;*.make"},
         {"All Files (*)",           ""},
     });
     if (path.empty()) return;
 
-    if (path.size() < 6 || path.substr(path.size() - 6) != ".gproj") {
-        msgwin("Please select a .gproj project file.");
+    const bool is_gproj = path.size() >= 6 && path.substr(path.size() - 6) == ".gproj";
+    if (!is_gproj) {
+        if (MakefileImporter::looksLikeMakefile(path) ||
+            msgwin_yesno("Import this file as a Makefile project?", path) == 1)
+            ImportMakefileProject(path);
         return;
     }
 
@@ -3861,35 +3884,184 @@ void TextEditor::OpenProject()
         return;
     }
     m_project = std::move(proj);
+    activateLoadedProject();
+}
+
+void TextEditor::activateLoadedProject()
+{
+    namespace fs = std::filesystem;
+
+    auto openFile = [&](const std::string& full) {
+        for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i)
+            if (m_bufferManager->getBuffer(i).filename == full) return;
+        if (!fs::exists(full)) return;
+        m_bufferManager->addBuffer();
+        currentBuffer().filename = full;
+        read_file(currentBuffer());
+    };
+
+    // Buffers that were already open pick up the project's include paths
+    for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i)
+        applyProjectCodeModel(m_bufferManager->getBuffer(i));
+
+    if (m_project.hasExternalBuildFile()) {
+        // Imported projects can be large: open just the makefile and show the
+        // project panel to browse the rest.
+        openFile((fs::path(m_project.root) / m_project.build_file).lexically_normal().string());
+        m_project_panel_open    = true;
+        m_project_panel_focused = true;
+        m_project_panel_cursor  = 0;
+        m_project_panel_scroll  = 0;
+        handleResize();
+        return;
+    }
 
     // Open every tracked source file (from targets)
-    for (const auto& tgt : m_project.targets) {
-        for (const auto& src : tgt.sources) {
-            std::string full = (fs::path(m_project.root) / src).string();
-            if (fs::exists(full)) {
-                m_bufferManager->addBuffer();
-                currentBuffer().filename = full;
-                read_file(currentBuffer());
-            }
-        }
-    }
+    for (const auto& tgt : m_project.targets)
+        for (const auto& src : tgt.sources)
+            openFile((fs::path(m_project.root) / src).lexically_normal().string());
 
     // Open the build file
-    std::string build_filename;
-    if      (m_project.build_system == "cmake") build_filename = "CMakeLists.txt";
-    else if (m_project.build_system == "make")  build_filename = "Makefile";
-    else if (m_project.build_system == "meson") build_filename = "meson.build";
-
-    if (!build_filename.empty()) {
-        std::string bf = (fs::path(m_project.root) / build_filename).string();
-        if (fs::exists(bf)) {
-            m_bufferManager->addBuffer();
-            currentBuffer().filename = bf;
-            read_file(currentBuffer());
-        }
-    }
+    const std::string build_filename = m_project.buildFile();
+    if (build_filename != "unknown")
+        openFile((fs::path(m_project.root) / build_filename).lexically_normal().string());
 
     handleResize();
+}
+
+void TextEditor::ImportMakefileProject(const std::string& makefile)
+{
+    namespace fs = std::filesystem;
+
+    {
+        int w = m_renderer->getWidth(), h = m_renderer->getHeight();
+        const std::string wait_msg = " Reading makefiles... ";
+        m_renderer->drawText((w - (int)wait_msg.size()) / 2, h - 1,
+                             wait_msg, Renderer::CP_STATUS_BAR_HIGHLIGHT);
+        m_renderer->refresh();
+    }
+
+    MakefileImportResult res = MakefileImporter::import(makefile);
+    if (!res.ok) {
+        msgwin("Could not import makefile:\n" + res.error);
+        return;
+    }
+
+    //  Summary 
+    GediProject& proj = res.project;
+    const bool wmake = proj.make_tool == "wmake";
+    std::string summary = "Imported '" + proj.name + "' from " +
+                          std::to_string(1 + proj.aux_build_files.size()) +
+                          (wmake ? " Open Watcom makefile(s):\n" : " makefile(s):\n");
+    const size_t max_listed = 8;
+    for (size_t i = 0; i < proj.targets.size() && i < max_listed; ++i) {
+        const auto& t = proj.targets[i];
+        summary += "  " + t.name + " [" + t.abbr() + "] - " +
+                   std::to_string(t.sources.size()) + " file(s)\n";
+    }
+    if (proj.targets.size() > max_listed)
+        summary += "  ... and " + std::to_string(proj.targets.size() - max_listed) + " more target(s)\n";
+    summary += std::to_string(res.source_count) + " source/header file(s) in total.";
+    if (!proj.include_dirs.empty())
+        summary += "\n" + std::to_string(proj.include_dirs.size()) + " include dir(s) used for code navigation.";
+    if (!res.warnings.empty()) {
+        summary += "\n\nNotes:";
+        for (size_t i = 0; i < res.warnings.size() && i < 4; ++i)
+            summary += "\n- " + res.warnings[i];
+        if (res.warnings.size() > 4)
+            summary += "\n- (" + std::to_string(res.warnings.size() - 4) + " more)";
+    }
+    summary += "\n\nThe makefile stays in charge of the build;\ngedi runs '" +
+               std::string(wmake ? "wmake" : "make") + "' but never rewrites it.";
+    msgwin(summary);
+
+    //  Offer to save a .gproj next to the makefile 
+    const std::string gproj = proj.projectFilePath();
+    bool save = msgwin_yesno("Save this project as a .gproj file?", gproj) == 1;
+    if (save && fs::exists(gproj) &&
+        msgwin_yesno("Project file already exists. Overwrite?", gproj) != 1)
+        save = false;
+    if (save && !proj.save())
+        msgwin("Could not write " + gproj);
+
+    m_project = std::move(proj);
+    activateLoadedProject();
+}
+
+std::string TextEditor::unavailableReason(EditorAction action) const
+{
+    const bool watcom = m_project.usesWmake();
+    switch (action) {
+    case EditorAction::ACT_COMPILE_OPTIONS:
+        if (m_project.hasExternalBuildFile())
+            return "Compiler options for this project are set in its makefile (" +
+                   m_project.build_file + "), which gedi builds with unchanged.";
+        if (watcom)
+            return "These are GCC/Clang options. Open Watcom's compiler options are set "
+                   "in the project's makefile (CXXFLAGS, SYSTEM, MODEL).";
+        break;
+    case EditorAction::ACT_PROJECT_PROPERTIES:
+        // gedi-generated Watcom projects keep Properties (targets, build system);
+        // for an imported Watcom makefile they have nothing to act on.
+        if (watcom && m_project.hasExternalBuildFile())
+            return "Project properties (build system, C++ standard, libraries) "
+                   "don't apply to an Open Watcom project: its makefile defines the whole build.";
+        break;
+    case EditorAction::ACT_RUN:
+    case EditorAction::ACT_DEBUG_START:
+    case EditorAction::ACT_DEBUG_RUN_TO_CURSOR:
+    case EditorAction::ACT_DEBUG_STEP_OVER:
+    case EditorAction::ACT_DEBUG_STEP_INTO:
+    case EditorAction::ACT_DEBUG_STEP_OUT:
+    case EditorAction::ACT_DEBUG_TOGGLE_BREAKPOINT:
+    case EditorAction::ACT_DEBUG_ADD_WATCH:
+    case EditorAction::ACT_DEBUG_FOCUS_PANEL:
+        if (watcom) {
+            std::string compile_key = m_keyBindings->getLabel(EditorAction::ACT_COMPILE);
+            return "Running and debugging aren't available for Open Watcom projects: "
+                   "gedi's debugger (gdb) can't run or debug Watcom-built programs "
+                   "such as DOS executables.\n\n"
+                   "Use Build > Compile" + (compile_key.empty() ? "" : " (" + compile_key + ")") +
+                   " to build with wmake.";
+        }
+        break;
+    default:
+        break;
+    }
+    return "";
+}
+
+bool TextEditor::refuseForProject(EditorAction action)
+{
+    const std::string why = unavailableReason(action);
+    if (why.empty()) return false;
+    msgwin(why);
+    return true;
+}
+
+void TextEditor::applyProjectCodeModel(EditorBuffer& buffer)
+{
+    namespace fs = std::filesystem;
+    if (!m_project.hasExternalBuildFile() || buffer.filename.empty()) return;
+    const std::string flags = m_project.codeModelFlags();
+
+    // Only files that belong to the project: tracked sources, or anything below the root.
+    std::error_code ec;
+    const fs::path abs = fs::absolute(buffer.filename, ec).lexically_normal();
+    const fs::path root = fs::path(m_project.root).lexically_normal();
+    bool belongs = false;
+    const std::string rel = abs.lexically_relative(root).generic_string();
+    if (!rel.empty() && rel.rfind("..", 0) != 0) belongs = true;
+    for (size_t t = 0; !belongs && t < m_project.targets.size(); ++t)
+        for (const auto& s : m_project.targets[t].sources)
+            if ((root / s).lexically_normal() == abs) { belongs = true; break; }
+    if (!belongs) return;
+
+    buffer.compiler_settings.cpp_standard = m_project.compiler_settings.cpp_standard;
+    if (!flags.empty() && buffer.compiler_settings.optional_flags.find(flags) == std::string::npos) {
+        std::string& of = buffer.compiler_settings.optional_flags;
+        of += (of.empty() ? "" : " ") + flags;
+    }
 }
 
 
@@ -3984,10 +4156,16 @@ void TextEditor::AddFileToProject()
             m_project.save();
         }
 
-        // Update the build file
+        // Update the build file (never an imported, user-maintained one)
         bool build_ok = false;
         std::string build_file;
-        if (m_project.build_system == "cmake") {
+        if (m_project.hasExternalBuildFile()) {
+            build_ok = true;
+        } else if (m_project.build_system == "watcom") {
+            build_file = (fs::path(m_project.root) / m_project.buildFile()).string();
+            regenerateBuildFile();                    // rendered from templates/watcom.tmpl
+            build_ok = true;
+        } else if (m_project.build_system == "cmake") {
             build_file = (fs::path(m_project.root) / "CMakeLists.txt").string();
             build_ok   = m_project.addFileToCMakeLists(build_file, info.filepath);
         } else if (m_project.build_system == "make") {
@@ -4011,7 +4189,10 @@ void TextEditor::AddFileToProject()
         currentBuffer().filename = info.filepath;
         read_file(currentBuffer());
 
-        if (!build_ok)
+        if (m_project.hasExternalBuildFile())
+            msgwin("File added to the project.\nRemember to add it to " + m_project.build_file +
+                   " as well - gedi does not edit imported makefiles.");
+        else if (!build_ok)
             msgwin("File added to project, but build file could not be updated automatically.");
 
         handleResize();
@@ -4112,6 +4293,27 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
         if (no_project && item_disabled.size() > 5) item_disabled[5] = true; // Add File
     }
 
+    // Grey out what can't work for the loaded project (see unavailableReason)
+    auto disableFor = [&](size_t idx, EditorAction a) {
+        if (idx < item_disabled.size() && !unavailableReason(a).empty()) item_disabled[idx] = true;
+    };
+    if (menu_id == 4) {                                     // Build
+        disableFor(0, EditorAction::ACT_RUN);
+        disableFor(2, EditorAction::ACT_COMPILE_OPTIONS);
+    } else if (menu_id == 5 && !m_debugging) {              // Debug (a live session stays usable)
+        disableFor(0,  EditorAction::ACT_DEBUG_START);
+        disableFor(1,  EditorAction::ACT_DEBUG_START);      // Program Reset: nothing to reset
+        disableFor(3,  EditorAction::ACT_DEBUG_STEP_OVER);
+        disableFor(4,  EditorAction::ACT_DEBUG_STEP_INTO);
+        disableFor(5,  EditorAction::ACT_DEBUG_STEP_OUT);
+        disableFor(6,  EditorAction::ACT_DEBUG_RUN_TO_CURSOR);
+        disableFor(8,  EditorAction::ACT_DEBUG_TOGGLE_BREAKPOINT);
+        disableFor(9,  EditorAction::ACT_DEBUG_ADD_WATCH);
+        disableFor(11, EditorAction::ACT_DEBUG_FOCUS_PANEL);
+    } else if (menu_id == 6) {                              // Project
+        disableFor(2, EditorAction::ACT_PROJECT_PROPERTIES);
+    }
+
     if (menu_id == 7) { // Window menu
         finalMenuItems.push_back(" ----------------- ");
         for(size_t i = 0; i < m_bufferManager->bufferCount() && i < 10; ++i) {
@@ -4153,6 +4355,12 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
     m_renderer->drawShadow(x,y,w,h);
     nodelay(stdscr, FALSE);
     int selection = 1;
+    // Start on the first usable item (the first may be greyed out)
+    for (int k = 1; k <= (int)finalMenuItems.size(); ++k) {
+        const bool off = finalMenuItems[k - 1].find("---") != std::string::npos ||
+                         (k - 1 < (int)item_disabled.size() && item_disabled[k - 1]);
+        if (!off) { selection = k; break; }
+    }
     wint_t ch;
     while(true) {
         m_renderer->drawBox(x, y, w, h, Renderer::CP_MENU_ITEM, Renderer::SINGLE);
@@ -4167,8 +4375,14 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
             m_renderer->drawText(x + 1, y + 1 + i, std::string(w - 2, ' '), Renderer::CP_MENU_ITEM);
             bool is_selected = (static_cast<int>(i) + 1) == selection;
             bool is_disabled = (i < item_disabled.size() && item_disabled[i]);
-            int text_color = is_disabled ? Renderer::CP_DIALOG
-                           : (is_selected ? Renderer::CP_MENU_SELECTED : Renderer::CP_MENU_ITEM);
+            if (is_disabled) {
+                // Greyed out, and no highlighted hotkey letter - it can't be picked
+                std::string plain = finalMenuItems[i];
+                plain.erase(std::remove(plain.begin(), plain.end(), '&'), plain.end());
+                m_renderer->drawText(x + 2, y + 1 + i, plain, Renderer::CP_MENU_DISABLED);
+                continue;
+            }
+            int text_color = is_selected ? Renderer::CP_MENU_SELECTED : Renderer::CP_MENU_ITEM;
 
             m_renderer->drawStyledText(x + 2, y + 1 + i, finalMenuItems[i], text_color);
         }
@@ -5129,6 +5343,7 @@ CompilationResult TextEditor::runCompilationProcess() {
 
 // --- Modified to show an immediate "Compiling..." message ---
 void TextEditor::compileAndRun() {
+    if (refuseForProject(EditorAction::ACT_RUN)) return;
     // 1. Immediately show a temporary "Compiling..." dialog
     int h = 5, w = 40;
     int starty = (m_renderer->getHeight() - h) / 2;
@@ -5659,6 +5874,7 @@ void TextEditor::GoToLineDialog() {
 }
 
 void TextEditor::CompileOptionsDialog() {
+    if (refuseForProject(EditorAction::ACT_COMPILE_OPTIONS)) return;
     if (!m_project.name.empty()) {
         // Project mode: settings belong to the project, preview shows cmake/make/meson command
         CompileOptionsDialog::show(*m_renderer, *m_buildSystem,
@@ -5751,6 +5967,13 @@ std::vector<PanelEntry> TextEditor::buildPanelEntries() const
         e.display = build_name;
         entries.push_back(std::move(e));
     }
+    // Included / sub-directory makefiles of an imported project
+    for (const auto& aux : m_project.aux_build_files) {
+        PanelEntry e;
+        e.kind    = PanelEntry::BUILD_FILE;
+        e.display = aux;
+        entries.push_back(std::move(e));
+    }
 
     // One TARGET_HEADER + SOURCE_FILE entries per target
     for (int ti = 0; ti < (int)m_project.targets.size(); ++ti) {
@@ -5813,7 +6036,7 @@ void TextEditor::drawProjectPanel() {
             display = "  " + fs::path(e.display).filename().string();
             if (is_cursor) attr = A_BOLD;
         } else {
-            display = fs::path(e.display).filename().string();
+            display = e.display;
             if (is_cursor) attr = A_BOLD;
         }
 
@@ -5943,6 +6166,13 @@ void TextEditor::handleProjectPanelKey(wint_t ch) {
 
             m_project.targets[ti].sources.erase(m_project.targets[ti].sources.begin() + si);
             m_project.save();
+            if (m_project.build_system == "watcom") {     // template-generated: re-render
+                regenerateBuildFile();
+                for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
+                    EditorBuffer& buf = m_bufferManager->getBuffer(i);
+                    if (buf.filename == build_file_path) { read_file(buf); break; }
+                }
+            }
 
             // Clamp cursor
             int new_count = (int)buildPanelEntries().size();
@@ -6020,7 +6250,7 @@ void TextEditor::openProjectPanelFile(int index) {
         rel = e.display;
     }
 
-    std::string full = (fs::path(m_project.root) / rel).string();
+    std::string full = (fs::path(m_project.root) / rel).lexically_normal().string();
 
     for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
         if (m_bufferManager->getBuffer(i).filename == full) {
@@ -6069,6 +6299,7 @@ void TextEditor::regenerateBuildFile()
 {
     namespace fs = std::filesystem;
     if (m_project.root.empty()) return;
+    if (m_project.hasExternalBuildFile()) return;   // imported makefile: the user owns it
 
     using json = nlohmann::json;
 
@@ -6126,7 +6357,38 @@ void TextEditor::regenerateBuildFile()
             for (const auto& l : lib.link_libraries)
                 all_links.push_back(l);
 
+        // Open Watcom: .obj objects, .exe / .lib / .dll outputs, other targets' .lib files
+        json wat_objects  = json::array();
+        json wat_compiles = json::array();
+        for (const auto& src : tgt.sources) {
+            // C → wcc, C++ → wpp, assembly → wasm; headers are tracked by .AUTODEPEND
+            std::string ext = fs::path(src).extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(),
+                           [](unsigned char c) { return std::tolower(c); });
+            std::string cmd;
+            if (ext == ".c")                                        cmd = "$(CC) $(CFLAGS)";
+            else if (ext == ".cpp" || ext == ".cc" || ext == ".cxx") cmd = "$(CXX) $(CXXFLAGS)";
+            else if (ext == ".asm")                                 cmd = "$(AS) $(ASFLAGS)";
+            else continue;
+            std::string obj = fs::path(src).stem().string() + ".obj";
+            wat_objects.push_back(obj);
+            wat_compiles.push_back({{"obj", obj}, {"src", fs::path(src).generic_string()}, {"cmd", cmd}});
+        }
+        json wat_libs = json::array();          // static libraries of other targets
+        for (const auto& lt : tgt.link_targets)
+            for (const auto& other : m_project.targets)
+                if (other.name == lt && other.isStaticLibrary())
+                    wat_libs.push_back(other.name + ".lib");
+        const std::string wat_file = tgt.name + (tgt.isExecutable() ? ".exe"
+                                               : tgt.isStaticLibrary() ? ".lib" : ".dll");
+
         targets.push_back({
+            {"wat_file",     wat_file},
+            {"wat_objects",  wat_objects},
+            {"wat_compiles", wat_compiles},
+            {"wat_libs",     wat_libs},
+            {"wat_is_lib",   tgt.isStaticLibrary()},
+            {"wat_is_dll",   tgt.isSharedLibrary()},
             {"name",         tgt.name},
             {"type",         tgt.type},
             {"cmake_open",   cmake_open},
@@ -6154,11 +6416,26 @@ void TextEditor::regenerateBuildFile()
         data["make"] = {{"cxxflags", cxxflags}, {"ldflags", ldflags}};
     }
 
+    // Open Watcom: every source directory is an include directory, so headers
+    // next to sources in sub-directories are found (" -i=src -i=src/net").
+    {
+        std::set<std::string> dirs;
+        for (const auto& tgt : m_project.targets)
+            for (const auto& src : tgt.sources) {
+                std::string d = fs::path(src).parent_path().generic_string();
+                if (!d.empty()) dirs.insert(d);
+            }
+        std::string includes;
+        for (const auto& d : dirs) includes += " -i=" + d;
+        data["watcom"] = {{"includes", includes}};
+    }
+
     // ── Pick the template, render, and write the build file ──────────────────
     std::string tmpl_name;
     if      (m_project.build_system == "cmake") tmpl_name = "cmake.tmpl";
     else if (m_project.build_system == "make")  tmpl_name = "make.tmpl";
     else if (m_project.build_system == "meson") tmpl_name = "meson.tmpl";
+    else if (m_project.build_system == "watcom") tmpl_name = "watcom.tmpl";
     else return;
 
     std::string tmpl_path = locateTemplate(tmpl_name);
@@ -6176,6 +6453,7 @@ void TextEditor::regenerateBuildFile()
 void TextEditor::ProjectProperties()
 {
     if (m_project.name.empty()) return;
+    if (refuseForProject(EditorAction::ACT_PROJECT_PROPERTIES)) return;
 
     // Ensure library cache is populated (same wait logic as CreateNewProject)
     if (!m_libs_cached) {

@@ -3,6 +3,7 @@
 
 #include "DialogBase.h"
 #include "LibraryInfo.h"
+#include "GediProject.h"
 #include "Widgets.h"
 #include <string>
 #include <vector>
@@ -11,7 +12,7 @@
 struct ProjectTemplate {
     std::string name;
     std::string path;
-    int         build_system       = 0;     // 0: CMake, 1: Make, 2: Meson
+    int         build_system       = 0;     // index into kBuildSystemKeys (CMake, Make, Meson, Watcom)
     std::string cpp_standard       = "c++17";
     bool        init_git           = false;
     bool        create_main        = true;
@@ -61,7 +62,10 @@ private:
     static constexpr int CFG_BOX_H    = 5;   // radios + C++ Standard + checkboxes
     static constexpr int GRP_W        = INNER_W;          // tab-0 boxes span the content width
 
-    // Browse "button" drawn inside the Location box, right of the path field.
+    // Browse button drawn inside the Location box, right of the path field,
+    // in the standard button style (its shadow takes the row below).
+    static constexpr const char* BROWSE_LABEL = " &Browse ";
+    static constexpr int BROWSE_BTN_W = 8;                              // label without '&'
     static constexpr int BROWSE_BTN_X = 2 + FIELD_X + FIELD_W_PATH + 1; // = 50
     static constexpr int BROWSE_BTN_Y = PATH_BOX_Y + 1;                 // = 9
 
@@ -95,6 +99,12 @@ private:
 
     int activeTab();   // convenience accessor for the tab control's active tab
 
+    // Open Watcom selected: no C++ standard, no system libraries
+    bool isWatcom() const
+    {
+        return std::string_view(kBuildSystemKeys[m_template.build_system]) == "watcom";
+    }
+
     //  Application references 
     Renderer&        renderer_;
     ProjectTemplate& m_template;
@@ -122,6 +132,8 @@ private:
 
     void rebuildFilter();
     void openBrowse();
+    void pressBrowse();                    // press animation, then openBrowse()
+    bool onAltKey(char lower) override;    // Alt+B = Browse
 };
 
 #endif // NEWPROJECTDIALOG_H

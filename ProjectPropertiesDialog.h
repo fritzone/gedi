@@ -33,7 +33,9 @@ private:
     static constexpr int INFO_BOX_Y  = 1;
     static constexpr int INFO_BOX_H  = 3;
     static constexpr int CFG_BOX_Y   = 4;
-    static constexpr int CFG_BOX_H   = 5;
+    static constexpr int CFG_BOX_H   = 5;              // radios on rows 1-2, C++ standard on row 3
+    static constexpr int BS_COL_X    = 16;             // build-system radio grid: first column
+    static constexpr int BS_COL_W    = 11;             //   and column pitch
     static constexpr int TGT_BOX_Y   = 9;
     static constexpr int TGT_BOX_H   = 10;             // rows 9..18
     static constexpr int TGT_VISIBLE = TGT_BOX_H - 2;  // 8 visible rows
@@ -62,7 +64,10 @@ private:
     GediProject& project_;
 
     // Config state
-    int  bs_cursor_ = 0;   // build-system radio (0=cmake,1=make,2=meson)
+    int  bs_cursor_ = 0;   // build-system radio: index into kBuildSystemKeys
+
+    // Open Watcom selected: no C++ standard, no host system libraries
+    bool isWatcom() const { return std::string_view(kBuildSystemKeys[bs_cursor_]) == "watcom"; }
     ComboBox cfg_combo_;
     std::vector<std::string> standards_;
     int std_idx_ = 0;

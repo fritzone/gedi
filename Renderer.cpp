@@ -74,7 +74,8 @@ Renderer::Renderer() {
         {"parameter", CP_SYNTAX_PARAMETER}, {"field", CP_SYNTAX_FIELD},
         {"namespace", CP_SYNTAX_NAMESPACE}, {"enum_constant", CP_SYNTAX_ENUM_CONSTANT},
         {"macro", CP_SYNTAX_MACRO},
-        {"whitespace", CP_WHITESPACE}
+        {"whitespace", CP_WHITESPACE},
+        {"menu_disabled", CP_MENU_DISABLED}
     };
 }
 
@@ -277,6 +278,14 @@ void Renderer::loadColors(const json &theme_data) {
     if (!m_color_pair_map.count("whitespace") ||
         !theme_data.contains("ui") || !theme_data["ui"].contains("whitespace")) {
         init_pair(CP_WHITESPACE, COLOR_BLACK + 8, default_bg);  // brightblack = dark gray
+    }
+
+    // Disabled menu item fallback: dark gray on the menu background (black when
+    // the menu itself is dark gray, as in Obsidian)
+    if (!theme_data.contains("ui") || !theme_data["ui"].contains("menu_disabled")) {
+        short m_fg, m_bg;
+        pair_content(CP_MENU_ITEM, &m_fg, &m_bg);
+        init_pair(CP_MENU_DISABLED, m_bg == COLOR_BLACK + 8 ? COLOR_BLACK : COLOR_BLACK + 8, m_bg);
     }
 
     init_pair(CP_DESKTOP, COLOR_BLUE, COLOR_WHITE);

@@ -56,7 +56,8 @@ public:
         CP_DESKTOP,               // empty-desktop fill: blue on white
         CP_OUTPUT_BW,             // program-output screen: white on black (theme-independent)
         CP_OUTPUT_BW_SEL,         // program-output selection: black on white
-        CP_DEBUG_LINE             // current execution line highlight (black on yellow)
+        CP_DEBUG_LINE,            // current execution line highlight (black on yellow)
+        CP_MENU_DISABLED          // greyed-out menu item
     };
 
     enum BoxStyle { SINGLE, DOUBLE };

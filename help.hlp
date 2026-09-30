@@ -472,11 +472,28 @@ Gedi has a built-in project system for managing multi-file C++ builds. Projects 
 **Creating a Project:**
 * Open the **Project** menu and choose **New Project**.
 * A dialog will guide you through setting the project name, root directory, build system, C++ standard, compiler flags, and any linked libraries.
+* Build systems: CMake, Make, Meson, or **Watcom**. A Watcom project gets a `makefile` for Open Watcom's `wmake` that builds a 16-bit DOS program by default (change `SYSTEM`, `MODEL`, `CC` and `CXX` at the top of the makefile for 32-bit DOS or Windows). C files are compiled with `wcc`, C++ with `wpp`, assembly with `wasm`; libraries are made with `wlib` and programs linked with `wlink`. Gedi regenerates the makefile when you add, move or remove files and targets. The C++ standard and system libraries don't apply to Watcom projects, and the program can be built but not run or debugged from Gedi.
 * Gedi supports three build systems: **cmake**, **make**, and **meson**. After confirming, it generates the corresponding build file (`CMakeLists.txt`, `Makefile`, or `meson.build`) automatically.
 
 **Opening a Project:**
 * Choose **Project -> Open Project** and select the `.gproj` file.
 * The project's sources are then shown in the [[project_panel|Project Panel]].
+
+**Importing a Makefile:**
+* In **Project -> Open Project** you can also pick an existing `Makefile`, `GNUmakefile` or `*.mk` file.
+* Gedi reads it the way GNU make does - variables, conditionals, `include`d files, functions such as `wildcard`, `patsubst`, `foreach`, `call` and `eval`, pattern rules and VPATH - and follows recursive builds (`$(MAKE) -C dir`, `cd dir && $(MAKE)`, `for d in $(SUBDIRS) ...`) into sub-directories and parent directories.
+* Every executable and library the makefiles link becomes a project target, holding its source files and the headers they include. Paths outside the makefile's directory are kept as relative paths (`../common/util.c`).
+* The `-I` directories and `-D` definitions used by the makefiles feed code completion, Go to Definition and the error highlighting.
+* After a summary, Gedi offers to save a `.gproj` file next to the makefile, so the project can be reopened directly later.
+* The makefile stays in charge: building runs `make` on it, and Gedi never rewrites it. Files added to the project are recorded in the `.gproj` only - add them to the makefile yourself.
+* Variables that come from `$(shell ...)` are evaluated during the import, just as make would evaluate them.
+
+**Open Watcom makefiles:**
+* Makefiles written for Open Watcom's `wmake` are recognised automatically (by `!include`, `!ifdef`, `.symbolic`, `$[*` and similar), as are `*.mif` files.
+* Supported: the `!` preprocessor (`!include`, `!ifdef`/`!ifndef`, `!ifeq`/`!ifeqi`, `!if` expressions with `defined()` and `exist()`, `!else`, `!endif`, `!define`, `!undef`), `&` line continuation, indented command lines, `.symbolic`, suffix rules such as `.cpp.o:` and search paths such as `.cpp : dir1;dir2`, the `$[*`/`$^@` file macros, `$(%env)` variables, DOS-style `\` paths and case-insensitive file names.
+* Link steps with `wlink ... name x file {...}` and libraries built with `wlib` become targets; `-i=dir` and `-dNAME` compiler options feed code navigation.
+* Sub-projects built with `cd dir` followed by `wmake`, `wmake -f file`, or a `for %d in (...) do wmake ...` loop are imported too.
+* The project is built by running `wmake -h` in the makefile's directory, and Watcom error messages (`file.cpp(12): Error! E029: ...`) can be jumped to like any other compiler error.
 
 **Closing a Project:**
 * Choose **Project -> Close Project** to unload the current project.

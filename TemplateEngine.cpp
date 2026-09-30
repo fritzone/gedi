@@ -62,12 +62,18 @@ struct Parser {
                 // A block tag is "line-leading" when only whitespace precedes it on
                 // its line. Such a tag has its whole line removed (lstrip + trim);
                 // an inline tag ({% for %} mid-line) leaves surrounding text alone.
+                // Judged on the source line, not on `text`: `text` restarts after
+                // every {{ }}, so "{{ x }}{% endfor %}" would look line-leading.
                 bool line_leading = false;
                 if (kind == '%') {
-                    size_t nl = text.find_last_of('\n');
-                    size_t from = (nl == std::string::npos) ? 0 : nl + 1;
-                    line_leading = (text.find_first_not_of(" \t", from) == std::string::npos);
-                    if (line_leading) text.erase(from);      // lstrip_blocks
+                    size_t nl = (i == 0) ? std::string::npos : s.rfind('\n', i - 1);
+                    size_t line_start = (nl == std::string::npos) ? 0 : nl + 1;
+                    size_t first = s.find_first_not_of(" \t", line_start);
+                    line_leading = (first == i);
+                    if (line_leading) {                          // lstrip_blocks
+                        while (!text.empty() && (text.back() == ' ' || text.back() == '\t'))
+                            text.pop_back();
+                    }
                 }
 
                 std::string inner = trim(s.substr(i + 2, end - (i + 2)));

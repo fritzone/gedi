@@ -256,6 +256,18 @@ private:
     MenuAction CallSubMenu(const std::vector<std::string>& menuItems, int x, int y, int menu_id);
     void CreateNewProject();
     void OpenProject();
+    // Import a Makefile as a project (Project > Open Project on a makefile).
+    void ImportMakefileProject(const std::string& makefile);
+    // Open the files of a freshly loaded m_project in the editor.
+    void activateLoadedProject();
+    // Give a buffer the project's include dirs/defines/standard for libclang.
+    void applyProjectCodeModel(EditorBuffer& buffer);
+    // Why an action can't be used with the loaded project ("" = it can).
+    // Imported makefiles own their compiler flags; Open Watcom projects build
+    // programs gedi can't run or debug, and their makefile defines the build.
+    std::string unavailableReason(EditorAction action) const;
+    // Shows the reason and returns true when `action` is unavailable.
+    bool refuseForProject(EditorAction action);
     void AddFileToProject();
     void DoNew();
     void selectfile();

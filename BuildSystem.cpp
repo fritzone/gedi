@@ -5,6 +5,7 @@
 #include <cctype>
 #include <sstream>
 #include <regex>
+#include <algorithm>
 #include <filesystem>
 
 // The SDL build renders a fixed VGA/CP437 character grid, so it cannot display the
@@ -260,8 +261,50 @@ std::string BuildSystem::settingsToFlags(const CompilerSettings& s, bool msvc)
     return f;
 }
 
+// Imported projects (GediProject::build_file) and Open Watcom projects are built
+// with their own makefile exactly as the user would from a shell: no CXX/CXXFLAGS
+// overrides, since those would clobber whatever the makefile sets up itself.
+static std::string externalMakeCommand(const GediProject& project)
+{
+    const std::filesystem::path bf = std::filesystem::path(project.root) / project.buildFile();
+    const std::string dir  = bf.parent_path().lexically_normal().string();
+    const std::string file = bf.filename().string();
+
+    if (project.usesWmake()) {
+        // wmake has no -C; -h drops the banner.  Its makefiles expect to run from their directory.
+#ifdef _WIN32
+        return "cd /d \"" + dir + "\" && wmake -h -f \"" + file + "\"";
+#else
+        return "cd \"" + dir + "\" && wmake -h -f \"" + file + "\"";
+#endif
+    }
+
+    std::string cmd = "make -C \"" + dir + "\"";
+    if (file != "Makefile" && file != "makefile" && file != "GNUmakefile")
+        cmd += " -f \"" + file + "\"";
+    return cmd;
+}
+
+// The program an imported project produces: its first executable target.
+static std::string externalExecutable(const GediProject& project)
+{
+    for (const auto& t : project.targets) {
+        if (!t.isExecutable()) continue;
+        std::filesystem::path p = std::filesystem::path(project.root) / t.name;
+#ifdef _WIN32
+        if (p.extension() != ".exe") p += ".exe";
+#else
+        if (project.usesWmake() && p.extension() != ".exe") p += ".exe";   // wlink names it X.exe
+#endif
+        return p.lexically_normal().string();
+    }
+    return "";
+}
+
 std::string BuildSystem::buildProjectPreview(const GediProject& project, const CompilerSettings& s) const
 {
+    if (project.hasExternalBuildFile() || project.usesWmake())
+        return externalMakeCommand(project);
     const std::string& root = project.root;
     std::string std_num = s.cpp_standard;
     if (std_num.rfind("c++", 0) == 0) std_num = std_num.substr(3);
@@ -369,7 +412,12 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
     bool msvc = isMsvcCompiler(m_config.toolchain.cxx);
     std::string extra_flags = settingsToFlags(cs, msvc);
 
-    if (project.build_system == "cmake") {
+    if (project.hasExternalBuildFile() || project.usesWmake()) {
+        build_dir = root;
+        build_cmd = externalMakeCommand(project) + " 2>&1";
+        result.executable_name = externalExecutable(project);
+
+    } else if (project.build_system == "cmake") {
         // Locate or create build directory
         for (const char* candidate : {"build", "cmake-build-debug", "cmake-build-release"}) {
             std::string d = root + "/" + candidate;
@@ -435,7 +483,7 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
     result.output_lines.push_back("");
     result.output_lines.push_back(result.success ? "=== Build successful ===" : "=== Build failed ===");
 
-    if (result.success) {
+    if (result.success && !project.hasExternalBuildFile() && !project.usesWmake()) {
         // Replace the pre-build guess with the actual binary location - the
         // guess doesn't account for per-config output subdirectories (CMake's
         // Visual Studio generator) or the platform's executable suffix.
@@ -454,21 +502,54 @@ std::vector<CompileMessage> BuildSystem::parseCompilerOutput(const std::string& 
 
     // Matches: /path/to/file.cpp:10:5: error: message
     std::regex re_diag(R"(([^:]+):(\d+):(\d+):\s+(error|warning|note):\s*(.*))");
+    // Open Watcom:  file.cpp(12): Error! E029: col(11) symbol 'y' has not been declared
+    std::regex re_watcom(R"(^(.+?)\((\d+)\): (Error|Warning|Note)! \w+: (?:col\((\d+)\) )?(.*))");
+
+    // Recursive make announces directory changes; relative file names in the
+    // compiler output that follows are relative to that directory.
+    //   make[1]: Entering directory '/abs/sub'   /   make[1]: Leaving directory '/abs/sub'
+    std::regex re_enter(R"(make(?:\[\d+\])?: Entering directory [`'"](.*)['"])");
+    std::regex re_leave(R"(make(?:\[\d+\])?: Leaving directory)");
+    std::vector<std::string> dir_stack;
 
     while (std::getline(stream, line)) {
         output_lines_out.push_back(line);
+        {
+            std::smatch dm;
+            if (line.find("make") != std::string::npos) {
+                if (std::regex_search(line, dm, re_enter)) dir_stack.push_back(dm[1].str());
+                else if (std::regex_search(line, re_leave) && !dir_stack.empty()) dir_stack.pop_back();
+            }
+        }
+        const std::string& cur_dir = dir_stack.empty() ? base_dir : dir_stack.back();
         CompileMessage msg;
         msg.full_text = line;
 
         std::smatch match;
+        std::string raw_file, line_str, col_str, type_str;
         if (std::regex_search(line, match, re_diag)) {
-            std::string raw_file = match[1].str();
+            raw_file = match[1].str();
+            line_str = match[2].str();
+            col_str  = match[3].str();
+            type_str = match[4].str();
+        } else if (line.find("! ") != std::string::npos && std::regex_search(line, match, re_watcom)) {
+            raw_file = match[1].str();
+#ifndef _WIN32
+            std::replace(raw_file.begin(), raw_file.end(), '\\', '/');
+#endif
+            line_str = match[2].str();
+            col_str  = match[4].matched ? match[4].str() : "1";
+            type_str = match[3].str();
+            std::transform(type_str.begin(), type_str.end(), type_str.begin(),
+                           [](unsigned char c) { return (char)std::tolower(c); });
+        }
 
+        if (!raw_file.empty()) {
             // Resolve filename to absolute path
-            if (!raw_file.empty() && raw_file[0] == '/') {
+            if (raw_file[0] == '/') {
                 msg.filename = raw_file;
-            } else if (!base_dir.empty()) {
-                std::string candidate = base_dir + "/" + raw_file;
+            } else if (!cur_dir.empty()) {
+                std::string candidate = cur_dir + "/" + raw_file;
                 std::error_code ec;
                 auto abs = std::filesystem::weakly_canonical(candidate, ec);
                 if (!ec && std::filesystem::exists(abs))
@@ -479,13 +560,12 @@ std::vector<CompileMessage> BuildSystem::parseCompilerOutput(const std::string& 
                 msg.filename = raw_file;
             }
 
-            const std::string& type_str = match[4].str();
             if      (type_str == "error")   msg.type = CompileMessage::CMSG_ERROR;
             else if (type_str == "warning") msg.type = CompileMessage::CMSG_WARNING;
             else if (type_str == "note")    msg.type = CompileMessage::CMSG_NOTE;
 
-            try { msg.line = std::stoi(match[2].str()); } catch (...) {}
-            try { msg.col  = std::stoi(match[3].str()); } catch (...) {}
+            try { msg.line = std::stoi(line_str); } catch (...) {}
+            try { msg.col  = std::max(1, std::stoi(col_str)); } catch (...) {}
         }
 
         messages.push_back(msg);

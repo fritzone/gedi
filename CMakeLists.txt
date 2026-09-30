@@ -84,6 +84,7 @@ set(GEDI_COMMON_SOURCES
     NewProjectDialog.cpp
     AddFileDialog.cpp
     GediProject.cpp
+    MakefileImporter.cpp
     ProjectPropertiesDialog.cpp
     TargetDialog.cpp
     PickTargetDialog.cpp

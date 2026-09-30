@@ -41,6 +41,13 @@ bool GediProject::save() const
     f << "build_system: " << build_system << "\n";
     // cpp_standard kept in header for legacy readers; authoritative copy is in [compiler_settings]
     f << "cpp_standard: " << compiler_settings.cpp_standard << "\n";
+    if (!build_file.empty())
+        f << "build_file: " << build_file << "\n";
+    if (!make_tool.empty())
+        f << "make_tool: " << make_tool << "\n";
+    for (const auto& a : aux_build_files) f << "aux_build_file: " << a << "\n";
+    for (const auto& d : include_dirs)    f << "include_dir: "    << d << "\n";
+    for (const auto& d : defines)         f << "define: "         << d << "\n";
 
     // Save targets (new format)
     for (const auto& tgt : targets) {
@@ -171,6 +178,11 @@ bool GediProject::load(const std::string& path, GediProject& out)
             if      (key == "version")      proj.version      = val.empty() ? 1 : std::stoi(val);
             else if (key == "name")         proj.name         = val;
             else if (key == "build_system") proj.build_system = val;
+            else if (key == "build_file")     proj.build_file = val;
+            else if (key == "make_tool")      proj.make_tool = val;
+            else if (key == "aux_build_file") proj.aux_build_files.push_back(val);
+            else if (key == "include_dir")    proj.include_dirs.push_back(val);
+            else if (key == "define")         proj.defines.push_back(val);
             else if (key == "cpp_standard") {
                 proj.cpp_standard = val;
                 proj.compiler_settings.cpp_standard = val;  // legacy compat
@@ -247,11 +259,26 @@ bool GediProject::load(const std::string& path, GediProject& out)
     return true;
 }
 
+std::string GediProject::codeModelFlags() const
+{
+    std::string flags;
+    for (const auto& d : include_dirs) {
+        std::filesystem::path p(d);
+        if (p.is_relative()) p = std::filesystem::path(root) / p;
+        flags += " -I" + p.lexically_normal().string();
+    }
+    for (const auto& d : defines)
+        flags += " -D" + d;
+    return flags.empty() ? flags : flags.substr(1);
+}
+
 std::string GediProject::buildFile() const
 {
+    if (!build_file.empty()) return build_file;
     if (build_system == "cmake") return "CMakeLists.txt";
     else if (build_system == "make")  return "Makefile";
     else if (build_system == "meson") return "meson.build";
+    else if (build_system == "watcom") return "makefile";   // the name wmake looks for
     else return "unknown";
 }
 
@@ -262,6 +289,8 @@ std::string GediProject::buildFilePath() const
 
 bool GediProject::removeFileFromBuildSystem(const std::string &file_to_remove, const std::string& rel)
 {
+    if (hasExternalBuildFile()) return false;   // user-maintained: never edited behind their back
+    if (build_system == "watcom") return false; // regenerated from the template by the caller
     if (build_system == "cmake") {
         return removeFileFromCMakeLists(file_to_remove, rel);
     } else if (build_system == "make") {

@@ -76,6 +76,12 @@ DialogResult DialogBase::run(Renderer& renderer)
                 pending_button_ = nullptr;
                 nodelay(stdscr, FALSE); // restore blocking mode in case sub-dialog changed it
                 if (hr == HandleResult::CLOSE) break;
+            } else if (custom_action_) {
+                auto action = std::move(custom_action_);
+                custom_action_ = nullptr;
+                HandleResult hr = action();
+                nodelay(stdscr, FALSE);
+                if (hr == HandleResult::CLOSE) break;
             } else {
                 break;
             }
@@ -246,6 +252,7 @@ void DialogBase::placeCursor(Renderer& renderer, int sx, int sy)
 void DialogBase::runPressAnimation(Renderer& renderer, int sx, int sy)
 {
     napms(120);
+    custom_pressed_ = false;
     drawFrame(renderer, sx, sy, false);
     napms(80);
 }
@@ -350,7 +357,8 @@ HandleResult DialogBase::dispatchKey(wint_t ch)
 HandleResult DialogBase::dispatchAltKey(wint_t ch)
 {
     char lower = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-    tryHotkeyActivate(lower);
+    if (tryHotkeyActivate(lower)) return HandleResult::CONTINUE;
+    onAltKey(lower);
     return HandleResult::CONTINUE;
 }
 
@@ -538,7 +546,8 @@ HandleResult DialogBase::dispatchGroupAltKey(wint_t ch)
     }
 
     // Button hotkeys trigger the press animation
-    tryHotkeyActivate(lower);
+    if (tryHotkeyActivate(lower)) return HandleResult::CONTINUE;
+    onAltKey(lower);
     return HandleResult::CONTINUE;
 }
 

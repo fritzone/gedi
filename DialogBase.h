@@ -135,6 +135,23 @@ protected:
         if (btn) armButton(btn);
     }
 
+    // A button the subclass draws itself (outside the ButtonRow): run the same
+    // press animation as the standard buttons, then call `action`. While the
+    // pressed frame is drawn, customPressed() is true - draw the button with
+    // Renderer::drawButton(..., pressed = customPressed()).
+    void armCustomPress(std::function<HandleResult()> action) {
+        custom_action_  = std::move(action);
+        custom_pressed_ = true;
+        pending_button_ = nullptr;
+        pressed_        = true;
+    }
+    bool customPressed() const noexcept { return custom_pressed_; }
+
+    // Alt+letter not claimed by a group or ButtonRow hotkey yet - e.g. the hotkey
+    // of a button drawn by the subclass. `lower` is the lower-cased letter.
+    // Return true if handled.
+    virtual bool onAltKey(char /*lower*/) { return false; }
+
     //  The button row focus index used in Mode A 
     // Subclass sets this so the base knows which focus_index == button row.
     void setButtonRowFocusIndex(int i) noexcept { btn_row_focus_index_ = i; }
@@ -181,6 +198,8 @@ private:
     }
 
     //  Data 
+    std::function<HandleResult()> custom_action_;   // see armCustomPress()
+    bool custom_pressed_ = false;
     std::string title_;
     int         w_, h_;
 
