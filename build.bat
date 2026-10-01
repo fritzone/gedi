@@ -94,6 +94,10 @@ if errorlevel 1 goto build_failed
 nmake
 if errorlevel 1 goto build_failed
 
+nmake gedi-setup
+if errorlevel 1 goto build_failed
+
+
 popd
 echo.
 echo Build succeeded: %BUILD_DIR%\gedi-gui.exe

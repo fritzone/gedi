@@ -61,7 +61,12 @@ static std::string asciifyForGui(const std::string& in) {
     }
     return out;
 }
+#ifdef _WIN32
+static const char* kLocalePrefix = "";
+#else
 static const char* kLocalePrefix = "LC_ALL=C ";
+#endif
+
 #else
 static inline std::string asciifyForGui(const std::string& in) { return in; }
 static const char* kLocalePrefix = "";
