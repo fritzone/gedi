@@ -5428,6 +5428,41 @@ void TextEditor::compileAndRun() {
     startRunProgram(exe, result.temp_exe);
     m_output_screen_visible = true;
     handleResize();
+#elif defined(GEDI_GUI)
+    // Graphical (SDL) build on Windows: there is no forkpty() here, so the
+    // program runs to completion with its output captured to a file and is then
+    // shown in the same in-window pane the POSIX path streams into.
+    //
+    // endwin() must NOT be used in this build: it calls the graphics engine's
+    // shutdown(), which destroys the SDL window, and reset_prog_mode() is a
+    // no-op that cannot bring it back - the editor would simply vanish while the
+    // process kept running.
+    const std::string temp_output_file = "tedit_run_output.tmp";
+    const int exit_code = run_process_captured(exe, temp_output_file);
+
+    std::string captured;
+    {
+        std::ifstream run_output_stream(temp_output_file);
+        captured.assign(std::istreambuf_iterator<char>(run_output_stream),
+                        std::istreambuf_iterator<char>());
+    }
+    std::remove(temp_output_file.c_str());
+    if (!result.temp_exe.empty()) std::remove(result.temp_exe.c_str());
+
+    if (exit_code < 0) {
+        captured = "[failed to start " + exe + "]\n";
+    } else {
+        if (captured.empty()) captured = "(the program produced no output)\n";
+        if (captured.back() != '\n') captured += '\n';
+        captured += "\n[program finished";
+        if (exit_code != 0) captured += " - exit code " + std::to_string(exit_code);
+        captured += " - F5/Esc: editor]";
+    }
+
+    setRunOutput(captured);
+    m_run_follow = false;          // the program is done; start at the top of its output
+    m_output_screen_visible = true;
+    handleResize();
 #else
     def_prog_mode();
     endwin();
@@ -5672,6 +5707,7 @@ void TextEditor::drawCompileOutputWindow() {
 
     // --- Draw Content and Handle Scrolling ---
     int text_height = h - 2;
+    const int avail = std::max(0, w - 4);   // columns available for one line of text
 
     // Adjust scroll position to keep the cursor in view
     if (m_compile_output_cursor_pos < m_compile_output_scroll_pos) {
@@ -5686,7 +5722,10 @@ void TextEditor::drawCompileOutputWindow() {
         int line_idx = m_compile_output_scroll_pos + i;
         if (line_idx < (int)m_compile_output_lines.size()) {
             const auto& msg = m_compile_output_lines[line_idx];
-            std::string line_to_draw = msg.full_text;
+            // The echoed build commands are several hundred characters of mostly
+            // absolute paths; summarize them to the pane's width rather than
+            // clipping off the source and output names at the end.
+            std::string line_to_draw = BuildSystem::summarizeOutputLine(msg.full_text, (size_t)avail);
 
             int color = Renderer::CP_DIALOG;
             switch(msg.type) {
@@ -5703,8 +5742,8 @@ void TextEditor::drawCompileOutputWindow() {
                 wattroff(stdscr, COLOR_PAIR(Renderer::CP_HIGHLIGHT));
             }
 
-            if (line_to_draw.length() > (size_t)w - 4) {
-                line_to_draw = line_to_draw.substr(0, w - 4);
+            if ((int)line_to_draw.length() > avail) {
+                line_to_draw = line_to_draw.substr(0, avail);
             }
 
             // Use highlight color for text on the selected line
@@ -5914,14 +5953,14 @@ void TextEditor::CompileOptionsDialog() {
     if (refuseForProject(EditorAction::ACT_COMPILE_OPTIONS)) return;
     if (!m_project.name.empty()) {
         // Project mode: settings belong to the project, preview shows cmake/make/meson command
-        CompileOptionsDialog::show(*m_renderer, *m_buildSystem,
+        CompileOptionsDialog::show(*m_renderer, *m_buildSystem, m_config,
                                    m_project.compiler_settings, &m_project, "");
         m_project.cpp_standard = m_project.compiler_settings.cpp_standard;  // keep legacy field in sync
         m_project.save();
     } else {
         if (currentBufferIdx() == -1) return;
         // Per-file mode: settings belong to the current buffer
-        CompileOptionsDialog::show(*m_renderer, *m_buildSystem,
+        CompileOptionsDialog::show(*m_renderer, *m_buildSystem, m_config,
                                    currentBuffer().compiler_settings, nullptr,
                                    currentBuffer().filename);
     }

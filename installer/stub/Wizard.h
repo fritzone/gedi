@@ -5,6 +5,7 @@
 #include "Install.h"
 #include "Payload.h"
 #include "Renderer.h"
+#include "ToolchainDetect.h"
 #include "curses_compat.h"    // MEVENT and the mouse bit masks
 
 // The setup front end: a Turbo-era full-screen wizard drawn on the same VGA text
@@ -30,7 +31,8 @@ public:
     std::string installDir() const { return dir_; }
 
 private:
-    enum Page { P_WELCOME, P_LICENSE, P_DIR, P_COMPONENTS, P_CONFIRM, P_PROGRESS, P_DONE, P_COUNT };
+    enum Page { P_WELCOME, P_LICENSE, P_DIR, P_COMPONENTS, P_TOOLCHAIN,
+                P_CONFIRM, P_PROGRESS, P_DONE, P_COUNT };
     enum Focus { F_CONTENT, F_BUTTONS };
 
     // What a button does, kept separate from what it says. Matching on the label
@@ -50,6 +52,9 @@ private:
         bool        required = false;
         bool        selected = true;
         uint64_t    bytes    = 0;
+        // Marked "provides_toolchain" in the script: leaving this one out is
+        // what makes the compiler page appear.
+        bool        provides_toolchain = false;
     };
 
     // ---- chrome ----
@@ -69,6 +74,7 @@ private:
     void drawLicense();
     void drawDir();
     void drawComponents();
+    void drawToolchain();
     void drawConfirm();
     void drawProgress(const std::string& current, uint64_t done, uint64_t total);
     void drawDone();
@@ -83,7 +89,10 @@ private:
     bool handleKey(wint_t ch, bool alt);   // false = leave the loop
 
     // True when typing should go into a text field rather than fire a hotkey.
-    bool textFieldFocused() const { return page_ == P_DIR && focus_ == F_CONTENT; }
+    bool textFieldFocused() const {
+        if (focus_ != F_CONTENT) return false;
+        return page_ == P_DIR || (page_ == P_TOOLCHAIN && tc_cursor_ == tcPathRow());
+    }
     bool handleMouse(const MEVENT& ev);
     bool activate(ButtonId id);       // false = leave the loop
 
@@ -107,6 +116,20 @@ private:
 
     // Selected component ids, in payload order.
     std::vector<std::string> selectedIds() const;
+
+    // ---- compiler selection ------------------------------------------------
+    // The compiler page is only reached when no component in the payload
+    // supplies one, i.e. the user unticked the bundled toolchain.
+    bool needCompilerPage() const;
+    toolchain::Kind tcKind() const;
+    // Row index of the path field; one past the last radio button. Also the
+    // cursor's last row, since nothing follows it.
+    int  tcPathRow() const { return (int)toolchain::kinds().size(); }
+    bool tcPathRowUsable() const { return toolchain::needsPath(tcKind()); }
+    void tcSetButtons();          // the button row, which depends on the chosen kind
+    void tcSelect(int choice);    // switch kind, keeping the page consistent
+    void browseForCompiler();     // the Open File dialog, filtered to this kind's exe
+    void probeToolchain();        // refresh tc_setup_ / tc_error_ for the current choice
 
     // ---- state ----
     Renderer&                 r_;
@@ -141,6 +164,19 @@ private:
     std::vector<Component> components_;
     int comp_cursor_ = 0;
     int comp_scroll_ = 0;
+
+    // compiler page
+    int         tc_choice_ = 0;             // index into toolchain::kinds()
+    int         tc_cursor_ = 0;             // focused row: a radio, or tcPathRow()
+    std::string tc_path_;                   // what the user typed, for the path kinds
+    int         tc_path_cursor_ = 0;
+    int         tc_path_scroll_ = 0;
+    bool        tc_dirty_ = true;           // the choice or the path changed; re-probe
+    toolchain::Setup tc_setup_;
+    std::string tc_error_;
+    // Rows recorded while drawing, so a click can find the controls.
+    int tc_radio_y_ = -1;
+    int tc_path_y_  = -1;
 
     // options on the final pages
     bool make_start_menu_ = true;

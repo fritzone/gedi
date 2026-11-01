@@ -109,12 +109,28 @@ int run_process_captured(const std::string& exe_path, const std::string& output_
                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (out == INVALID_HANDLE_VALUE) return -1;
 
+    // gedi-gui is a Windows-subsystem process, so it has no stdin to hand down -
+    // and because CREATE_NO_WINDOW still gives the child a console of its own,
+    // a program that reads input would sit there forever waiting on a console
+    // nobody can type into, with the WaitForSingleObject below never returning
+    // and the editor frozen with it. When there is no stdin to pass on, hand the
+    // child the null device instead: its reads then fail immediately with
+    // end-of-file. A console build still passes its real stdin, so a program run
+    // from the text-mode editor stays interactive.
+    HANDLE in      = GetStdHandle(STD_INPUT_HANDLE);
+    HANDLE null_in = INVALID_HANDLE_VALUE;
+    if (in == nullptr || in == INVALID_HANDLE_VALUE) {
+        null_in = CreateFileA("NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                              &sa, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        in = (null_in == INVALID_HANDLE_VALUE) ? nullptr : null_in;
+    }
+
     STARTUPINFOA si{};
     si.cb         = sizeof(si);
     si.dwFlags    = STARTF_USESTDHANDLES;
     si.hStdOutput = out;
     si.hStdError  = out;
-    si.hStdInput  = GetStdHandle(STD_INPUT_HANDLE);
+    si.hStdInput  = in;
 
     PROCESS_INFORMATION pi{};
     std::string cmdline = "\"" + exe_path + "\"";
@@ -125,6 +141,7 @@ int run_process_captured(const std::string& exe_path, const std::string& output_
                               /*bInheritHandles=*/TRUE, CREATE_NO_WINDOW,
                               nullptr, nullptr, &si, &pi);
     CloseHandle(out);
+    if (null_in != INVALID_HANDLE_VALUE) CloseHandle(null_in);
     if (!ok) return -1;
 
     WaitForSingleObject(pi.hProcess, INFINITE);

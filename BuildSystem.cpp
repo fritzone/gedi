@@ -2,6 +2,7 @@
 #include "platform_compat.h"
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
 #include <cctype>
 #include <sstream>
 #include <regex>
@@ -93,15 +94,25 @@ static std::string withEnv(const std::string& var, const std::string& value,
 // to use. Without them cmake runs its own detection and happily picks up a
 // Visual Studio that the bundled Clang was meant to replace, so a project build
 // would end up using a different toolchain than single-file compiles do.
-std::string BuildSystem::cmakeToolchainArgs() const
+std::string BuildSystem::cmakeToolchainArgs(const std::string& cxx_override) const
 {
-    const std::string& cxx = m_config.toolchain.cxx;
+    const std::string cxx = cxx_override.empty() ? m_config.toolchain.cxx : cxx_override;
     if (cxx.empty()) return {};
 
     std::string a = " \"-DCMAKE_CXX_COMPILER=" + cxx + "\"";
-    if (!m_config.toolchain.cc.empty())
+    // A previewed compiler has no matching C compiler recorded yet, so only the
+    // configured pair is ever named together.
+    if (cxx_override.empty() && !m_config.toolchain.cc.empty())
         a += " \"-DCMAKE_C_COMPILER=" + m_config.toolchain.cc + "\"";
     return a;
+}
+
+void BuildSystem::toolchainChanged()
+{
+    std::lock_guard<std::mutex> lk(m_cache_mutex);
+    m_compile_command_cache.clear();
+    m_sys_include_args.clear();
+    m_sys_include_cached = false;
 }
 
 bool BuildSystem::isMsvcCompiler(const std::string& compilerPath) {
@@ -135,6 +146,42 @@ static std::string stdFlag(const std::string& cpp_standard, bool msvc) {
     return "/std:" + cpp_standard;
 }
 
+// The argument that begins at `pos` on a command line, unquoted. Output paths
+// are written quoted (they can contain spaces), so splitting on the next blank
+// would cut such a path in half; callers want the bare path, since that is what
+// gets handed to filesystem::exists() and to CreateProcess afterwards.
+static std::string argumentAt(const std::string& cmd, size_t pos) {
+    if (pos >= cmd.size()) return "";
+    if (cmd[pos] == '"') {
+        size_t end = cmd.find('"', pos + 1);
+        if (end == std::string::npos) return cmd.substr(pos + 1);
+        return cmd.substr(pos + 1, end - pos - 1);
+    }
+    size_t end = cmd.find(' ', pos);
+    return cmd.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+}
+
+// Compile one file with one compiler, in that compiler's own option dialect.
+// What guessCompileCommand falls back to, and what previewing a different
+// compiler produces - the output switch differs between cl.exe and everything
+// else, so the command cannot simply have its program swapped.
+static std::string defaultCompileCommand(const std::string& cxx_in, const std::string& filename)
+{
+    const std::string cxx = cxx_in.empty() ? "g++" : cxx_in;
+    const std::string stem = filename.substr(0, filename.find_last_of('.'));
+#ifdef _WIN32
+    // Windows drivers append .exe to an extensionless -o name, so ask for it
+    // explicitly - otherwise the command names one file and produces another,
+    // and the "run it now" step looks for an executable that isn't there.
+    const std::string exe = stem + ".exe";
+#else
+    const std::string exe = stem;
+#endif
+    if (BuildSystem::isMsvcCompiler(cxx))
+        return "\"" + cxx + "\" \"" + filename + "\" /Fe:\"" + stem + ".exe\"";
+    return "\"" + cxx + "\" \"" + filename + "\" -o \"" + exe + "\"";
+}
+
 CompilationResult BuildSystem::runCompilationProcess(EditorBuffer& buffer) {
     CompilationResult result;
     result.success = false;
@@ -153,20 +200,12 @@ CompilationResult BuildSystem::runCompilationProcess(EditorBuffer& buffer) {
 
     size_t o_pos = result.full_command.find("-o ");
     size_t fe_pos = result.full_command.find("/Fe:");
-    if (o_pos != std::string::npos) {
-        std::string temp = result.full_command.substr(o_pos + 3);
-        result.executable_name = temp.substr(0, temp.find(' '));
-    } else if (fe_pos != std::string::npos) {
-        std::string temp = result.full_command.substr(fe_pos + 4);
-        if (!temp.empty() && temp.front() == '"') {
-            size_t end = temp.find('"', 1);
-            result.executable_name = temp.substr(1, end == std::string::npos ? std::string::npos : end - 1);
-        } else {
-            result.executable_name = temp.substr(0, temp.find(' '));
-        }
-    } else {
+    if (o_pos != std::string::npos)
+        result.executable_name = argumentAt(result.full_command, o_pos + 3);
+    else if (fe_pos != std::string::npos)
+        result.executable_name = argumentAt(result.full_command, fe_pos + 4);
+    else
         result.executable_name = "a.out";
-    }
 
     std::string full_compiler_output_str;
     char buffer_arr[512];
@@ -306,7 +345,8 @@ static std::string externalExecutable(const GediProject& project)
     return "";
 }
 
-std::string BuildSystem::buildProjectPreview(const GediProject& project, const CompilerSettings& s) const
+std::string BuildSystem::buildProjectPreview(const GediProject& project, const CompilerSettings& s,
+                                             const std::string& cxx_override) const
 {
     if (project.hasExternalBuildFile() || project.usesWmake())
         return externalMakeCommand(project);
@@ -321,7 +361,8 @@ std::string BuildSystem::buildProjectPreview(const GediProject& project, const C
     else if (s.optimization_level == 2) bt = "Release";
     else bt = "Debug";
 
-    bool msvc = isMsvcCompiler(m_config.toolchain.cxx);
+    const std::string& cxx = cxx_override.empty() ? m_config.toolchain.cxx : cxx_override;
+    bool msvc = isMsvcCompiler(cxx);
     std::string flags = settingsToFlags(s, msvc);
 
     if (project.build_system == "cmake") {
@@ -329,7 +370,7 @@ std::string BuildSystem::buildProjectPreview(const GediProject& project, const C
         std::string args;
         args += " -DCMAKE_BUILD_TYPE=" + bt;
         args += " -DCMAKE_CXX_STANDARD=" + std_num;
-        args += cmakeToolchainArgs();
+        args += cmakeToolchainArgs(cxx_override);
         if (!flags.empty()) args += " \"-DCMAKE_CXX_FLAGS=" + flags + "\"";
         return "cmake -S \"" + root + "\" -B \"" + build_dir + "\"" + args + "\n"
              + "cmake --build \"" + build_dir + "\"";
@@ -578,6 +619,203 @@ std::vector<CompileMessage> BuildSystem::parseCompilerOutput(const std::string& 
     return messages;
 }
 
+// ---- build-command summaries -----------------------------------------------
+// The commands gedi runs are mostly absolute paths. A single-file compile with
+// the bundled toolchain runs well past 250 characters, of which the informative
+// part - which compiler, which source, which output - is maybe 60. Clipping
+// such a line to the width of the Compiler Output pane keeps the uninformative
+// head (the toolchain's install directory) and discards exactly the tail the
+// user was looking for, so the command gets rewritten instead: every path drops
+// to its last component, and if that still doesn't fit, detail switches fold
+// into a "(+N more)" counter. What survives even at the narrowest width is
+// which tool ran, on what, producing what.
+
+namespace {
+
+// One argument of a command line, with its quoting removed.
+struct CmdArg {
+    std::string full;                // as written
+    std::string brief;               // paths reduced to their last component
+    bool        droppable = false;   // a detail switch: shed first when space runs out
+};
+
+// Quote-aware split into bare arguments. Quotes only ever protect spaces inside
+// a single argument, so they carry nothing once the split has happened.
+std::vector<std::string> splitArgs(const std::string& cmd) {
+    std::vector<std::string> args;
+    std::string cur;
+    bool quoted = false, started = false;
+    for (char c : cmd) {
+        if (c == '"') { quoted = !quoted; started = true; continue; }
+        if (!quoted && (c == ' ' || c == '\t')) {
+            if (started) { args.push_back(cur); cur.clear(); started = false; }
+            continue;
+        }
+        cur += c;
+        started = true;
+    }
+    if (started) args.push_back(cur);
+    return args;
+}
+
+// Shell redirections (" 2>&1", "2>NUL") are appended to every command gedi runs
+// and say nothing about the build step, so they never reach the summary.
+bool isRedirect(const std::string& a) {
+    return a.find('>') != std::string::npos || a.find('<') != std::string::npos;
+}
+
+// "VAR=value" - an environment override or a make variable, which reads as a
+// detail rather than as an operand. A path never qualifies: its separators would
+// all sit before the '='.
+bool isAssignment(const std::string& a) {
+    size_t eq = a.find('=');
+    return eq != std::string::npos && eq > 0 &&
+           a.find_first_of("/\\") > eq;
+}
+
+// Switches that say what is being built, or where; the summary keeps these even
+// when it has to shed everything else.
+bool isEssentialSwitch(const std::string& a) {
+    static const char* const kEssential[] = {
+        "-o", "-c", "-C", "-S", "-B", "-f", "-G", "--build", "--target", "--install"
+    };
+    for (const char* e : kEssential)
+        if (a == e) return true;
+    return a.rfind("/Fe", 0) == 0;   // cl.exe's output switch
+}
+
+// Last component of a path. Anything without a directory part in front of the
+// separator is left alone, so cmd.exe's "cd /d" does not lose its "/".
+std::string lastComponent(const std::string& s) {
+    size_t sep = s.find_last_of("/\\");
+    if (sep == std::string::npos || sep == 0 || sep + 1 >= s.size()) return s;
+    return s.substr(sep + 1);
+}
+
+// Arguments go out unquoted, which would make one holding spaces - a CXXFLAGS=
+// assignment, say - read as several. Those get their quotes back.
+std::string requote(const std::string& s) {
+    if (s.find_first_of(" \t") == std::string::npos) return s;
+    return "\"" + s + "\"";
+}
+
+// Shorten the path inside one argument. For an operand that is the whole
+// argument; for a switch or an assignment only the value half, since the switch
+// spelling itself has to stay readable ("-DCMAKE_CXX_COMPILER=clang++.exe",
+// "/Fe:hello.exe"). A path attached directly to a short switch ("-I../include")
+// is left alone - it is a detail switch, so it gets shed rather than shortened.
+std::string shortenArg(const std::string& arg, bool keep_prefix) {
+    if (!keep_prefix) return lastComponent(arg);
+    size_t eq = arg.find('=');
+    if (eq != std::string::npos)
+        return arg.substr(0, eq + 1) + lastComponent(arg.substr(eq + 1));
+    if (arg[0] == '/') {                            // cl.exe style: /Fe:C:\dir\a.exe
+        size_t colon = arg.find(':');
+        if (colon != std::string::npos)
+            return arg.substr(0, colon + 1) + lastComponent(arg.substr(colon + 1));
+    }
+    return arg;
+}
+
+// The tool's own name, without directory or executable suffix.
+std::string toolName(const std::string& arg) {
+    std::string name = lastComponent(arg);
+    for (const char* ext : {".exe", ".bat", ".cmd", ".com"}) {
+        size_t n = std::strlen(ext);
+        if (name.size() > n && name.compare(name.size() - n, n, ext) == 0)
+            return name.substr(0, name.size() - n);
+    }
+    return name;
+}
+
+std::vector<CmdArg> classifyArgs(const std::vector<std::string>& raw) {
+    // cl.exe spells its switches "/W4"; everywhere else a leading '/' is an
+    // absolute path, so which one it is depends on the tool being run.
+    const bool msvc = !raw.empty() && BuildSystem::isMsvcCompiler(raw[0]);
+
+    std::vector<CmdArg> args;
+    for (size_t i = 0; i < raw.size(); ++i) {
+        const std::string& a = raw[i];
+        if (a.empty() || isRedirect(a)) continue;
+
+        const bool is_switch = a[0] == '-' || (msvc && a[0] == '/');
+        const bool assigns   = !is_switch && isAssignment(a);
+
+        CmdArg out;
+        out.full      = a;
+        out.brief     = args.empty() ? toolName(a) : shortenArg(a, is_switch || assigns);
+        out.droppable = !args.empty() && (assigns || (is_switch && !isEssentialSwitch(a)));
+        args.push_back(out);
+    }
+    return args;
+}
+
+}  // namespace
+
+std::string BuildSystem::summarizeCommand(const std::string& command, size_t max_width)
+{
+    std::vector<CmdArg> args = classifyArgs(splitArgs(command));
+    if (args.empty()) return command;
+
+    std::vector<bool> keep(args.size(), true);
+
+    // Dropped arguments collapse into a single counter, placed where the
+    // leftmost of them stood.
+    auto render = [&args, &keep](bool shorten_paths) {
+        const size_t dropped = (size_t)std::count(keep.begin(), keep.end(), false);
+        std::string out;
+        bool marked = false;
+        for (size_t i = 0; i < args.size(); ++i) {
+            if (!keep[i] && marked) continue;
+            if (!out.empty()) out += ' ';
+            if (keep[i]) {
+                out += requote(shorten_paths ? args[i].brief : args[i].full);
+            } else {
+                out += "(+" + std::to_string(dropped) + " more)";
+                marked = true;
+            }
+        }
+        return out;
+    };
+
+    // Give up as little as possible: the shell noise (quoting, the " 2>&1" every
+    // command carries) always goes, but full paths survive while they fit.
+    std::string out = render(false);
+    if (out.size() <= max_width) return out;
+
+    out = render(true);
+    if (out.size() <= max_width) return out;
+
+    // Shed detail switches, rightmost first - the ones nearest the end of the
+    // line are the least likely to be what the user is looking for.
+    for (size_t i = args.size(); i-- > 0 && out.size() > max_width; ) {
+        if (!args[i].droppable) continue;
+        keep[i] = false;
+        out = render(true);
+    }
+    if (out.size() <= max_width) return out;
+
+    // Only essentials left and they still don't fit: clip, but say so.
+    if (max_width <= 3) return out.substr(0, max_width);
+    return out.substr(0, max_width - 3) + "...";
+}
+
+std::string BuildSystem::summarizeOutputLine(const std::string& line, size_t max_width)
+{
+    // The prefixes this class echoes its own commands with. Command lines are
+    // always put through the summary, even when they would fit: it also drops
+    // the shell plumbing (quoting, the " 2>&1") so that consecutive steps of one
+    // build read alike instead of each being formatted by its own length.
+    static const char* const kPrefixes[] = { "> ", "Build command: " };
+    for (const char* p : kPrefixes) {
+        const size_t n = std::strlen(p);
+        if (line.compare(0, n, p) != 0) continue;
+        if (max_width <= n) break;
+        return p + summarizeCommand(line.substr(n), max_width - n);
+    }
+    return line;   // compiler diagnostics are written to be read; don't touch them
+}
+
 // Ask the configured C++ compiler for its builtin/system header search paths and
 // return them as "-isystem <dir>" arguments. Without these, libclang can't find
 // <stddef.h>/<stdarg.h>/the C++ standard library and bails out with a cascade of
@@ -689,14 +927,8 @@ std::string BuildSystem::guessCompileCommand(const std::string& filename) {
     }
 
     // Fallback: use the toolchain-discovered C++ compiler, or g++ if unknown.
-    if (result.empty()) {
-        const std::string cxx = m_config.toolchain.cxx.empty() ? "g++" : m_config.toolchain.cxx;
-        std::string stem = filename.substr(0, filename.find_last_of('.'));
-        if (isMsvcCompiler(cxx))
-            result = "\"" + cxx + "\" \"" + filename + "\" /Fe:\"" + stem + ".exe\"";
-        else
-            result = "\"" + cxx + "\" \"" + filename + "\" -o \"" + stem + "\"";
-    }
+    if (result.empty())
+        result = defaultCompileCommand(m_config.toolchain.cxx, filename);
 
     {
         std::lock_guard<std::mutex> lk(m_cache_mutex);
@@ -732,6 +964,33 @@ std::vector<std::string> BuildSystem::getClangArguments(const std::string& filen
         }
     }
     return args;
+}
+
+std::string BuildSystem::previewWithCompiler(const std::string& filename,
+                                             const CompilerSettings& settings,
+                                             const std::string& cxx)
+{
+    const std::string base = guessCompileCommand(filename);
+    if (cxx.empty() || base.empty())
+        return get_full_compile_command(base, settings);
+
+    // Same option dialect: keep whatever the guess found (include paths,
+    // defines) and only change which program runs.
+    if (isMsvcCompiler(firstCommandToken(base)) == isMsvcCompiler(cxx)) {
+        size_t token_end;
+        if (base.front() == '"') {
+            const size_t close = base.find('"', 1);
+            token_end = (close == std::string::npos) ? base.size() : close + 1;
+        } else {
+            const size_t sp = base.find(' ');
+            token_end = (sp == std::string::npos) ? base.size() : sp;
+        }
+        return get_full_compile_command("\"" + cxx + "\"" + base.substr(token_end), settings);
+    }
+
+    // Crossing between cl.exe and the rest rewrites the output switch too, so
+    // build the command from scratch instead of patching it.
+    return get_full_compile_command(defaultCompileCommand(cxx, filename), settings);
 }
 
 std::string BuildSystem::get_full_compile_command(const std::string& base_command, const CompilerSettings& settings) {

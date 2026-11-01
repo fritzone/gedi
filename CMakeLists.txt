@@ -92,6 +92,7 @@ set(GEDI_COMMON_SOURCES
     TemplateEngine.cpp
     DialogBase.cpp
     DependencyChecker.cpp
+    ToolchainDetect.cpp
     platform_compat.cpp
     debugger/DebuggerFactory.cpp
     debugger/GdbDebugger.cpp

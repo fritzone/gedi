@@ -22,9 +22,10 @@
 
 std::string FileBrowser::open(Renderer& renderer,
                               const std::string& title,
-                              const std::vector<FilterEntry>& filters)
+                              const std::vector<FilterEntry>& filters,
+                              const std::string& initial_dir)
 {
-    return run(renderer, Mode::OPEN, "", title, filters);
+    return run(renderer, Mode::OPEN, "", title, filters, initial_dir);
 }
 
 std::string FileBrowser::save(Renderer& renderer,
@@ -280,9 +281,10 @@ constexpr int FB_COUNT  = 5;
 std::string FileBrowser::run(Renderer& renderer, Mode mode,
                              const std::string& initial_filename,
                              const std::string& title,
-                             const std::vector<FilterEntry>& filters)
+                             const std::vector<FilterEntry>& filters,
+                             const std::string& initial_dir)
 {
-    //  Mode flags 
+    //  Mode flags
     const bool dirs_only        = (mode == Mode::SELECT_DIR);
     const bool has_input        = (mode != Mode::SELECT_DIR);
     const bool has_filter_combo = !filters.empty() && has_input;
@@ -306,8 +308,14 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
     const std::string can_text    = " &Cancel ";
     const std::string input_label = (mode == Mode::SAVE) ? "Save:" : "File:";
 
-    //  State 
+    //  State
     char cwd_buf[1024];
+    // The browser navigates by chdir, so "start here" is simply a chdir before
+    // the first listing. A directory that isn't there leaves us where we were.
+    if (!initial_dir.empty()) {
+        const int rc = chdir(initial_dir.c_str());
+        (void)rc;
+    }
     auto c = getcwd(cwd_buf, sizeof(cwd_buf));
     (void)c;
 

@@ -22,6 +22,15 @@ public:
     // "make" resolve to the shipped copies. Call once, before anything builds.
     // A no-op where nothing is bundled, and on non-Windows.
     static void useBundledTools();
+
+    // Apply the environment a configured toolchain needs: its `env` entries are
+    // set verbatim and its `bin_dirs` go to the front of PATH, for this process
+    // and everything it spawns. Needed because a compiler path on its own is not
+    // enough on Windows - cl.exe without INCLUDE and LIB compiles nothing, and
+    // it looks for link.exe on PATH. The installer records these when the user
+    // points gedi at a toolchain already on the machine; a probed or bundled
+    // toolchain carries none and this does nothing.
+    static void applyToolchainEnv(const Toolchain& tc);
 };
 
 #endif // DEPENDENCYCHECKER_H

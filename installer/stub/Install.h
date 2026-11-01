@@ -5,6 +5,7 @@
 
 #include "nlohmann/json.hpp"
 #include "Payload.h"
+#include "ToolchainDetect.h"
 
 // Everything the setup stub does to the machine: unpacking files, dropping
 // shortcuts, registering with Add/Remove Programs, and undoing all of it again.
@@ -53,6 +54,14 @@ struct Plan {
     bool                     start_menu = true;
     bool                     desktop    = false;
     bool                     register_uninstall = true;
+
+    // A compiler already on this machine, chosen because the bundled one is not
+    // being installed. Recorded in the editor's own toolchain file rather than
+    // under plan.dir, which is where the editor looks for it - so it is left
+    // alone by the uninstaller, like the rest of the user's configuration.
+    // kind == None means there is nothing to record.
+    toolchain::Setup toolchain;
+    std::string      python3;
 };
 
 // name -> "installing <file>", done/total in bytes.
@@ -61,6 +70,9 @@ using Progress = std::function<void(const std::string& what, uint64_t done, uint
 struct Result {
     bool        ok = false;
     std::string error;
+    // Something that went wrong without spoiling the installation - the files
+    // are there and the program runs, but some side arrangement did not happen.
+    std::string warning;
     uint64_t    bytes_written = 0;
     int         files_written = 0;
 };

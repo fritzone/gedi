@@ -366,6 +366,18 @@ Result install(const payload::Payload& pl, const Plan& plan, const Progress& pro
     }
 #endif
 
+    // ---- the compiler the user picked for the editor ------------------------
+    if (plan.toolchain.ok()) {
+        std::string tc_err;
+        if (!toolchain::write(plan.toolchain, plan.python3, tc_err)) {
+            // The program is installed and usable; it just will not know how to
+            // build until a compiler is set from inside the editor. Worth
+            // reporting, not worth failing the install over.
+            r.warning = "The compiler could not be recorded (" + tc_err +
+                        "). Set it up from the editor instead.";
+        }
+    }
+
     // ---- manifest ----------------------------------------------------------
     {
         const std::string text = manifest.dump(2);

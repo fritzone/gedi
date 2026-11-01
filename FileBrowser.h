@@ -36,12 +36,17 @@ struct FilterEntry {
 // 
 class FileBrowser {
 public:
-    // title   - dialog title (default: "Open File")
-    // filters - optional list of file-type filters shown in a "Type:" combo;
-    //           when empty, no combo is displayed and all files are shown.
+    // title       - dialog title (default: "Open File")
+    // filters     - optional list of file-type filters shown in a "Type:"
+    //               combo; when empty, no combo is displayed and all files are
+    //               shown.
+    // initial_dir - where to start, instead of the current directory. Ignored
+    //               when empty or not a directory. Useful when the process's
+    //               own working directory is nowhere the user would look.
     static std::string open(Renderer& renderer,
                             const std::string& title = "Open File",
-                            const std::vector<FilterEntry>& filters = {});
+                            const std::vector<FilterEntry>& filters = {},
+                            const std::string& initial_dir = "");
 
     static std::string save(Renderer& renderer,
                             const std::string& current_filename = "",
@@ -55,7 +60,8 @@ private:
     static std::string run(Renderer& renderer, Mode mode,
                            const std::string& initial_filename,
                            const std::string& title,
-                           const std::vector<FilterEntry>& filters);
+                           const std::vector<FilterEntry>& filters,
+                           const std::string& initial_dir = "");
 
     //  Directory helpers 
     static std::vector<FileEntry> readDirectory(const std::string& path);

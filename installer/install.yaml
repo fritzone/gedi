@@ -54,6 +54,10 @@ ui:
     The VGA fonts shipped in the fonts directory are bitmap reproductions of
     hardware ROM character sets, included for authenticity of display.
 
+  toolchain: |
+    No compiler is being installed. Pick one that is already on this computer
+    and setup will point the editor at it.
+
   finish: |
     Garland Turbine has been installed. The editor is ready to use.
 
@@ -101,6 +105,9 @@ components:
     name: 'C++ compiler toolchain (Clang)'
     description: 'Clang, LLD, GNU make, mingw-w64 headers and libraries - build C++ with no Visual Studio installed.'
     selected: true
+    # Leaving this one out takes setup to the "C++ Compiler" page, where a
+    # toolchain already on the machine can be pointed at instead.
+    provides_toolchain: true
     files:
       - dir: ../thirdparty/toolchain
         to: toolchain

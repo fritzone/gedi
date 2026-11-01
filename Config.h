@@ -12,6 +12,18 @@ struct Toolchain {
     std::string clang_cxx;
     std::string pkg_config;
     std::string python3;
+
+    // How this toolchain was set up: "msvc", "clang", "gcc", "watcom", or empty
+    // for one that was simply probed off PATH.
+    std::string kind;
+
+    // The environment the compiler needs, recorded by the installer when the
+    // user pointed gedi at a toolchain already on the machine. A compiler path
+    // alone is not enough on Windows: cl.exe needs INCLUDE and LIB and a
+    // link.exe on PATH, and the Open Watcom tools will not run without WATCOM.
+    // Empty for the bundled toolchain, which is self-contained.
+    std::vector<std::string>           bin_dirs;   // prepended to PATH
+    std::map<std::string, std::string> env;        // set verbatim
 };
 
 struct Config {

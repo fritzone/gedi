@@ -50,6 +50,7 @@ Wizard::Wizard(Renderer& renderer, const payload::Payload& pl)
         comp.description = c.value("description", std::string());
         comp.required    = c.value("required", false);
         comp.selected    = comp.required || c.value("selected", true);
+        comp.provides_toolchain = c.value("provides_toolchain", false);
         for (const auto& e : pl_.entries())
             if (e.component == comp.id) comp.bytes += e.usize;
         if (!comp.id.empty()) components_.push_back(std::move(comp));
@@ -225,6 +226,97 @@ std::vector<std::string> Wizard::selectedIds() const {
 }
 
 // ---------------------------------------------------------------------------
+//  Compiler selection
+// ---------------------------------------------------------------------------
+bool Wizard::needCompilerPage() const {
+    // Only when the payload could have supplied a compiler and the user said no:
+    // a script with no such component has nothing to offer an alternative to.
+    bool offered = false;
+    for (const auto& c : components_) {
+        if (!c.provides_toolchain) continue;
+        offered = true;
+        if (c.selected) return false;
+    }
+    return offered;
+}
+
+toolchain::Kind Wizard::tcKind() const {
+    const auto& all = toolchain::kinds();
+    if (tc_choice_ < 0 || tc_choice_ >= (int)all.size()) return toolchain::Kind::None;
+    return all[tc_choice_];
+}
+
+// Browse only appears for the kinds that are configured from a path - there is
+// nothing to browse for when Visual Studio finds itself.
+void Wizard::tcSetButtons() {
+    buttons_ = { { "  &Continue  ", B_CONTINUE } };
+    if (tcPathRowUsable()) buttons_.push_back({ "  B&rowse  ", B_BROWSE });
+    buttons_.push_back({ "  &Back  ", B_BACK });
+    buttons_.push_back({ "  E&xit  ", B_EXIT });
+    if (button_ >= (int)buttons_.size()) button_ = (int)buttons_.size() - 1;
+}
+
+// Pick a different toolchain kind, keeping everything that depends on it in step.
+void Wizard::tcSelect(int choice) {
+    if (choice == tc_choice_) return;
+    tc_choice_ = choice;
+    tc_dirty_  = true;
+    tcSetButtons();
+}
+
+// The Browse button on the compiler page: gedi's own Open File dialog, filtered
+// to the executable this toolchain is identified by.
+void Wizard::browseForCompiler() {
+    const toolchain::Kind k = tcKind();
+    if (!toolchain::needsPath(k)) return;     // nothing to browse for; MSVC finds itself
+
+    const std::vector<FilterEntry> filters = {
+        { std::string(toolchain::exeName(k)) + " and similar", toolchain::browsePattern(k) },
+        { "Programs (*.exe)", "*.exe" },
+        { "All files (*)",    "*" },
+    };
+
+    // Setup's working directory is the scratch folder it unpacked SDL into, so
+    // without a starting point the dialog would open somewhere in %TEMP% that
+    // means nothing to the user.
+    const std::string start = toolchain::suggestedDir(k, tc_path_);
+    const std::string title = std::string("Locate ") + toolchain::label(k);
+
+    // The browser navigates by chdir and leaves us wherever the user stopped;
+    // setup's own directory has to survive that - the bootstrap cleanup steps
+    // out of it at the end, and a stale one would break the launch.
+    char saved[1024];
+    const bool have_saved = getcwd(saved, sizeof saved) != nullptr;
+
+    const std::string picked = FileBrowser::open(r_, title, filters, start);
+
+    if (have_saved) { const int rc = chdir(saved); (void)rc; }
+
+    if (picked.empty()) return;               // cancelled - leave the field alone
+    tc_path_        = inst::nativePath(picked);
+    tc_path_cursor_ = (int)tc_path_.size();
+    tc_path_scroll_ = 0;
+    tc_cursor_      = tcPathRow();
+    focus_          = F_CONTENT;
+    tc_dirty_       = true;
+}
+
+void Wizard::probeToolchain() {
+    const toolchain::Kind k = tcKind();
+    tc_setup_ = {};
+    tc_error_.clear();
+
+    // Visual Studio locates itself; everything else is built from the path the
+    // user gave, and an empty one is simply "not answered yet" rather than an
+    // error to shout about.
+    if (k == toolchain::Kind::Msvc) {
+        tc_setup_ = toolchain::detectMsvc(tc_error_);
+    } else if (toolchain::needsPath(k)) {
+        if (!tc_path_.empty()) tc_setup_ = toolchain::fromPath(k, tc_path_, tc_error_);
+    }
+}
+
+// ---------------------------------------------------------------------------
 //  Pages
 // ---------------------------------------------------------------------------
 void Wizard::drawWelcome() {
@@ -327,6 +419,90 @@ void Wizard::drawComponents() {
     }
 }
 
+void Wizard::drawToolchain() {
+    if (tc_dirty_) { probeToolchain(); tc_dirty_ = false; }
+
+    const int x = contentX();
+    int y = contentY();
+
+    const json ui = spec_.value("ui", json::object());
+    const std::string intro = ui.value("toolchain",
+        std::string("No compiler is being installed. Pick one that is already on "
+                    "this computer, and setup will point the editor at it."));
+    const auto intro_lines = wrap(intro, contentW());
+    for (size_t i = 0; i < intro_lines.size() && i < 2; ++i)
+        r_.drawText(x, y++, intro_lines[i], Renderer::CP_DIALOG);
+    y += 1;
+
+    // ---- the radio buttons -------------------------------------------------
+    const auto& all = toolchain::kinds();
+    tc_radio_y_ = y;
+    for (int i = 0; i < (int)all.size(); ++i) {
+        const std::string mark = (i == tc_choice_) ? "(\xe2\x80\xa2) " : "( ) ";
+        std::string row = "  " + mark + toolchain::label(all[i]);
+        row.resize(contentW(), ' ');
+        const bool sel = (focus_ == F_CONTENT) && (tc_cursor_ == i);
+        r_.drawText(x, y++, row, sel ? Renderer::CP_LIST_SELECTED : Renderer::CP_DIALOG);
+    }
+    y += 1;
+
+    // ---- where it is -------------------------------------------------------
+    tc_path_y_ = -1;
+    if (tcPathRowUsable()) {
+        r_.drawText(x, y++, toolchain::prompt(tcKind()), Renderer::CP_DIALOG);
+        const int field_w = contentW() - 2;
+        if (tc_path_cursor_ - tc_path_scroll_ >= field_w) tc_path_scroll_ = tc_path_cursor_ - field_w + 1;
+        if (tc_path_cursor_ < tc_path_scroll_)            tc_path_scroll_ = tc_path_cursor_;
+        tc_path_y_ = y;
+        drawInputField(x, y++, field_w, tc_path_, tc_path_cursor_, tc_path_scroll_,
+                       focus_ == F_CONTENT && tc_cursor_ == tcPathRow());
+    } else if (tcKind() == toolchain::Kind::Msvc) {
+        r_.drawText(x, y++, "Setup looks for Visual Studio on its own.", Renderer::CP_DIALOG);
+    } else {
+        r_.drawText(x, y++, "The editor will ask for a compiler the first time you build.",
+                    Renderer::CP_DIALOG);
+    }
+    y += 1;
+
+    // ---- what came of it ---------------------------------------------------
+    // Everything left down to the row above the buttons. One note per line
+    // rather than run together: these are the paths the user has to recognise.
+    const int room = (panelY() + H - 3) - y;
+    if (room <= 0) return;
+
+    auto isWarning = [](const std::string& n) {
+        return n.rfind("Warning", 0) == 0 || n.rfind("Note:", 0) == 0;
+    };
+
+    std::vector<std::pair<std::string, int>> lines;
+    if (tc_setup_.ok()) {
+        // Warnings first: when there is not room for every note, the ones that
+        // say something is wrong must not be the ones that fall off the end.
+        std::vector<std::string> notes = tc_setup_.notes;
+        std::stable_partition(notes.begin(), notes.end(), isWarning);
+        for (const auto& n : notes) {
+            std::string l = "  " + n;
+            if ((int)l.size() > contentW()) l = l.substr(0, contentW() - 3) + "...";
+            lines.emplace_back(l, isWarning(n) ? Renderer::CP_STATUS_BAR_HIGHLIGHT
+                                               : Renderer::CP_DIALOG);
+        }
+    } else if (!tc_error_.empty()) {
+        for (const auto& l : wrap(tc_error_, contentW()))
+            lines.emplace_back(l, Renderer::CP_STATUS_BAR_HIGHLIGHT);
+    }
+
+    for (int i = 0; i < (int)lines.size() && i < room; ++i) {
+        // The last row available says how many notes it could not show.
+        if (i == room - 1 && (int)lines.size() > room) {
+            const int hidden = (int)lines.size() - room + 1;
+            r_.drawText(x, y + i, "  (+" + std::to_string(hidden) + " more)",
+                        Renderer::CP_DIALOG);
+            break;
+        }
+        r_.drawText(x, y + i, lines[i].first, lines[i].second);
+    }
+}
+
 void Wizard::drawConfirm() {
     const int x = contentX();
     int y = contentY();
@@ -342,6 +518,15 @@ void Wizard::drawConfirm() {
 
     r_.drawText(x, y++, "Total     : " + humanSize(inst::sizeOf(pl_, selectedIds())),
                 Renderer::CP_DIALOG);
+    if (needCompilerPage()) {
+        // The label only - the compiler page has already shown the full paths,
+        // and this page has barely a row to spare.
+        const std::string what = tc_setup_.ok() ? toolchain::label(tcKind())
+                                                : "none - set one up from the editor";
+        std::string line = "Compiler  : " + what;
+        if ((int)line.size() > contentW()) line = line.substr(0, contentW());
+        r_.drawText(x, y++, line, Renderer::CP_DIALOG);
+    }
     y += 1;
 
     confirm_chk_y_[0] = y;
@@ -407,6 +592,12 @@ void Wizard::drawDone() {
                         humanSize(result_.bytes_written) + ")", Renderer::CP_DIALOG);
     y += 1;
 
+    if (!result_.warning.empty()) {
+        for (const auto& l : wrap(result_.warning, contentW()))
+            r_.drawText(x, y++, l, Renderer::CP_STATUS_BAR_HIGHLIGHT);
+        y += 1;
+    }
+
     if (!launch_target_.empty()) {
         const std::string pname = spec_.value("product", json::object()).value("name", std::string("it"));
         done_chk_y_ = y;
@@ -418,13 +609,14 @@ void Wizard::drawDone() {
 void Wizard::drawCurrentPage() {
     static const char* TITLES[P_COUNT] = {
         "Welcome", "License Agreement", "Destination Directory",
-        "Select Components", "Confirm", "Installing", "Finished"
+        "Select Components", "C++ Compiler", "Confirm", "Installing", "Finished"
     };
     static const char* HINTS[P_COUNT] = {
         "Enter Continue   Esc Exit",
         "PgUp/PgDn Scroll   Tab Buttons   Esc Exit",
         "Tab Switch   Enter Continue   Esc Exit",
         "Space Toggle   Up/Down Move   Tab Buttons   Esc Exit",
+        "Up/Down Move   Space Select   Tab Buttons   Esc Exit",
         "Space Toggle   Tab Switch   Enter Install   Esc Exit",
         "Please wait...",
         "Enter Finish"
@@ -440,14 +632,15 @@ void Wizard::drawCurrentPage() {
         case P_LICENSE:    drawLicense();    break;
         case P_DIR:        drawDir();        break;
         case P_COMPONENTS: drawComponents(); break;
+        case P_TOOLCHAIN:  drawToolchain();  break;
         case P_CONFIRM:    drawConfirm();    break;
         case P_DONE:       drawDone();       break;
         default: break;
     }
     drawButtons();
-    // Only the directory field wants a visible caret; everywhere else a stray
-    // block would be left sitting wherever the last drawText finished.
-    if (!(page_ == P_DIR && focus_ == F_CONTENT)) r_.hideCursor();
+    // Only the text fields want a visible caret; everywhere else a stray block
+    // would be left sitting wherever the last drawText finished.
+    if (!textFieldFocused()) r_.hideCursor();
     r_.refresh();
 }
 
@@ -471,6 +664,8 @@ void Wizard::setPage(Page p) {
         case P_COMPONENTS: buttons_ = { { "  &Continue  ", B_CONTINUE }, { "  &Back  ", B_BACK },
                                         { "  E&xit  ", B_EXIT } };
                            focus_ = F_CONTENT; comp_cursor_ = 0; break;
+        case P_TOOLCHAIN:  focus_ = F_CONTENT; tc_cursor_ = tc_choice_; tc_dirty_ = true;
+                           tcSetButtons(); break;
         case P_CONFIRM:    buttons_ = { { "  &Install  ", B_CONTINUE }, { "  &Back  ", B_BACK },
                                         { "  E&xit  ", B_EXIT } };
                            comp_cursor_ = 0; break;
@@ -489,21 +684,37 @@ bool Wizard::canAdvance() const {
     if (page_ == P_COMPONENTS)
         return std::any_of(components_.begin(), components_.end(),
                            [](const Component& c) { return c.selected; });
+    // Skipping is a real answer; anything else has to have actually resolved.
+    if (page_ == P_TOOLCHAIN)
+        return tcKind() == toolchain::Kind::None || tc_setup_.ok();
     return true;
 }
 
 void Wizard::advance() {
+    // The compiler page validates on the way out, so a path typed and then
+    // Entered is checked before the message below decides what to complain about.
+    if (page_ == P_TOOLCHAIN && tc_dirty_) { probeToolchain(); tc_dirty_ = false; }
+
     if (!canAdvance()) {
-        message("Cannot continue", page_ == P_DIR
-                ? "Please give a directory to install into."
-                : "Please select at least one component.");
+        std::string why;
+        switch (page_) {
+            case P_DIR:       why = "Please give a directory to install into."; break;
+            case P_TOOLCHAIN: why = tc_error_.empty()
+                                  ? std::string("Please give the path to ") +
+                                    toolchain::exeName(tcKind()) + "."
+                                  : tc_error_;
+                              break;
+            default:          why = "Please select at least one component."; break;
+        }
+        message("Cannot continue", why);
         return;
     }
     switch (page_) {
         case P_WELCOME:    setPage(P_LICENSE);    break;
         case P_LICENSE:    setPage(P_DIR);        break;
         case P_DIR:        setPage(P_COMPONENTS); break;
-        case P_COMPONENTS: setPage(P_CONFIRM);    break;
+        case P_COMPONENTS: setPage(needCompilerPage() ? P_TOOLCHAIN : P_CONFIRM); break;
+        case P_TOOLCHAIN:  setPage(P_CONFIRM);    break;
         case P_CONFIRM:    setPage(P_PROGRESS);   break;
         default: break;
     }
@@ -514,7 +725,8 @@ void Wizard::back() {
         case P_LICENSE:    setPage(P_WELCOME);    break;
         case P_DIR:        setPage(license_lines_.empty() ? P_WELCOME : P_LICENSE); break;
         case P_COMPONENTS: setPage(P_DIR);        break;
-        case P_CONFIRM:    setPage(P_COMPONENTS); break;
+        case P_TOOLCHAIN:  setPage(P_COMPONENTS); break;
+        case P_CONFIRM:    setPage(needCompilerPage() ? P_TOOLCHAIN : P_COMPONENTS); break;
         default: break;
     }
 }
@@ -624,8 +836,15 @@ bool Wizard::activate(ButtonId id) {
             back();
             return true;
         case B_BROWSE: {
+            if (page_ == P_TOOLCHAIN) {
+                browseForCompiler();
+                return true;
+            }
             const std::string picked = FileBrowser::selectDirectory(r_);
-            if (!picked.empty()) { dir_ = inst::nativePath(picked); dir_cursor_ = (int)dir_.size(); }
+            if (!picked.empty()) {
+                dir_        = inst::nativePath(picked);
+                dir_cursor_ = (int)dir_.size();
+            }
             return true;
         }
         case B_FINISH:
@@ -692,7 +911,8 @@ bool Wizard::handleKey(wint_t ch, bool alt) {
 
     if (ch == 9 || ch == KEY_BTAB) {                  // Tab: content <-> buttons
         const bool has_content = (page_ == P_DIR || page_ == P_COMPONENTS ||
-                                  page_ == P_CONFIRM || page_ == P_LICENSE ||
+                                  page_ == P_TOOLCHAIN || page_ == P_CONFIRM ||
+                                  page_ == P_LICENSE ||
                                   (page_ == P_DONE && !launch_target_.empty()));
         if (has_content) focus_ = (focus_ == F_BUTTONS) ? F_CONTENT : F_BUTTONS;
         return true;
@@ -760,6 +980,51 @@ bool Wizard::handleKey(wint_t ch, bool alt) {
             if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) advance();
             if (comp_cursor_ < comp_scroll_)              comp_scroll_ = comp_cursor_;
             if (comp_cursor_ >= comp_scroll_ + rows)      comp_scroll_ = comp_cursor_ - rows + 1;
+            break;
+        }
+        case P_TOOLCHAIN: {
+            const int last = tcPathRowUsable() ? tcPathRow() : tcPathRow() - 1;
+            if (ch == KEY_UP) {
+                if (tc_cursor_ > 0) --tc_cursor_;
+                break;
+            }
+            if (ch == KEY_DOWN) {
+                if (tc_cursor_ < last) ++tc_cursor_;
+                break;
+            }
+            // The path field: everything typed goes into it.
+            if (tc_cursor_ == tcPathRow()) {
+                if (ch == KEY_LEFT)       { if (tc_path_cursor_ > 0) --tc_path_cursor_; }
+                else if (ch == KEY_RIGHT) { if (tc_path_cursor_ < (int)tc_path_.size()) ++tc_path_cursor_; }
+                else if (ch == KEY_HOME)  tc_path_cursor_ = 0;
+                else if (ch == KEY_END)   tc_path_cursor_ = (int)tc_path_.size();
+                else if (ch == KEY_BACKSPACE || ch == 8 || ch == 127) {
+                    if (tc_path_cursor_ > 0) {
+                        tc_path_.erase(tc_path_cursor_ - 1, 1);
+                        --tc_path_cursor_;
+                        tc_dirty_ = true;
+                    }
+                } else if (ch == KEY_DC) {
+                    if (tc_path_cursor_ < (int)tc_path_.size()) {
+                        tc_path_.erase(tc_path_cursor_, 1);
+                        tc_dirty_ = true;
+                    }
+                } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
+                    advance();
+                } else if (ch >= 32 && ch < 127) {
+                    tc_path_.insert(tc_path_.begin() + tc_path_cursor_, (char)ch);
+                    ++tc_path_cursor_;
+                    tc_dirty_ = true;
+                }
+                break;
+            }
+            // A radio row.
+            if (ch == ' ') {
+                tcSelect(tc_cursor_);
+            } else if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
+                if (tc_choice_ != tc_cursor_) tcSelect(tc_cursor_);
+                else                          advance();
+            }
             break;
         }
         case P_CONFIRM: {
@@ -849,6 +1114,23 @@ bool Wizard::handleMouse(const MEVENT& ev) {
             break;
         }
 
+        case P_TOOLCHAIN: {
+            const int n = (int)toolchain::kinds().size();
+            if (tc_radio_y_ >= 0 && ev.y >= tc_radio_y_ && ev.y < tc_radio_y_ + n &&
+                ev.x >= contentX() && ev.x < contentX() + contentW()) {
+                focus_     = F_CONTENT;
+                tc_cursor_ = ev.y - tc_radio_y_;
+                tcSelect(tc_cursor_);
+            } else if (tc_path_y_ >= 0 && ev.y == tc_path_y_ &&
+                       ev.x >= contentX() && ev.x < contentX() + contentW() - 2) {
+                focus_          = F_CONTENT;
+                tc_cursor_      = tcPathRow();
+                tc_path_cursor_ = std::min((int)tc_path_.size(),
+                                           tc_path_scroll_ + (ev.x - contentX()));
+            }
+            break;
+        }
+
         case P_CONFIRM:
             for (int i = 0; i < 2; ++i) {
                 if (ev.y == confirm_chk_y_[i] && ev.x >= contentX() &&
@@ -889,6 +1171,10 @@ bool Wizard::run() {
             plan.desktop            = make_desktop_;
             plan.register_uninstall = spec_.value("install", json::object())
                                             .value("register_uninstall", true);
+            if (needCompilerPage() && tc_setup_.ok()) {
+                plan.toolchain = tc_setup_;
+                plan.python3   = toolchain::findPython();
+            }
 
             result_ = inst::install(pl_, plan, [&](const std::string& what, uint64_t d, uint64_t t) {
                 drawProgress(what, d, t);

@@ -152,7 +152,71 @@ compiles instead of whatever cmake's own detection turns up.
 The probe result is cached in `toolchain.json`, which is trusted on later runs.
 A machine that already recorded a compiler before installing keeps using it;
 delete that file to re-probe. A recorded compiler that no longer exists on disk
-now triggers a re-probe by itself.
+now triggers a re-probe by itself. A re-probe for any other reason - python
+missing at install time, say - fills in only what the file left blank: a
+compiler chosen deliberately is never replaced by one found on `PATH`.
+
+### Using a compiler the machine already has
+
+The bundled toolchain is most of the download, and a machine with Visual Studio
+or MinGW on it does not need a second copy. Unticking the component marked
+`provides_toolchain` therefore takes setup to a **C++ Compiler** page offering
+
+| Choice | How it is located |
+|---|---|
+| Microsoft Visual C++ | found by setup itself |
+| Clang / LLVM | the user gives the path |
+| GCC (MinGW-w64) | the user gives the path |
+| Open Watcom | the user gives the path |
+| Skip | nothing is recorded |
+
+A compiler path alone would not be enough. `cl.exe` with no `INCLUDE` and `LIB`
+finds neither `<iostream>` nor `kernel32.lib`, and it shells out to a `link.exe`
+it expects on `PATH`; the Open Watcom tools will not start without `WATCOM` and
+their own `INCLUDE`. So `ToolchainDetect.cpp` - shared with the editor, which
+offers the same choice from Build Options - works out the whole environment, not
+just the executable:
+
+* **MSVC** - `vswhere` names the installation (the standard install directories
+  are scanned when it is absent), `Microsoft.VCToolsVersion.default.txt` names
+  the toolset, and `HKLM\...\Windows Kits\Installed Roots` names the SDK. From
+  those come `INCLUDE`, `LIB`, and the `bin\Hostx64\x64` and SDK `bin` entries
+  for `PATH`. x64 host and x64 target only.
+* **Clang** - just its `bin` when it carries its own headers (llvm-mingw,
+  MSYS2). The stock LLVM build targets MSVC and has no library of its own, so
+  there the Visual Studio `INCLUDE` and `LIB` are borrowed as well.
+* **GCC** - just its `bin`: gcc resolves its headers from its own install prefix.
+* **Open Watcom** - `WATCOM`, an `INCLUDE` built from `h`, `h\nt` and the
+  `directx` / `ddk` subdirectories, `EDPATH`, `WIPFC`, and `binnt64` ahead of
+  `binnt`. `owcc` is preferred over `wpp386` when present, being the driver that
+  understands gcc-style options.
+
+Clang and GCC are asked for `--version` and the reply is shown back, so a wrong
+file is obvious before the install runs.
+
+**Browse** opens gedi's own `FileBrowser::open` - the editor's Open File dialog,
+the same one `F3` brings up - with a type filter for the names the chosen
+compiler plausibly goes by (`g++.exe;gcc.exe;*-g++.exe;*-gcc.exe` for MinGW,
+`wpp386.exe;owcc.exe;wcc386.exe` for Watcom), falling back to `*.exe` and all
+files. `FileBrowser::open` gained an `initial_dir` argument for this: setup's
+working directory is the scratch folder it unpacked SDL into, so the dialog is
+pointed at the usual install location instead (`%ProgramFiles%\LLVM\bin`,
+`C:\msys64\mingw64\bin`, `C:\WATCOM\binnt64`, ...), or at whatever the user has
+already typed. The browser navigates by `chdir`, so the wizard saves and
+restores its own working directory around the call. Typing a directory into the
+field still works - the compiler is then looked for inside it.
+
+The result is written to the editor's own `toolchain.json` (see above) with two
+extra keys - `bin_dirs`, prepended to `PATH`, and `env`, set verbatim - which
+`DependencyChecker::applyToolchainEnv` applies at startup. The write merges into
+whatever the file already holds, so the recorded python, `pkg_config` and the
+`ignore_dependencies` opt-out survive. It lives in the user's profile rather
+than the install directory, so the uninstaller leaves it alone like the rest of
+their configuration.
+
+The editor offers the same four choices after installation, on the **Compiler**
+tab of Build Options - so the compiler can be identified and changed without
+reinstalling.
 
 ## The bundled build systems
 
@@ -260,6 +324,7 @@ ui:
   title: 'gedi Installation Utility'
   welcome: |                     # shown on page 1
   license: |                     # scrollable; the page is skipped if absent
+  toolchain: |                   # intro on the compiler page (see below)
   finish:  |                     # shown when done
 
 install:
@@ -281,6 +346,10 @@ components:
       - from: gedi-gui.exe       # to: defaults to the file name
       - from: icons/logo.png
         to: icons/logo.png
+  - id: toolchain
+    name: 'C++ compiler'
+    selected: true               # ticked by default, user may untick
+    provides_toolchain: true     # unticking it opens the "C++ Compiler" page
   - id: extrafonts
     name: 'Additional fonts'
     selected: true               # ticked by default, user may untick

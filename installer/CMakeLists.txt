@@ -46,6 +46,7 @@ set(GEDI_UI_SOURCES
     ${GEDI_ROOT}/DialogBase.cpp
     ${GEDI_ROOT}/FileBrowser.cpp
     ${GEDI_ROOT}/utils.cpp
+    ${GEDI_ROOT}/ToolchainDetect.cpp
     ${GEDI_ROOT}/platform_compat.cpp
     ${GEDI_ROOT}/curses_compat.cpp
     ${GEDI_ROOT}/graphics_engine/VgaTextEngine.cpp

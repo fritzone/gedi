@@ -1,4 +1,5 @@
 #include "BuildOutputDialog.h"
+#include "BuildSystem.h"
 #include "curses_compat.h"
 #include <algorithm>
 
@@ -34,7 +35,9 @@ void BuildOutputDialog::show(Renderer& renderer, const std::vector<std::string>&
 
         for (int i = 0; i < visible_h; ++i) {
             if (scroll_pos + i < (int)lines.size()) {
-                std::string line = lines[scroll_pos + i];
+                // Build commands are far wider than any dialog; show a summary
+                // that fits instead of clipping their informative tail off.
+                std::string line = BuildSystem::summarizeOutputLine(lines[scroll_pos + i], (size_t)(w - 4));
                 if (line.length() > (size_t)w - 4) line = line.substr(0, w - 4);
                 renderer.drawText(startx + 2, starty + 2 + i, line, Renderer::CP_DIALOG);
             }

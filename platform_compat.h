@@ -10,6 +10,7 @@
 
 #ifdef _WIN32
 
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <sys/stat.h>
@@ -49,7 +50,24 @@ typedef unsigned short mode_t;
 #define chdir  _chdir
 
 // ---- popen / pclose ---------------------------------------------------------
-#define popen  _popen
+// _popen runs the command as "cmd.exe /c <command>" without quoting it, and
+// cmd.exe then applies its own rule to what follows /c: if the string starts
+// with a quote, it strips that quote *and the last quote on the line*. Every
+// toolchain invocation here starts with a quoted compiler path, so the command
+// arrives mangled - the leading quote of the program and the closing quote of
+// the final argument both vanish - and the child dies with "The filename,
+// directory name, or volume label syntax is incorrect". Wrapping the whole
+// command in one more pair of quotes gives that rule a sacrificial pair to eat
+// and leaves the real command untouched; commands that don't begin with a
+// quote are unaffected, since the pair we add is then the one removed.
+inline FILE* gedi_popen(const std::string& command, const char* mode) {
+    return _popen(("\"" + command + "\"").c_str(), mode);
+}
+// MinGW's <stdio.h> already maps popen onto _popen; replace that mapping rather
+// than redefining the macro on top of it.
+#undef popen
+#undef pclose
+#define popen  gedi_popen
 #define pclose _pclose
 
 // ---- dirent.h emulation (opendir/readdir/closedir) --------------------------

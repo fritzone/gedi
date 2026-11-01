@@ -96,6 +96,44 @@ void DependencyChecker::useBundledTools()
 #endif
 }
 
+void DependencyChecker::applyToolchainEnv(const Toolchain& tc)
+{
+    if (tc.bin_dirs.empty() && tc.env.empty()) return;
+
+    // Both copies, as in useBundledTools(): SetEnvironmentVariable is what
+    // CreateProcess hands to child processes, _putenv_s is what the CRT's own
+    // getenv/_popen read. Setting one leaves the other stale.
+    auto setVar = [](const std::string& name, const std::string& value) {
+#ifdef _WIN32
+        SetEnvironmentVariableA(name.c_str(), value.c_str());
+        _putenv_s(name.c_str(), value.c_str());
+#else
+        setenv(name.c_str(), value.c_str(), 1);
+#endif
+    };
+
+    for (const auto& kv : tc.env)
+        if (!kv.first.empty()) setVar(kv.first, kv.second);
+
+    if (tc.bin_dirs.empty()) return;
+
+#ifdef _WIN32
+    const char sep = ';';
+#else
+    const char sep = ':';
+#endif
+    // In front of everything else: the compiler's own linker and helper tools
+    // have to win over any other copy that happens to be on PATH.
+    std::string prefix;
+    std::error_code ec;
+    for (const auto& d : tc.bin_dirs)
+        if (!d.empty() && std::filesystem::is_directory(d, ec)) prefix += d + sep;
+    if (prefix.empty()) return;
+
+    const char* cur = std::getenv("PATH");
+    setVar("PATH", prefix + (cur ? cur : ""));
+}
+
 static std::string which(const std::string& name)
 {
 #ifdef _WIN32
@@ -231,6 +269,7 @@ std::string DependencyChecker::toolchainPath()
 bool DependencyChecker::check(Toolchain& out, bool ignore)
 {
     std::string path = toolchainPath();
+    Toolchain recorded;      // what a usable-but-incomplete toolchain.json said
 
     // --ignore-dependencies: persist the opt-out and skip all further checks.
     if (ignore) {
@@ -260,6 +299,9 @@ bool DependencyChecker::check(Toolchain& out, bool ignore)
             out.clang_cxx  = j.value("clang_cxx",  "");
             out.pkg_config = j.value("pkg_config", "");
             out.python3    = j.value("python3",    "");
+            out.kind       = j.value("kind",       "");
+            out.bin_dirs   = j.value("bin_dirs", std::vector<std::string>{});
+            out.env        = j.value("env", std::map<std::string, std::string>{});
 
             // Sanity: at minimum we need a C++ compiler and python3, and the
             // recorded compiler has to still be there. The file stores absolute
@@ -271,14 +313,18 @@ bool DependencyChecker::check(Toolchain& out, bool ignore)
                                  std::filesystem::exists(out.cxx));
             if (cxx_ok && !out.python3.empty())
                 return true;
-            // Fall through to re-probe if the file looks incomplete.
+            // Fall through to re-probe if the file looks incomplete - but keep
+            // what it did answer. A compiler the installer or the user chose,
+            // with the environment that makes it work, must not be thrown away
+            // by a probe that only ran because python was missing.
+            if (cxx_ok) recorded = out;
         } catch (...) {
             // Corrupted file - re-probe.
         }
     }
 
-    // First run (or incomplete toolchain file): probe the system.
-    Toolchain t;
+    // First run (or incomplete toolchain file): probe for whatever is missing.
+    Toolchain t = recorded;
 
 #ifdef _WIN32
     // The bundled Clang wins over anything installed on the machine: it is the
@@ -287,7 +333,7 @@ bool DependencyChecker::check(Toolchain& out, bool ignore)
     // Visual Studio happens to be present. Everything else stays as a fallback
     // for source builds that were not given a toolchain.
     const std::filesystem::path tc = bundledToolchainRoot();
-    if (!tc.empty()) {
+    if (t.cxx.empty() && !tc.empty()) {
         t.cxx       = (tc / "bin" / "clang++.exe").string();
         t.cc        = (tc / "bin" / "clang.exe").string();
         t.clang     = t.cc;
@@ -311,7 +357,7 @@ bool DependencyChecker::check(Toolchain& out, bool ignore)
     t.pkg_config.clear();
 
     // Python: prefer python, fall back to python3
-    t.python3 = which("python");
+    if (t.python3.empty()) t.python3 = which("python");
     if (t.python3.empty()) t.python3 = which("python3");
 
     std::vector<std::string> missing;
@@ -320,22 +366,25 @@ bool DependencyChecker::check(Toolchain& out, bool ignore)
     if (t.python3.empty())
         missing.push_back("python");
 #else
+    // Each of these probes only fills a gap: anything the recorded file already
+    // answered is the user's choice and stays put.
+    //
     // C compiler: prefer gcc, fall back to cc
-    t.cc = which("gcc");
-    if (t.cc.empty()) t.cc = which("cc");
+    if (t.cc.empty())  t.cc  = which("gcc");
+    if (t.cc.empty())  t.cc  = which("cc");
 
     // C++ compiler: prefer g++, fall back to c++
-    t.cxx = which("g++");
+    if (t.cxx.empty()) t.cxx = which("g++");
     if (t.cxx.empty()) t.cxx = which("c++");
 
     // Clang (optional but recorded)
-    t.clang     = which("clang");
-    t.clang_cxx = which("clang++");
+    if (t.clang.empty())     t.clang     = which("clang");
+    if (t.clang_cxx.empty()) t.clang_cxx = which("clang++");
 
-    t.pkg_config = which("pkg-config");
+    if (t.pkg_config.empty()) t.pkg_config = which("pkg-config");
 
     // Python: prefer python3, fall back to python
-    t.python3 = which("python3");
+    if (t.python3.empty()) t.python3 = which("python3");
     if (t.python3.empty()) t.python3 = which("python");
 
     // Determine what is missing.  A C++ compiler and python3 are required;
@@ -371,6 +420,11 @@ bool DependencyChecker::check(Toolchain& out, bool ignore)
         j["clang_cxx"]  = t.clang_cxx;
         j["pkg_config"] = t.pkg_config;
         j["python3"]    = t.python3;
+        // Carried through so a re-probe cannot drop the environment a
+        // configured toolchain needs to run.
+        if (!t.kind.empty())     j["kind"]     = t.kind;
+        if (!t.bin_dirs.empty()) j["bin_dirs"] = t.bin_dirs;
+        if (!t.env.empty())      j["env"]      = t.env;
 
         std::ofstream o(path);
         if (o.is_open())
