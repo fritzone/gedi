@@ -419,6 +419,8 @@ struct OptionList {
         int   radio_val  = 0;
         bool* b_val      = nullptr;   // non-null for checkboxes
         int*  i_val      = nullptr;   // non-null for radio buttons
+        int*  ic_val     = nullptr;   // checkbox kept as an int (0/1), instead of b_val
+        bool  disabled   = false;     // shown, marked as such, cannot be changed
     };
 
     std::vector<Option> options;  // set by the subclass each time the tab changes
@@ -426,6 +428,7 @@ struct OptionList {
     int top_row   = 0;            // scroll offset (option index of first visible row)
     int x, y;                     // position relative to dialog top-left
     int visible_rows;
+    int width = 0;                // columns available; 0 = unlimited
 
     //  Flat row view (group headers interspersed) 
     struct Row { bool is_group; std::string text; int opt_idx; };
@@ -438,9 +441,9 @@ struct OptionList {
                 last_group = options[i].group;
                 rows.push_back({ true, "- " + last_group, -1 });
             }
-            bool val = options[i].is_radio
-                           ? (*options[i].i_val == options[i].radio_val)
-                           : *options[i].b_val;
+            bool val = options[i].is_radio ? (*options[i].i_val == options[i].radio_val)
+                     : options[i].ic_val  ? (*options[i].ic_val != 0)
+                                          : *options[i].b_val;
             std::string mark = options[i].is_radio ? (val ? "(•)" : "( )") : (val ? "[X]" : "[ ]");
             rows.push_back({ false, mark + " " + options[i].label, i });
         }
@@ -469,8 +472,18 @@ struct OptionList {
                                   Renderer::CP_DIALOG, A_BOLD);
             } else {
                 bool sel = focused && (row.opt_idx == cursor);
-                renderer.drawText(startx + x + 2, starty + y + i, row.text,
-                                  sel ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
+                const bool off = options[row.opt_idx].disabled;
+                // A long label is shortened, the "not supported" mark kept.
+                const std::string mark = off ? "  - not supported" : "";
+                std::string text = row.text;
+                if (width > 0) {
+                    const int avail = width - 2 - (int)mark.size();
+                    if ((int)text.size() > avail && avail > 3) text = text.substr(0, avail - 3) + "...";
+                }
+                text += mark;
+                renderer.drawText(startx + x + 2, starty + y + i, text,
+                                  sel ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG,
+                                  off ? A_DIM : A_NORMAL);
             }
         }
     }
@@ -483,8 +496,10 @@ struct OptionList {
         if ((ch == ' ' || ch == KEY_ENTER || ch == 10 || ch == 13)
             && cursor < (int)options.size()) {
             auto& opt = options[cursor];
-            if (opt.is_radio) *opt.i_val = opt.radio_val;
-            else              *opt.b_val = !*opt.b_val;
+            if (opt.disabled)    return true;
+            if (opt.is_radio)    *opt.i_val  = opt.radio_val;
+            else if (opt.ic_val) *opt.ic_val = *opt.ic_val ? 0 : 1;
+            else                 *opt.b_val  = !*opt.b_val;
             return true;
         }
         return false;

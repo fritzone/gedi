@@ -1,0 +1,43 @@
+{
+    "id": "msp430-gcc",
+    "name": "MSP430 GCC (msp430-elf-g++)",
+    "inherits": "gcc-cross",
+    "order": 107,
+    "description": "GCC for TI's 16-bit MSP430 microcontrollers.",
+    "match": {
+        "executables": [
+            "msp430-elf-g++"
+        ],
+        "priority": 5
+    },
+    "command": {
+        "exe_ext": ".elf"
+    },
+    "top_option": {
+        "id": "mmcu",
+        "default": 0,
+        "choices": [
+            {
+                "label": "default",
+                "flag": ""
+            },
+            {
+                "label": "MSP430G2553",
+                "flag": "-mmcu=msp430g2553"
+            },
+            {
+                "label": "MSP430F5529",
+                "flag": "-mmcu=msp430f5529"
+            },
+            {
+                "label": "MSP430FR2433",
+                "flag": "-mmcu=msp430fr2433"
+            },
+            {
+                "label": "MSP430FR5969",
+                "flag": "-mmcu=msp430fr5969"
+            }
+        ],
+        "label": "Microcontroller"
+    }
+}

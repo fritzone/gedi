@@ -23,6 +23,11 @@ ProjectPropertiesDialog::ProjectPropertiesDialog(Renderer& renderer,
         if (standards_[i] == project.compiler_settings.cpp_standard) { std_idx_ = i; break; }
     cfg_combo_ = ComboBox(standards_, std_idx_, /*x=*/18, /*y=*/CFG_BOX_Y + 3, /*w=*/12);
 
+    // Open Watcom platform combo, shown in the same row instead
+    for (const auto& p : kWatcomPlatforms) platforms_.push_back(p.label);
+    plat_combo_ = ComboBox(platforms_, watcomPlatformIndex(project.watcom_platform),
+                           /*x=*/18, /*y=*/CFG_BOX_Y + 3, /*w=*/26);
+
     // Mark which system libs are already used by the project
     m_sys_lib_used_.assign(m_sys_libs_.size(), false);
     for (const auto& proj_lib : project.libraries)
@@ -53,6 +58,7 @@ bool ProjectPropertiesDialog::show(Renderer& renderer, GediProject& project,
 
         project.compiler_settings.cpp_standard = dlg.cfg_combo_.selectedText();
         project.cpp_standard = project.compiler_settings.cpp_standard;
+        project.watcom_platform = kWatcomPlatforms[dlg.plat_combo_.selected_idx].key;
 
         project.libraries.clear();
         for (int i = 0; i < (int)dlg.m_sys_libs_.size(); ++i)
@@ -322,11 +328,9 @@ void ProjectPropertiesDialog::onDraw(Renderer& renderer, int startx, int starty)
         }
 
         const int fy2 = starty + CFG_BOX_Y + 3;
-        renderer.drawText(inner_x + 2, fy2, "C++ Standard:", Renderer::CP_DIALOG);
-        if (isWatcom())
-            renderer.drawText(inner_x + BS_COL_X, fy2, "n/a (Open Watcom)", Renderer::CP_DIALOG);
-        else
-            cfg_combo_.draw(renderer, startx, starty, grp_focused && (inner_focus == 1));
+        renderer.drawText(inner_x + 2, fy2, isWatcom() ? "Platform:" : "C++ Standard:",
+                          Renderer::CP_DIALOG);
+        rowCombo().draw(renderer, startx, starty, grp_focused && (inner_focus == 1));
     }
 
     //  Targets box 
@@ -438,7 +442,6 @@ HandleResult ProjectPropertiesDialog::onKey(wint_t ch)
         if (ch == KEY_UP || ch == KEY_DOWN) {
             if (ch == KEY_DOWN) g.inner_focus = (g.inner_focus + 1) % 2;
             else                g.inner_focus = (g.inner_focus == 0) ? 1 : 0;
-            if (isWatcom()) g.inner_focus = 0;       // no C++ standard to pick
             return HandleResult::CONTINUE;
         }
         if (g.inner_focus == 0) {
@@ -447,7 +450,7 @@ HandleResult ProjectPropertiesDialog::onKey(wint_t ch)
             if (ch == KEY_RIGHT && bs_cursor_ < kBuildSystemCount - 1)
             { ++bs_cursor_; rebuildLibEntries(); return HandleResult::CONTINUE; }
         } else {
-            cfg_combo_.handleKey(ch);
+            rowCombo().handleKey(ch);
         }
         return HandleResult::CONTINUE;
     }
@@ -581,8 +584,8 @@ bool ProjectPropertiesDialog::onMouseClick(const MEVENT& ev, int startx, int sta
 {
     const int inner_x = startx + 2;
 
-    // C++ Standard combo first: its open dropdown floats over nearby rows.
-    if (!isWatcom() && cfg_combo_.handleMouse(startx, starty, ev.x, ev.y)) {
+    // C++ Standard / Platform combo first: its open dropdown floats over nearby rows.
+    if (rowCombo().handleMouse(startx, starty, ev.x, ev.y)) {
         setGroupFocus(GRP_CFG);
         groups()[GRP_CFG].inner_focus = 1;
         return true;

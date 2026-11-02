@@ -21,7 +21,6 @@ static std::pair<std::string, std::string> splitKV(const std::string& line)
     return {trim(line.substr(0, colon)), trim(line.substr(colon + 1))};
 }
 
-static bool parseBool(const std::string& v) { return v == "1" || v == "true"; }
 
 //  GediProject 
 
@@ -45,6 +44,8 @@ bool GediProject::save() const
         f << "build_file: " << build_file << "\n";
     if (!make_tool.empty())
         f << "make_tool: " << make_tool << "\n";
+    if (build_system == "watcom")
+        f << "watcom_platform: " << watcom_platform << "\n";
     for (const auto& a : aux_build_files) f << "aux_build_file: " << a << "\n";
     for (const auto& d : include_dirs)    f << "include_dir: "    << d << "\n";
     for (const auto& d : defines)         f << "define: "         << d << "\n";
@@ -60,49 +61,18 @@ bool GediProject::save() const
             f << "link_target: " << lt << "\n";
     }
 
-    //  Compiler settings 
+    //  Compiler settings
+    // One line per stored option, "<settings id>.<option id>: <value>", for
+    // every compiler's catalogue (see CompilerSettings.h).
     const CompilerSettings& cs = compiler_settings;
     f << "\n[compiler_settings]\n";
-    f << "cpp_standard: "    << cs.cpp_standard    << "\n";
-    f << "debug_symbols: "   << cs.debug_symbols   << "\n";
-    f << "optimization_level: " << cs.optimization_level << "\n";
-    f << "wall: "            << cs.wall            << "\n";
-    f << "wextra: "          << cs.wextra          << "\n";
-    f << "wpedantic: "       << cs.wpedantic       << "\n";
-    f << "werror: "          << cs.werror          << "\n";
-    f << "wconversion: "     << cs.wconversion     << "\n";
-    f << "wsign_conversion: "<< cs.wsign_conversion<< "\n";
-    f << "wshadow: "         << cs.wshadow         << "\n";
-    f << "wnon_virtual_dtor: "<< cs.wnon_virtual_dtor<< "\n";
-    f << "wold_style_cast: " << cs.wold_style_cast << "\n";
-    f << "woverloaded_virtual: " << cs.woverloaded_virtual << "\n";
-    f << "wnull_dereference: "<< cs.wnull_dereference<< "\n";
-    f << "wdouble_promotion: "<< cs.wdouble_promotion<< "\n";
-    f << "wformat_2: "       << cs.wformat_2       << "\n";
-    f << "fno_omit_frame_pointer: " << cs.fno_omit_frame_pointer << "\n";
-    f << "fsanitize_address_ub: "   << cs.fsanitize_address_ub   << "\n";
-    f << "fsanitize_leak: "  << cs.fsanitize_leak  << "\n";
-    f << "flto: "            << cs.flto            << "\n";
-    f << "march_native: "    << cs.march_native    << "\n";
-    f << "mtune_native: "    << cs.mtune_native    << "\n";
-    f << "wcast_align: "     << cs.wcast_align     << "\n";
-    f << "wcast_qual: "      << cs.wcast_qual      << "\n";
-    f << "wswitch_enum: "    << cs.wswitch_enum    << "\n";
-    f << "wundef: "          << cs.wundef          << "\n";
-    f << "wredundant_decls: "<< cs.wredundant_decls<< "\n";
-    f << "wlogical_op: "     << cs.wlogical_op     << "\n";
-    f << "wuseless_cast: "   << cs.wuseless_cast   << "\n";
-    f << "weffcxx: "         << cs.weffcxx         << "\n";
-    f << "fno_exceptions: "  << cs.fno_exceptions  << "\n";
-    f << "fno_rtti: "        << cs.fno_rtti        << "\n";
-    f << "fvisibility_hidden: " << cs.fvisibility_hidden << "\n";
-    f << "fstrict_aliasing: "<< cs.fstrict_aliasing<< "\n";
-    f << "fsanitize_pointer_compare: " << cs.fsanitize_pointer_compare << "\n";
-    f << "fsanitize_pointer_subtract: " << cs.fsanitize_pointer_subtract << "\n";
-    f << "wl_as_needed: "    << cs.wl_as_needed    << "\n";
-    f << "wl_o1: "           << cs.wl_o1           << "\n";
-    if (!cs.optional_flags.empty())
-        f << "optional_flags: " << cs.optional_flags << "\n";
+    f << "cpp_standard: " << cs.cpp_standard << "\n";
+    for (const auto& [sid, vals] : cs.compilers) {
+        for (const auto& [oid, v] : vals.values)
+            f << sid << "." << oid << ": " << v << "\n";
+        if (!vals.optional_flags.empty())
+            f << sid << ".optional_flags: " << vals.optional_flags << "\n";
+    }
 
     for (const auto& lib : libraries) {
         f << "\n[library]\n";
@@ -180,6 +150,7 @@ bool GediProject::load(const std::string& path, GediProject& out)
             else if (key == "build_system") proj.build_system = val;
             else if (key == "build_file")     proj.build_file = val;
             else if (key == "make_tool")      proj.make_tool = val;
+            else if (key == "watcom_platform") proj.watcom_platform = val;
             else if (key == "aux_build_file") proj.aux_build_files.push_back(val);
             else if (key == "include_dir")    proj.include_dirs.push_back(val);
             else if (key == "define")         proj.defines.push_back(val);
@@ -189,45 +160,21 @@ bool GediProject::load(const std::string& path, GediProject& out)
             }
         } else if (section == Section::CompilerSettings) {
             CompilerSettings& cs = proj.compiler_settings;
-            if      (key == "cpp_standard")    cs.cpp_standard    = val;
-            else if (key == "debug_symbols")   cs.debug_symbols   = parseBool(val);
-            else if (key == "optimization_level") cs.optimization_level = val.empty() ? 0 : std::stoi(val);
-            else if (key == "wall")            cs.wall            = parseBool(val);
-            else if (key == "wextra")          cs.wextra          = parseBool(val);
-            else if (key == "wpedantic")       cs.wpedantic       = parseBool(val);
-            else if (key == "werror")          cs.werror          = parseBool(val);
-            else if (key == "wconversion")     cs.wconversion     = parseBool(val);
-            else if (key == "wsign_conversion")cs.wsign_conversion= parseBool(val);
-            else if (key == "wshadow")         cs.wshadow         = parseBool(val);
-            else if (key == "wnon_virtual_dtor")cs.wnon_virtual_dtor = parseBool(val);
-            else if (key == "wold_style_cast") cs.wold_style_cast = parseBool(val);
-            else if (key == "woverloaded_virtual") cs.woverloaded_virtual = parseBool(val);
-            else if (key == "wnull_dereference") cs.wnull_dereference = parseBool(val);
-            else if (key == "wdouble_promotion") cs.wdouble_promotion = parseBool(val);
-            else if (key == "wformat_2")       cs.wformat_2       = parseBool(val);
-            else if (key == "fno_omit_frame_pointer") cs.fno_omit_frame_pointer = parseBool(val);
-            else if (key == "fsanitize_address_ub")   cs.fsanitize_address_ub   = parseBool(val);
-            else if (key == "fsanitize_leak")  cs.fsanitize_leak  = parseBool(val);
-            else if (key == "flto")            cs.flto            = parseBool(val);
-            else if (key == "march_native")    cs.march_native    = parseBool(val);
-            else if (key == "mtune_native")    cs.mtune_native    = parseBool(val);
-            else if (key == "wcast_align")     cs.wcast_align     = parseBool(val);
-            else if (key == "wcast_qual")      cs.wcast_qual      = parseBool(val);
-            else if (key == "wswitch_enum")    cs.wswitch_enum    = parseBool(val);
-            else if (key == "wundef")          cs.wundef          = parseBool(val);
-            else if (key == "wredundant_decls")cs.wredundant_decls= parseBool(val);
-            else if (key == "wlogical_op")     cs.wlogical_op     = parseBool(val);
-            else if (key == "wuseless_cast")   cs.wuseless_cast   = parseBool(val);
-            else if (key == "weffcxx")         cs.weffcxx         = parseBool(val);
-            else if (key == "fno_exceptions")  cs.fno_exceptions  = parseBool(val);
-            else if (key == "fno_rtti")        cs.fno_rtti        = parseBool(val);
-            else if (key == "fvisibility_hidden") cs.fvisibility_hidden = parseBool(val);
-            else if (key == "fstrict_aliasing")cs.fstrict_aliasing= parseBool(val);
-            else if (key == "fsanitize_pointer_compare") cs.fsanitize_pointer_compare = parseBool(val);
-            else if (key == "fsanitize_pointer_subtract") cs.fsanitize_pointer_subtract = parseBool(val);
-            else if (key == "wl_as_needed")    cs.wl_as_needed    = parseBool(val);
-            else if (key == "wl_o1")           cs.wl_o1           = parseBool(val);
-            else if (key == "optional_flags")  cs.optional_flags  = val;
+            auto store = [&](const std::string& sid, const std::string& oid) {
+                if (oid == "optional_flags") { cs.compilers[sid].optional_flags = val; return; }
+                int v = 0;
+                if (val == "true") v = 1;
+                else if (val != "false") { try { v = std::stoi(val); } catch (...) { return; } }
+                cs.compilers[sid].values[oid] = v;
+            };
+            const size_t dot = key.find('.');
+            if (key == "cpp_standard")                  cs.cpp_standard = val;
+            else if (dot != std::string::npos)          store(key.substr(0, dot), key.substr(dot + 1));
+            // Files from before compiler definitions: Open Watcom's options were
+            // "watcom_<id>", and every other key one of the GCC/Clang options -
+            // whose ids in compilers/gnu.json are those same names.
+            else if (key.rfind("watcom_", 0) == 0)      store("watcom", key.substr(7));
+            else                                        store("gnu", key);
         } else if (section == Section::Library) {
             if      (key == "short_name")              current_lib.short_name              = val;
             else if (key == "version")                 current_lib.version                 = val;

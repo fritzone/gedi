@@ -1,0 +1,16 @@
+{
+    "id": "psx-gcc",
+    "name": "PSn00bSDK (PlayStation 1)",
+    "inherits": "gcc-cross",
+    "order": 145,
+    "description": "GCC for the original PlayStation's MIPS R3000.",
+    "match": {
+        "executables": [
+            "mipsel-none-elf-g++"
+        ],
+        "priority": 5
+    },
+    "command": {
+        "exe_ext": ".elf"
+    }
+}

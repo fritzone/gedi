@@ -65,6 +65,53 @@ inline int buildSystemIndex(std::string_view key)
     return 0;
 }
 
+// Platforms a gedi-generated Open Watcom project can target. Each one is what
+// the generated makefile needs to build for it: the wlink system, the compilers
+// and memory model, the -bt= build target and the header directories under
+// %WATCOM%. Verified against Open Watcom 2.0 - every entry links a working
+// executable of the right format.
+struct WatcomPlatform {
+    const char* key;          // stored in the project file
+    const char* label;        // shown in New Project / Project Properties
+    const char* system;       // wlink "system" for executables
+    const char* dll_system;   // wlink "system" for DLL targets; "" = no DLLs
+    const char* model;        // memory model: -m<model>
+    const char* cc;           // C compiler
+    const char* cxx;          // C++ compiler
+    const char* target;       // -bt=<target>
+    const char* extra_flags;  // anything else the target needs ("-zw": Windows 3.x code)
+    const char* includes;     // header directories under %WATCOM%, space separated
+    const char* exe_ext;      // ".exe", or "" for Linux
+    bool        dwarf;        // DWARF debug info (gdb) instead of Watcom's own format
+};
+
+inline constexpr WatcomPlatform kWatcomPlatforms[] = {
+    { "dos16", "16-bit DOS",           "dos",     "",            "l", "wcc",    "wpp",    "dos",     "",    "h",        ".exe", false },
+    { "dos32", "32-bit DOS (DOS/4GW)", "dos4g",   "",            "f", "wcc386", "wpp386", "dos",     "",    "h",        ".exe", false },
+    { "win16", "16-bit Windows 3.x",   "windows", "windows_dll", "l", "wcc",    "wpp",    "windows", "-zw", "h h/win",  ".exe", false },
+    { "win32", "32-bit Windows",       "nt",      "nt_dll",      "f", "wcc386", "wpp386", "nt",      "",    "h h/nt",   ".exe", false },
+    { "os2",   "32-bit OS/2",          "os2v2",   "os2v2_dll",   "f", "wcc386", "wpp386", "os2",     "",    "h h/os2",  ".exe", false },
+    { "linux", "32-bit Linux",         "linux",   "",            "f", "wcc386", "wpp386", "linux",   "",    "lh",       "",     true  },
+};
+inline constexpr int kWatcomPlatformCount = 6;
+
+// Index of a platform key; unknown keys (and projects from before platforms
+// existed) map to 16-bit DOS, which is what those projects were built for.
+inline int watcomPlatformIndex(std::string_view key)
+{
+    for (int i = 0; i < kWatcomPlatformCount; ++i)
+        if (key == kWatcomPlatforms[i].key) return i;
+    return 0;
+}
+
+// The platform whose programs gedi can run and debug where it is running.
+inline constexpr const char* kWatcomHostPlatform =
+#ifdef _WIN32
+    "win32";
+#else
+    "linux";
+#endif
+
 // Internal project model.  Serialised to/from a .gproj text file whose
 // location determines the project root (root is never stored in the file).
 struct GediProject {
@@ -73,6 +120,7 @@ struct GediProject {
     std::string root;           // absolute path to the project root directory
     std::string build_system = "cmake";   // "cmake", "make", "meson", "watcom" (Open Watcom wmake)
     std::string cpp_standard = "c++17";  // kept for legacy compat; authoritative copy is in compiler_settings
+    std::string watcom_platform = "dos16"; // build_system "watcom": key into kWatcomPlatforms
 
     CompilerSettings compiler_settings;  // build flags applied when gedi drives the build
 
@@ -93,6 +141,19 @@ struct GediProject {
     // Built with Open Watcom's wmake: an imported Watcom makefile, or a
     // project gedi generates a Watcom makefile for.
     bool usesWmake() const { return make_tool == "wmake" || build_system == "watcom"; }
+
+    // A gedi-generated Open Watcom project's platform.
+    const WatcomPlatform& watcomPlatform() const
+    { return kWatcomPlatforms[watcomPlatformIndex(watcom_platform)]; }
+
+    // Its programs can run here: a generated Watcom project targeting this
+    // host. Imported Watcom makefiles target whatever they say, which gedi
+    // does not know, so they never qualify.
+    bool watcomRunsOnHost() const
+    {
+        return build_system == "watcom" && !hasExternalBuildFile() &&
+               std::string_view(watcomPlatform().key) == kWatcomHostPlatform;
+    }
 
     // -I/-D flags (absolute include paths) for libclang, from include_dirs/defines.
     std::string codeModelFlags() const;

@@ -16,6 +16,8 @@
 // editor target does not pass NOMINMAX, so this file has to say it itself.
 #define NOMINMAX
 #include <windows.h>
+#else
+#include <cstdio>
 #endif
 
 namespace fs = std::filesystem;
@@ -33,12 +35,26 @@ std::string trim(const std::string& s) {
     return s.substr(a, s.find_last_not_of(" \t\r\n") - a + 1);
 }
 
-// INCLUDE, LIB and PATH are all semicolon-separated on Windows.
-std::string joinSemi(const std::vector<std::string>& parts) {
+#ifdef _WIN32
+constexpr char kListSep = ';';
+constexpr char kDirSep  = '\\';
+constexpr const char* kExe = ".exe";
+#else
+constexpr char kListSep = ':';
+constexpr char kDirSep  = '/';
+constexpr const char* kExe = "";
+#endif
+
+// A program's file name as this platform spells it: "gcc" -> "gcc.exe" on Windows.
+std::string exe(const std::string& stem) { return stem + kExe; }
+
+// INCLUDE, LIB and PATH style lists: semicolon-separated on Windows, colon
+// elsewhere.
+std::string joinList(const std::vector<std::string>& parts) {
     std::string s;
     for (const auto& p : parts) {
         if (p.empty()) continue;
-        if (!s.empty()) s += ';';
+        if (!s.empty()) s += kListSep;
         s += p;
     }
     return s;
@@ -110,7 +126,7 @@ std::string joinPath(const std::string& a, const std::string& b) {
     if (a.empty()) return nativePath(b);
     if (b.empty()) return nativePath(a);
     std::string s = a;
-    if (s.back() != '\\' && s.back() != '/') s += '\\';
+    if (s.back() != '\\' && s.back() != '/') s += kDirSep;
     return nativePath(s + b);
 }
 
@@ -289,20 +305,56 @@ bool windowsSdk(fs::path& root, std::string& version) {
     return !version.empty();
 }
 
-#else   // !_WIN32 - the installer is Windows-only; these keep it compiling elsewhere
+#else   // !_WIN32
 
-std::string runCapture(const std::string&, const std::string&) { return {}; }
+// Run a program and return everything it wrote to stdout/stderr. stdin is
+// /dev/null, so a tool that unexpectedly asks something cannot wedge the caller.
+std::string runCapture(const std::string& exe, const std::string& args) {
+    std::string quoted = "'";
+    for (char c : exe) {
+        if (c == '\'') quoted += "'\\''";
+        else            quoted += c;
+    }
+    quoted += "'";
+
+    std::string cmd = quoted;
+    if (!args.empty()) cmd += " " + args;
+    cmd += " </dev/null 2>&1";
+
+    FILE* p = popen(cmd.c_str(), "r");
+    if (!p) return {};
+    std::string out;
+    char chunk[4096];
+    size_t n;
+    while ((n = fread(chunk, 1, sizeof chunk, p)) > 0) out.append(chunk, n);
+    pclose(p);
+    return out;
+}
+
+// Visual Studio only exists on Windows.
 std::vector<std::string> vsInstallPaths() { return {}; }
 bool windowsSdk(fs::path&, std::string&) { return false; }
 
 #endif
 
+// Open Watcom keeps its host tools in a per-host directory rather than bin/:
+// binnt64 / binnt on Windows, binl64 / binl on Linux. 64-bit first.
+const std::vector<std::string>& watcomBinDirs() {
+#ifdef _WIN32
+    static const std::vector<std::string> dirs = { "binnt64", "binnt" };
+#else
+    static const std::vector<std::string> dirs = { "binl64", "binl" };
+#endif
+    return dirs;
+}
+
 // The subdirectories of a user-given root where each kind keeps its compilers.
-// Open Watcom is the odd one out: no bin\, but binnt64\ and binnt\.
-const std::vector<std::string>& binSubdirs(Kind k) {
-    static const std::vector<std::string> generic = { "", "bin" };
-    static const std::vector<std::string> watcom  = { "", "binnt64", "binnt", "bin" };
-    return k == Kind::Watcom ? watcom : generic;
+std::vector<std::string> binSubdirs(Kind k) {
+    if (k != Kind::Watcom) return { "", "bin" };
+    std::vector<std::string> out = { "" };
+    for (const auto& d : watcomBinDirs()) out.push_back(d);
+    out.push_back("bin");
+    return out;
 }
 
 // Resolve what the user typed to the compiler executable itself.
@@ -324,13 +376,39 @@ fs::path resolveExe(Kind k, const std::string& given, std::string& error) {
 // The first non-empty line of "<exe> --version", which is how a compiler
 // identifies itself. Turns "that file exists" into "that really is a compiler",
 // and gives the user something recognisable to confirm against.
+//
+// Open Watcom's tools have no --version: they complain about the option, then
+// print a two-line banner ("Open Watcom C++ x86 32-bit Optimizing Compiler" /
+// "Version 2.0 beta Nov 20 2023 ..."), which is condensed to
+// "Open Watcom 2.0 beta (Nov 20 2023)".
 std::string versionLine(const fs::path& exe) {
     const std::string text = runCapture(exe.string(), "--version");
     std::stringstream ss(text);
     std::string line;
+    bool watcom_banner = false;
     while (std::getline(ss, line)) {
         std::string t = trim(line);
         if (t.empty()) continue;
+        if (t.rfind("Invalid option", 0) == 0) continue;
+        if (t.rfind("Open Watcom", 0) == 0 && !watcom_banner) { watcom_banner = true; continue; }
+        if (watcom_banner) {
+            if (t.rfind("Version ", 0) != 0) return "Open Watcom";
+            // "Version 2.0 beta Nov 20 2023 01:58:31 (64-bit)"
+            std::string v = t.substr(8), date;
+            static const char* const months[] = { "Jan","Feb","Mar","Apr","May","Jun",
+                                                  "Jul","Aug","Sep","Oct","Nov","Dec" };
+            for (const char* m : months) {
+                const size_t at = v.find(std::string(" ") + m + " ");
+                if (at == std::string::npos) continue;
+                std::stringstream ds(v.substr(at + 1));
+                std::string mon, day, year;
+                ds >> mon >> day >> year;
+                date = mon + " " + day + " " + year;
+                v = v.substr(0, at);
+                break;
+            }
+            return "Open Watcom " + trim(v) + (date.empty() ? "" : " (" + date + ")");
+        }
         // Clang appends its git URL and revision, which is most of the line and
         // none of what the user needs to recognise it by.
         const size_t url = t.find(" (http");
@@ -338,7 +416,7 @@ std::string versionLine(const fs::path& exe) {
         if (t.size() > 58) t = t.substr(0, 55) + "...";
         return t;
     }
-    return {};
+    return watcom_banner ? "Open Watcom" : std::string();
 }
 
 // The user may legitimately point at a differently-named driver - MinGW's
@@ -356,6 +434,20 @@ void noteIfUnexpectedName(Setup& s, Kind k, const fs::path& exe) {
                           exeName(k) + ".");
 }
 
+// The C compiler that goes with a C++ driver: the same name with the C++ part
+// swapped, so arm-none-eabi-g++ pairs with arm-none-eabi-gcc and g++-13 with
+// gcc-13, not with whatever plain "gcc" sits in the same directory. The C++
+// driver itself when there is no such file - it compiles C as well.
+std::string siblingC(const fs::path& cxx, const std::string& from, const std::string& to) {
+    std::string name = cxx.filename().string();
+    const size_t at = name.rfind(from);
+    if (at == std::string::npos) return cxx.string();
+    name.replace(at, from.size(), to);
+    const fs::path c = cxx.parent_path() / name;
+    return isFile(c) ? c.string() : cxx.string();
+}
+
+#ifdef _WIN32
 // A clang that carries its own headers and libraries - llvm-mingw, MSYS2 - as
 // opposed to the stock LLVM build for Windows, which targets MSVC and has
 // nothing of its own to compile against.
@@ -364,6 +456,7 @@ bool clangIsSelfContained(const fs::path& root) {
            isDir(root / "x86_64-w64-mingw32") ||
            isDir(root / "lib" / "clang");
 }
+#endif
 
 Setup setupClang(const fs::path& exe) {
     Setup s;
@@ -372,15 +465,17 @@ Setup setupClang(const fs::path& exe) {
     const fs::path root = bin.parent_path();
 
     s.cxx = exe.string();
-    s.cc  = isFile(bin / "clang.exe") ? (bin / "clang.exe").string() : exe.string();
+    s.cc  = siblingC(exe, "clang++", "clang");
     s.bin_dirs.push_back(bin.string());
 
     const std::string ver = versionLine(exe);
     s.notes.push_back(ver.empty() ? ("Clang at " + bin.string()) : ver);
-    if (ver.empty())
-        s.notes.push_back("Warning: it did not answer --version; is this really a compiler?");
     noteIfUnexpectedName(s, Kind::Clang, exe);
 
+#ifndef _WIN32
+    (void)root;     // a POSIX clang finds the system headers and libraries itself
+    return s;
+#else
     if (clangIsSelfContained(root)) {
         s.notes.push_back("Self-contained: it brings its own headers and libraries.");
         return s;
@@ -399,6 +494,7 @@ Setup setupClang(const fs::path& exe) {
         s.notes.push_back("Warning: no bundled headers, and no Visual Studio to borrow them from.");
     }
     return s;
+#endif
 }
 
 Setup setupGcc(const fs::path& exe) {
@@ -407,19 +503,15 @@ Setup setupGcc(const fs::path& exe) {
     const fs::path bin = exe.parent_path();
 
     s.cxx = exe.string();
-    s.cc  = isFile(bin / "gcc.exe") ? (bin / "gcc.exe").string() : exe.string();
+    s.cc  = siblingC(exe, "g++", "gcc");
     // GCC finds its own headers and libraries relative to where it is installed,
     // so there is nothing to set beyond putting its bin directory on PATH - for
-    // the assembler and linker it drives, its runtime DLLs, and mingw32-make.
+    // the assembler and linker it drives, and any runtime libraries it needs.
     s.bin_dirs.push_back(bin.string());
 
     const std::string ver = versionLine(exe);
     s.notes.push_back(ver.empty() ? ("GCC at " + bin.string()) : ver);
-    if (ver.empty())
-        s.notes.push_back("Warning: it did not answer --version; is this really a compiler?");
     noteIfUnexpectedName(s, Kind::Gcc, exe);
-    if (!isDir(bin.parent_path() / "include"))
-        s.notes.push_back("Warning: no include directory next to it; this may be an incomplete install.");
     return s;
 }
 
@@ -431,14 +523,14 @@ Setup setupWatcom(const fs::path& exe) {
 
     // owcc is Open Watcom's gcc-compatible driver. It is the one that
     // understands "-o" and "-I", so prefer it over wpp386 when it is installed.
-    const fs::path owcc = bin / "owcc.exe";
+    const fs::path owcc = bin / toolchain::exe("owcc");
     if (isFile(owcc)) {
         s.cxx = owcc.string();
         s.cc  = owcc.string();
-        s.notes.push_back("Using owcc, Open Watcom's gcc-style driver.");
     } else {
         s.cxx = exe.string();
-        s.cc  = isFile(bin / "wcc386.exe") ? (bin / "wcc386.exe").string() : exe.string();
+        s.cc  = isFile(bin / toolchain::exe("wcc386")) ? (bin / toolchain::exe("wcc386")).string()
+                                                      : exe.string();
     }
 
     // The Watcom tools read all of this from the environment and simply fail
@@ -446,24 +538,31 @@ Setup setupWatcom(const fs::path& exe) {
     s.env["WATCOM"] = root.string();
 
     std::vector<std::string> inc;
+#ifdef _WIN32
     addIfDir(inc, root / "h");
     addIfDir(inc, root / "h" / "nt");
     addIfDir(inc, root / "h" / "nt" / "directx");
     addIfDir(inc, root / "h" / "nt" / "ddk");
-    s.env["INCLUDE"] = joinSemi(inc);
+#else
+    // Linux headers only, as Open Watcom's own owsetenv.sh sets it: h/ holds
+    // the DOS/Windows ones, which must not shadow them.
+    addIfDir(inc, root / "lh");
+#endif
+    s.env["INCLUDE"] = joinList(inc);
 
     if (isDir(root / "eddat")) s.env["EDPATH"] = (root / "eddat").string();
     if (isDir(root / "wipfc")) s.env["WIPFC"]  = (root / "wipfc").string();
 
     // 64-bit host tools first, 32-bit as the fallback - an older install only
-    // has binnt.
-    addIfDir(s.bin_dirs, root / "binnt64");
-    addIfDir(s.bin_dirs, root / "binnt");
+    // has the 32-bit directory.
+    for (const auto& d : watcomBinDirs()) addIfDir(s.bin_dirs, root / d);
     if (s.bin_dirs.empty()) s.bin_dirs.push_back(bin.string());
 
-    s.notes.push_back("Open Watcom at " + root.string());
+    const std::string ver = versionLine(fs::path(s.cxx));
+    s.notes.push_back(ver.empty() ? ("Open Watcom at " + root.string()) : ver);
+    if (isFile(owcc)) s.notes.push_back("Using owcc, Open Watcom's gcc-style driver.");
     if (inc.empty())
-        s.notes.push_back("Warning: no h\\ directory - this does not look like an Open Watcom root.");
+        s.notes.push_back("Warning: no header directory - this does not look like an Open Watcom root.");
     return s;
 }
 
@@ -498,19 +597,25 @@ const char* label(Kind k) {
     switch (k) {
         case Kind::Msvc:   return "Microsoft Visual C++ (MSVC)";
         case Kind::Clang:  return "Clang / LLVM";
-        case Kind::Gcc:    return "GCC (MinGW-w64)";
+        case Kind::Gcc:    return "GCC";
         case Kind::Watcom: return "Open Watcom";
         case Kind::None:   break;
     }
     return "Skip - set a compiler up later from the editor";
 }
 
+#ifdef _WIN32
+#define GEDI_EXE(name) name ".exe"
+#else
+#define GEDI_EXE(name) name
+#endif
+
 const char* exeName(Kind k) {
     switch (k) {
-        case Kind::Msvc:   return "cl.exe";
-        case Kind::Clang:  return "clang++.exe";
-        case Kind::Gcc:    return "g++.exe";
-        case Kind::Watcom: return "wpp386.exe";
+        case Kind::Msvc:   return GEDI_EXE("cl");
+        case Kind::Clang:  return GEDI_EXE("clang++");
+        case Kind::Gcc:    return GEDI_EXE("g++");
+        case Kind::Watcom: return GEDI_EXE("wpp386");
         case Kind::None:   break;
     }
     return "";
@@ -518,9 +623,9 @@ const char* exeName(Kind k) {
 
 const char* prompt(Kind k) {
     switch (k) {
-        case Kind::Clang:  return "Path to clang++.exe (or the LLVM directory):";
-        case Kind::Gcc:    return "Path to g++.exe (or the MinGW directory):";
-        case Kind::Watcom: return "Path to wpp386.exe (or the Open Watcom directory):";
+        case Kind::Clang:  return "Path to " GEDI_EXE("clang++") " (or the directory holding it):";
+        case Kind::Gcc:    return "Path to " GEDI_EXE("g++") " (or the directory holding it):";
+        case Kind::Watcom: return "Path to " GEDI_EXE("wpp386") " (or the Open Watcom directory):";
         case Kind::Msvc:
         case Kind::None:   break;
     }
@@ -529,16 +634,24 @@ const char* prompt(Kind k) {
 
 const char* browsePattern(Kind k) {
     switch (k) {
-        // A cross-built MinGW names its drivers <triple>-g++.exe, and Open
-        // Watcom 2.0 ships owcc alongside the classic wpp386.
-        case Kind::Clang:  return "clang++.exe;clang.exe;*-clang++.exe";
-        case Kind::Gcc:    return "g++.exe;gcc.exe;*-g++.exe;*-gcc.exe";
-        case Kind::Watcom: return "wpp386.exe;owcc.exe;wcc386.exe";
-        case Kind::Msvc:   return "cl.exe";
+        // Cross and versioned builds name their drivers <triple>-g++ or g++-13,
+        // and Open Watcom 2.0 ships owcc alongside the classic wpp386.
+        case Kind::Clang:  return GEDI_EXE("clang++") ";" GEDI_EXE("clang") ";"
+                                  GEDI_EXE("*-clang++") ";" GEDI_EXE("clang++-*");
+        case Kind::Gcc:    return GEDI_EXE("g++") ";" GEDI_EXE("gcc") ";"
+                                  GEDI_EXE("*-g++") ";" GEDI_EXE("*-gcc") ";" GEDI_EXE("g++-*");
+        case Kind::Watcom: return GEDI_EXE("wpp386") ";" GEDI_EXE("owcc") ";" GEDI_EXE("wcc386");
+        case Kind::Msvc:   return GEDI_EXE("cl");
         case Kind::None:   break;
     }
+#ifdef _WIN32
     return "*.exe";
+#else
+    return "*";
+#endif
 }
+
+#undef GEDI_EXE
 
 bool needsPath(Kind k) {
     return k == Kind::Clang || k == Kind::Gcc || k == Kind::Watcom;
@@ -555,6 +668,24 @@ std::string suggestedDir(Kind k, const std::string& current) {
 
     // Otherwise the places these toolchains actually install themselves.
     std::vector<fs::path> guesses;
+    if (k == Kind::Watcom && !env("WATCOM").empty()) guesses.push_back(env("WATCOM"));
+
+#ifndef _WIN32
+    switch (k) {
+        case Kind::Watcom:
+            guesses.push_back("/opt/watcom/binl64");
+            guesses.push_back("/opt/watcom");
+            guesses.push_back("/usr/bin/watcom/binl64");
+            break;
+        default:
+            guesses.push_back("/usr/bin");
+            guesses.push_back("/usr/local/bin");
+            break;
+    }
+    for (const auto& g : guesses)
+        if (isDir(g)) return g.string();
+    return {};
+#else
     const fs::path pf   = env("ProgramFiles").empty()      ? fs::path() : fs::path(env("ProgramFiles"));
     const fs::path pf86 = env("ProgramFiles(x86)").empty() ? fs::path() : fs::path(env("ProgramFiles(x86)"));
 
@@ -583,11 +714,15 @@ std::string suggestedDir(Kind k, const std::string& current) {
     if (!pf.empty())   return pf.string();
     if (!pf86.empty()) return pf86.string();
     return {};
+#endif
 }
 
 const std::vector<Kind>& kinds() {
     static const std::vector<Kind> all = {
-        Kind::Msvc, Kind::Clang, Kind::Gcc, Kind::Watcom, Kind::None
+#ifdef _WIN32
+        Kind::Msvc,             // Visual Studio only exists on Windows
+#endif
+        Kind::Clang, Kind::Gcc, Kind::Watcom, Kind::None
     };
     return all;
 }
@@ -657,8 +792,8 @@ Setup detectMsvc(std::string& error) {
             s.notes.push_back("Warning: no Windows SDK found - programs will not link.");
         }
 
-        s.env["INCLUDE"] = joinSemi(inc);
-        s.env["LIB"]     = joinSemi(lib);
+        s.env["INCLUDE"] = joinList(inc);
+        s.env["LIB"]     = joinList(lib);
         return s;
     }
 
@@ -666,6 +801,44 @@ Setup detectMsvc(std::string& error) {
             "Add the \"MSVC v143 - VS 2022 C++ x64/x86 build tools\" component, or "
             "choose another compiler.";
     return {};
+}
+
+std::string findOnPath(Kind k) {
+    if (!needsPath(k)) return {};
+    std::stringstream path(env("PATH"));
+    std::string dir;
+    while (std::getline(path, dir, kListSep)) {
+        dir = trim(dir);
+        if (dir.size() >= 2 && dir.front() == '"' && dir.back() == '"')
+            dir = dir.substr(1, dir.size() - 2);
+        if (dir.empty()) continue;
+        const fs::path c = fs::path(dir) / exeName(k);
+        if (isFile(c)) return c.string();
+    }
+    return {};
+}
+
+std::string runOutput(const std::string& exe, const std::string& args) {
+    return runCapture(exe, args);
+}
+
+Setup fromPathPlain(const std::string& path, std::string& error) {
+    error.clear();
+    const std::string given = nativePath(expandEnv(trim(path)));
+    if (given.empty()) { error = "Please give the path to the compiler."; return {}; }
+    if (!isFile(given)) {
+        error = isDir(given) ? "Give the compiler executable itself, not its directory."
+                             : given + " does not exist.";
+        return {};
+    }
+    Setup s;
+    s.kind = Kind::None;
+    s.cxx  = given;
+    s.cc   = given;
+    s.bin_dirs.push_back(fs::path(given).parent_path().string());
+    const std::string ver = versionLine(fs::path(given));
+    s.notes.push_back(ver.empty() ? fs::path(given).filename().string() : ver);
+    return s;
 }
 
 Setup fromPath(Kind k, const std::string& path, std::string& error) {
@@ -697,6 +870,16 @@ std::string findPython() {
         const DWORD n = SearchPathA(nullptr, name, nullptr, (DWORD)sizeof buf, buf, nullptr);
         if (n > 0 && n < sizeof buf) return std::string(buf, n);
     }
+#else
+    std::stringstream path(env("PATH"));
+    std::string dir;
+    while (std::getline(path, dir, ':')) {
+        if (dir.empty()) continue;
+        for (const char* name : { "python3", "python" }) {
+            const fs::path c = fs::path(dir) / name;
+            if (isFile(c)) return c.string();
+        }
+    }
 #endif
     return {};
 }
@@ -706,10 +889,15 @@ std::string findPython() {
 // ---------------------------------------------------------------------------
 std::string configPath() {
     // Must agree with DependencyChecker::toolchainPath() in the editor.
+#ifdef _WIN32
     std::string home = env("USERPROFILE");
     if (home.empty()) home = env("TEMP");
     if (home.empty()) home = "C:\\Windows\\Temp";
-    return joinPath(home, ".config\\gedi\\toolchain.json");
+#else
+    std::string home = env("HOME");
+    if (home.empty()) home = "/tmp";
+#endif
+    return joinPath(joinPath(joinPath(home, ".config"), "gedi"), "toolchain.json");
 }
 
 bool write(const Setup& s, const std::string& python3, std::string& error) {
@@ -742,6 +930,11 @@ bool write(const Setup& s, const std::string& python3, std::string& error) {
     j["clang"]      = (s.kind == Kind::Clang) ? s.cc  : std::string();
     j["clang_cxx"]  = (s.kind == Kind::Clang) ? s.cxx : std::string();
     j["kind"]       = id(s.kind);
+    // The editor's definition of this compiler. Setup does not know about
+    // definitions, so a write without one drops a stale id rather than keep it
+    // naming the previous compiler.
+    if (s.definition.empty()) j.erase("compiler");
+    else                      j["compiler"] = s.definition;
     j["bin_dirs"]   = s.bin_dirs;
     j["env"]        = s.env;
     // Only overwrite python when the caller has one; the editor passes the one

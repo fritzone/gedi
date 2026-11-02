@@ -5,6 +5,9 @@
 #include <vector>
 #include <map>
 #include <mutex>
+#include <set>
+#include <functional>
+#include "CompilerDefs.h"
 #include "EditorBuffer.h"
 #include "ConfigManager.h"
 #include "CompilerSettings.h"
@@ -37,7 +40,13 @@ public:
                                                     std::vector<std::string>& output_lines_out,
                                                     const std::string& base_dir = "");
 
-    void setConfig(const Config& config) { m_config = config; }
+    void setConfig(const Config& config);
+
+    // The definition (CompilerDefs.h) of the configured compiler: its command
+    // line, option catalogue, error format and capabilities.
+    const compilers::Definition& definition() const;
+    // The configured C++ compiler executable.
+    const std::string& compilerPath() const { return m_config.toolchain.cxx; }
     void invalidateCache(const std::string& filename) { m_compile_command_cache.erase(filename); }
 
     // The configured compiler has changed. Everything derived from it is now
@@ -52,21 +61,15 @@ public:
     std::string guessCompileCommand(const std::string& filename);
     std::string get_full_compile_command(const std::string& base_command, const CompilerSettings& settings);
 
-    // The full compile command for `filename` as it would be with `cxx` as the
-    // compiler instead of the configured one. The Build Options dialog previews
-    // a compiler the user has picked but not yet accepted; re-deriving the
-    // command properly would mean re-running the (slow, cached) command guess on
-    // every repaint. An empty `cxx` means "the configured one".
-    std::string previewWithCompiler(const std::string& filename,
-                                    const CompilerSettings& settings,
-                                    const std::string& cxx);
+    // The flags the settings amount to for the configured compiler.
+    std::string settingsFlags(const CompilerSettings& s) const;
 
-    // Convert CompilerSettings to a flat flags string. Produces GCC/Clang-style
-    // flags (e.g. "-g -O0 -Wall -Wextra") or, when msvc is true, cl.exe-style
-    // flags (e.g. "/Zi /Od /W4") - the two option languages are not
-    // interchangeable, and handing GCC flags to cl.exe fails hard (e.g. it
-    // parses "-Wextra" as "/W" with a non-numeric argument).
-    static std::string settingsToFlags(const CompilerSettings& s, bool msvc);
+    // Try every option of the configured compiler on a one-line program and
+    // collect the ones it rejects ("<id>" or "<id>:<choice>"); the result is
+    // also remembered for the Compile Options dialog. False (with `error`) when
+    // the compiler cannot build the program even without options.
+    bool testOptions(std::set<std::string>& unsupported, std::string& error,
+                     const std::function<void(int done, int total)>& progress) const;
 
     // True if the given compiler path/name refers to MSVC's cl.exe.
     static bool isMsvcCompiler(const std::string& compilerPath);
@@ -86,16 +89,17 @@ public:
 
     // -DCMAKE_CXX_COMPILER=... for the configured toolchain, so a project build
     // uses the same compiler as everything else instead of whatever cmake finds.
-    // `cxx_override` names a different compiler, for previewing one.
-    std::string cmakeToolchainArgs(const std::string& cxx_override = "") const;
+    // For Open Watcom this also selects the "Watcom WMake" generator, the only
+    // one CMake drives Watcom's compilers with.
+    std::string cmakeToolchainArgs() const;
 
     // Human-readable build command preview used by the Build Options dialog.
-    // `cxx_override` previews a compiler the user has picked but not accepted;
-    // empty means the configured one.
-    std::string buildProjectPreview(const GediProject& project, const CompilerSettings& settings,
-                                    const std::string& cxx_override = "") const;
+    std::string buildProjectPreview(const GediProject& project, const CompilerSettings& settings) const;
 
 private:
+    void resolveDefinition();
+    std::string m_def_id;   // the configured compiler's definition, looked up on use
+
     // The compiler's own header search paths (-isystem ...), detected once by
     // asking the configured C++ compiler, so libclang can find <stddef.h>, the
     // C++ standard library, etc. when parsing for highlighting/completion.

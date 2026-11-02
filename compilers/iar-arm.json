@@ -1,0 +1,153 @@
+{
+    "id": "iar-arm",
+    "name": "IAR C/C++ for Arm (iccarm)",
+    "order": 103,
+    "description": "IAR Embedded Workbench's compiler. It compiles to object files; linking is ilinkarm's job.",
+    "setup": "plain",
+    "match": {
+        "executables": [
+            "iccarm"
+        ],
+        "version_args": "--version"
+    },
+    "command": {
+        "always": [
+            "--c++"
+        ],
+        "output": "-o {out}",
+        "exe_ext": ".o",
+        "host_libraries": false,
+        "standard_flag": ""
+    },
+    "diagnostics": {
+        "regex": "^\"(.+?)\",(\\d+)\\s+(Fatal error|Error|Warning|Remark)\\[\\w+\\]: (.*)",
+        "file": 1,
+        "line": 2,
+        "column": 0,
+        "severity": 3,
+        "message": 4
+    },
+    "capabilities": {
+        "parse_headers": "host",
+        "make": false,
+        "meson": false,
+        "cmake": false,
+        "runs_on_host": false,
+        "debuggable": false
+    },
+    "top_option": {
+        "id": "cpu",
+        "default": 0,
+        "choices": [
+            {
+                "label": "default",
+                "flag": ""
+            },
+            {
+                "label": "Cortex-M0",
+                "flag": "--cpu=Cortex-M0"
+            },
+            {
+                "label": "Cortex-M3",
+                "flag": "--cpu=Cortex-M3"
+            },
+            {
+                "label": "Cortex-M4",
+                "flag": "--cpu=Cortex-M4"
+            },
+            {
+                "label": "Cortex-M4F",
+                "flag": "--cpu=Cortex-M4F"
+            },
+            {
+                "label": "Cortex-M7",
+                "flag": "--cpu=Cortex-M7"
+            },
+            {
+                "label": "Cortex-M33",
+                "flag": "--cpu=Cortex-M33"
+            }
+        ],
+        "label": "Target CPU"
+    },
+    "options": [
+        {
+            "tab": "Basic",
+            "groups": [
+                {
+                    "name": "Debugging",
+                    "items": [
+                        {
+                            "id": "debug_symbols",
+                            "label": "Debug information",
+                            "flag": "--debug",
+                            "default": true,
+                            "role": "debug"
+                        }
+                    ]
+                },
+                {
+                    "name": "Optimization",
+                    "items": [
+                        {
+                            "id": "optimization",
+                            "default": 0,
+                            "choices": [
+                                {
+                                    "label": "None",
+                                    "flag": "-On"
+                                },
+                                {
+                                    "label": "Low",
+                                    "flag": "-Ol"
+                                },
+                                {
+                                    "label": "Medium",
+                                    "flag": "-Om"
+                                },
+                                {
+                                    "label": "High, balanced",
+                                    "flag": "-Oh"
+                                },
+                                {
+                                    "label": "High, speed",
+                                    "flag": "-Ohs"
+                                },
+                                {
+                                    "label": "High, size",
+                                    "flag": "-Ohz"
+                                }
+                            ],
+                            "role": "optimization"
+                        }
+                    ]
+                },
+                {
+                    "name": "Warnings",
+                    "items": [
+                        {
+                            "id": "werror",
+                            "label": "Treat warnings as errors",
+                            "flag": "--warnings_are_errors"
+                        }
+                    ]
+                },
+                {
+                    "name": "C++",
+                    "items": [
+                        {
+                            "id": "no_exceptions",
+                            "label": "Disable exceptions",
+                            "flag": "--no_exceptions"
+                        },
+                        {
+                            "id": "no_rtti",
+                            "label": "Disable RTTI",
+                            "flag": "--no_rtti"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

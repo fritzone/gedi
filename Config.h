@@ -17,6 +17,11 @@ struct Toolchain {
     // for one that was simply probed off PATH.
     std::string kind;
 
+    // The compiler definition (CompilerDefs.h) for cxx, chosen in Options >
+    // Compiler Options. Empty in files from before definitions existed: the
+    // compiler is then identified from cxx and kind.
+    std::string compiler;
+
     // The environment the compiler needs, recorded by the installer when the
     // user pointed gedi at a toolchain already on the machine. A compiler path
     // alone is not enough on Windows: cl.exe needs INCLUDE and LIB and a

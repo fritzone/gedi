@@ -1,0 +1,13 @@
+{
+    "id": "gcc",
+    "name": "GCC",
+    "description": "The GNU C++ compiler, building programs for this computer.",
+    "inherits": "gnu",
+    "order": 10,
+    "setup": "gcc",
+    "match": {
+        "executables": ["g++", "g++-*", "c++", "*-g++", "*-g++-*"],
+        "version_regex": "Free Software Foundation|\\(GCC\\)",
+        "target": "host"
+    }
+}

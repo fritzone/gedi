@@ -66,11 +66,17 @@ private:
     // Config state
     int  bs_cursor_ = 0;   // build-system radio: index into kBuildSystemKeys
 
-    // Open Watcom selected: no C++ standard, no host system libraries
+    // Open Watcom selected: a platform instead of a C++ standard, no host system libraries
     bool isWatcom() const { return std::string_view(kBuildSystemKeys[bs_cursor_]) == "watcom"; }
-    ComboBox cfg_combo_;
+    ComboBox cfg_combo_;                 // C++ standard (CMake / Make / Meson)
     std::vector<std::string> standards_;
     int std_idx_ = 0;
+    ComboBox plat_combo_;                // platform (Open Watcom), in the same row
+    std::vector<std::string> platforms_;
+
+    // Whichever of the two the selected build system shows.
+    ComboBox&       rowCombo()       { return isWatcom() ? plat_combo_ : cfg_combo_; }
+    const ComboBox& rowCombo() const { return isWatcom() ? plat_combo_ : cfg_combo_; }
 
     // Targets state
     int tgt_cursor_ = 0;

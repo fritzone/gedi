@@ -1,0 +1,29 @@
+{
+    "id": "cosmocc",
+    "name": "Cosmopolitan (cosmoc++)",
+    "inherits": "gcc",
+    "order": 28,
+    "description": "Builds Actually Portable Executables: one .com file that runs on Linux, macOS, Windows and the BSDs.",
+    "match": {
+        "executables": [
+            "cosmoc++",
+            "x86_64-unknown-cosmo-c++"
+        ],
+        "version_regex": "",
+        "target": ""
+    },
+    "setup": "plain",
+    "command": {
+        "exe_ext": ".com",
+        "host_libraries": false
+    },
+    "capabilities": {
+        "parse_headers": "host"
+    },
+    "remove_options": [
+        "fsanitize_address_ub",
+        "fsanitize_leak",
+        "fsanitize_pointer_compare",
+        "fsanitize_pointer_subtract"
+    ]
+}

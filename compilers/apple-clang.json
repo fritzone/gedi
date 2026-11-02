@@ -1,0 +1,19 @@
+{
+    "id": "apple-clang",
+    "name": "Apple Clang (Xcode)",
+    "inherits": "clang",
+    "order": 21,
+    "platforms": [
+        "macos"
+    ],
+    "description": "The Clang that ships with Xcode and the Command Line Tools.",
+    "match": {
+        "executables": [
+            "clang++",
+            "c++"
+        ],
+        "version_regex": "Apple clang",
+        "target": "host",
+        "priority": 10
+    }
+}

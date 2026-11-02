@@ -1,0 +1,19 @@
+{
+    "id": "wasi-sdk",
+    "name": "WASI SDK (WebAssembly)",
+    "inherits": "clang-cross",
+    "order": 122,
+    "description": "Clang with a WebAssembly System Interface sysroot; programs run in a WASI runtime such as wasmtime.",
+    "match": {
+        "executables": [
+            "clang++",
+            "*-wasi-clang++",
+            "wasm32-wasi-clang++"
+        ],
+        "version_regex": "wasm32|wasi",
+        "priority": 5
+    },
+    "command": {
+        "exe_ext": ".wasm"
+    }
+}

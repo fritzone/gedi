@@ -1,0 +1,94 @@
+{
+    "id": "emscripten",
+    "name": "Emscripten (em++)",
+    "inherits": "clang",
+    "order": 123,
+    "description": "Compiles C++ to WebAssembly and JavaScript for the browser or Node.js. CMake projects need emcmake.",
+    "match": {
+        "executables": [
+            "em++"
+        ],
+        "version_regex": "",
+        "target": ""
+    },
+    "setup": "plain",
+    "command": {
+        "exe_ext": ".html",
+        "host_libraries": false
+    },
+    "capabilities": {
+        "cmake": false,
+        "meson": false,
+        "runs_on_host": false,
+        "debuggable": false
+    },
+    "remove_options": [
+        "march_native",
+        "mtune_native",
+        "fsanitize_leak",
+        "fsanitize_pointer_compare",
+        "fsanitize_pointer_subtract"
+    ],
+    "extra_options": [
+        {
+            "tab": "Emscripten",
+            "groups": [
+                {
+                    "name": "Runtime",
+                    "items": [
+                        {
+                            "id": "memory_growth",
+                            "label": "Allow the heap to grow",
+                            "flag": "-sALLOW_MEMORY_GROWTH=1"
+                        },
+                        {
+                            "id": "assertions",
+                            "label": "Runtime assertions",
+                            "flag": "-sASSERTIONS=1"
+                        },
+                        {
+                            "id": "exit_runtime",
+                            "label": "Shut the runtime down when main returns",
+                            "flag": "-sEXIT_RUNTIME=1"
+                        },
+                        {
+                            "id": "pthread",
+                            "label": "Threads (pthreads)",
+                            "flag": "-pthread"
+                        }
+                    ]
+                },
+                {
+                    "name": "Output",
+                    "items": [
+                        {
+                            "id": "single_file",
+                            "label": "Embed the .wasm in the .js",
+                            "flag": "-sSINGLE_FILE=1"
+                        },
+                        {
+                            "id": "modularize",
+                            "label": "Wrap the module in a factory function",
+                            "flag": "-sMODULARIZE=1"
+                        }
+                    ]
+                },
+                {
+                    "name": "Libraries",
+                    "items": [
+                        {
+                            "id": "embind",
+                            "label": "Embind (JavaScript bindings)",
+                            "flag": "-lembind"
+                        },
+                        {
+                            "id": "sdl2",
+                            "label": "SDL 2 port",
+                            "flag": "-sUSE_SDL=2"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

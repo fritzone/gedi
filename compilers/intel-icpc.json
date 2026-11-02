@@ -1,0 +1,66 @@
+{
+    "id": "intel-icpc",
+    "name": "Intel C++ Classic (icpc)",
+    "inherits": "gcc",
+    "order": 24,
+    "platforms": [
+        "linux"
+    ],
+    "description": "Intel's classic compiler, discontinued in 2023; takes GCC's options.",
+    "match": {
+        "executables": [
+            "icpc"
+        ],
+        "version_regex": "ICC|Intel",
+        "target": ""
+    },
+    "extra_options": [
+        {
+            "tab": "Intel",
+            "groups": [
+                {
+                    "name": "Code generation",
+                    "items": [
+                        {
+                            "id": "xhost",
+                            "label": "Best instructions for this CPU",
+                            "flag": "-xHost"
+                        },
+                        {
+                            "id": "ipo",
+                            "label": "Interprocedural optimisation",
+                            "flag": "-ipo"
+                        },
+                        {
+                            "id": "qopenmp",
+                            "label": "OpenMP",
+                            "flag": "-qopenmp"
+                        },
+                        {
+                            "id": "fp_model",
+                            "default": 0,
+                            "choices": [
+                                {
+                                    "label": "Default floating point model",
+                                    "flag": ""
+                                },
+                                {
+                                    "label": "Precise",
+                                    "flag": "-fp-model precise"
+                                },
+                                {
+                                    "label": "Fast",
+                                    "flag": "-fp-model fast=2"
+                                },
+                                {
+                                    "label": "Strict",
+                                    "flag": "-fp-model strict"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

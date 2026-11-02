@@ -1,0 +1,159 @@
+{
+    "id": "bcc32",
+    "name": "Borland / Embarcadero C++ (bcc32)",
+    "order": 43,
+    "platforms": [
+        "windows"
+    ],
+    "description": "The classic 32-bit Borland compiler (e.g. the free Borland C++ 5.5 tools).",
+    "setup": "plain",
+    "match": {
+        "executables": [
+            "bcc32"
+        ],
+        "version_args": "",
+        "version_regex": "Borland|Embarcadero"
+    },
+    "command": {
+        "output": "-e{out}",
+        "compile_only": "-c",
+        "object_output": "-o{out}",
+        "exe_ext": ".exe",
+        "host_libraries": false,
+        "standard_flag": ""
+    },
+    "diagnostics": {
+        "regex": "^(Error|Warning) [EW]\\d+ (.+?) (\\d+): (.*)",
+        "file": 2,
+        "line": 3,
+        "column": 0,
+        "severity": 1,
+        "message": 4
+    },
+    "capabilities": {
+        "parse_headers": "host",
+        "meson": false,
+        "cmake": false
+    },
+    "options": [
+        {
+            "tab": "Basic",
+            "groups": [
+                {
+                    "name": "Debugging",
+                    "items": [
+                        {
+                            "id": "debug_symbols",
+                            "label": "Source-level debug information",
+                            "flag": "-v",
+                            "default": true,
+                            "role": "debug"
+                        }
+                    ]
+                },
+                {
+                    "name": "Optimization",
+                    "items": [
+                        {
+                            "id": "optimization",
+                            "default": 0,
+                            "choices": [
+                                {
+                                    "label": "Disable optimisation",
+                                    "flag": "-Od"
+                                },
+                                {
+                                    "label": "Smallest code",
+                                    "flag": "-O1"
+                                },
+                                {
+                                    "label": "Fastest code",
+                                    "flag": "-O2"
+                                }
+                            ],
+                            "role": "optimization"
+                        }
+                    ]
+                },
+                {
+                    "name": "Warnings",
+                    "items": [
+                        {
+                            "id": "warnings",
+                            "label": "Display warnings",
+                            "flag": "-w",
+                            "default": true
+                        },
+                        {
+                            "id": "warnings_fail",
+                            "label": "Fail the build on warnings",
+                            "flag": "-w!"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "tab": "Code Gen",
+            "groups": [
+                {
+                    "name": "Application",
+                    "items": [
+                        {
+                            "id": "apptype",
+                            "default": 0,
+                            "choices": [
+                                {
+                                    "label": "Console",
+                                    "flag": "-tWC"
+                                },
+                                {
+                                    "label": "Windows GUI",
+                                    "flag": "-tW"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "name": "C++",
+                    "items": [
+                        {
+                            "id": "no_exceptions",
+                            "label": "Disable exceptions",
+                            "flag": "-x-"
+                        },
+                        {
+                            "id": "no_rtti",
+                            "label": "Disable RTTI",
+                            "flag": "-RT-"
+                        }
+                    ]
+                },
+                {
+                    "name": "Processor",
+                    "items": [
+                        {
+                            "id": "cpu",
+                            "default": 0,
+                            "choices": [
+                                {
+                                    "label": "Default",
+                                    "flag": ""
+                                },
+                                {
+                                    "label": "Pentium",
+                                    "flag": "-5"
+                                },
+                                {
+                                    "label": "Pentium Pro",
+                                    "flag": "-6"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

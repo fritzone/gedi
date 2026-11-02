@@ -1,0 +1,16 @@
+{
+    "id": "psp-gcc",
+    "name": "PSP SDK (psp-g++)",
+    "inherits": "gcc-cross",
+    "order": 143,
+    "description": "The PSPSDK toolchain for PlayStation Portable homebrew.",
+    "match": {
+        "executables": [
+            "psp-g++"
+        ],
+        "priority": 5
+    },
+    "command": {
+        "exe_ext": ".elf"
+    }
+}

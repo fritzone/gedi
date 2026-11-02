@@ -1,61 +1,24 @@
 #ifndef COMPILERSETTINGS_H
 #define COMPILERSETTINGS_H
 
+#include <map>
 #include <string>
-#include <vector>
 
+// The option values of one compiler's catalogue (see CompilerDefs.h): option
+// id -> 0/1 for a checkbox, or the index of the chosen radio choice.
+struct CompilerOptionValues {
+    std::map<std::string, int> values;
+    std::string optional_flags;         // typed by the user, passed as they are
+};
+
+// Build options of a file or a project. The C++ standard is shared by every
+// compiler (libclang and CMake use it too); everything else is kept per option
+// catalogue - Definition::settings_id, e.g. "gnu" for GCC, Clang and the GCC
+// cross compilers, "watcom", "msvc" - so switching compilers loses nothing.
+// An option not stored here has its definition's default.
 struct CompilerSettings {
     std::string cpp_standard = "c++17";
-    
-    // Tab 1: Basic
-    bool debug_symbols = true;
-    int optimization_level = 0; // 0: -O0, 1: -O2, 2: -O3
-    bool wall = true;
-    bool wextra = true;
-    bool wpedantic = false;
-    bool werror = false;
-
-    // Tab 2: Advanced
-    bool wconversion = false;
-    bool wsign_conversion = false;
-    bool wshadow = false;
-    bool wnon_virtual_dtor = false;
-    bool wold_style_cast = false;
-    bool woverloaded_virtual = false;
-    bool wnull_dereference = false;
-    bool wdouble_promotion = false;
-    bool wformat_2 = false;
-    
-    bool fno_omit_frame_pointer = false;
-    bool fsanitize_address_ub = false;
-    bool fsanitize_leak = false;
-    bool flto = false;
-    
-    bool march_native = false;
-    bool mtune_native = false;
-
-    // Tab 3: Expert
-    bool wcast_align = false;
-    bool wcast_qual = false;
-    bool wswitch_enum = false;
-    bool wundef = false;
-    bool wredundant_decls = false;
-    bool wlogical_op = false;
-    bool wuseless_cast = false;
-    bool weffcxx = false;
-    
-    bool fno_exceptions = false;
-    bool fno_rtti = false;
-    bool fvisibility_hidden = false;
-    bool fstrict_aliasing = false;
-    
-    bool fsanitize_pointer_compare = false;
-    bool fsanitize_pointer_subtract = false;
-    
-    bool wl_as_needed = false;
-    bool wl_o1 = false;
-
-    std::string optional_flags;
+    std::map<std::string, CompilerOptionValues> compilers;   // by settings id
 };
 
 #endif // COMPILERSETTINGS_H

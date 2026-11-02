@@ -1,0 +1,41 @@
+{
+    "id": "devkita64",
+    "name": "devkitA64 (Nintendo Switch)",
+    "inherits": "gcc-cross",
+    "order": 142,
+    "description": "devkitPro's AArch64 toolchain for Switch homebrew.",
+    "match": {
+        "executables": [
+            "aarch64-none-elf-g++"
+        ],
+        "version_regex": "devkitA64",
+        "priority": 10
+    },
+    "command": {
+        "always": [
+            "-march=armv8-a+crc+crypto",
+            "-mtune=cortex-a57",
+            "-mtp=soft",
+            "-fPIE"
+        ],
+        "exe_ext": ".elf"
+    },
+    "extra_options": [
+        {
+            "tab": "Switch",
+            "groups": [
+                {
+                    "name": "Runtime",
+                    "items": [
+                        {
+                            "id": "switch_specs",
+                            "label": "Switch homebrew start-up (libnx)",
+                            "flag": "-specs=switch.specs",
+                            "default": true
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

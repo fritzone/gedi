@@ -1,0 +1,152 @@
+{
+    "id": "nvhpc",
+    "name": "NVIDIA HPC SDK (nvc++)",
+    "order": 61,
+    "platforms": [
+        "linux"
+    ],
+    "description": "NVIDIA's HPC compiler (formerly PGI): OpenACC, OpenMP and GPU-parallel standard algorithms.",
+    "setup": "plain",
+    "match": {
+        "executables": [
+            "nvc++",
+            "pgc++"
+        ],
+        "version_regex": "nvc\\+\\+|pgc\\+\\+|NVIDIA|PGI"
+    },
+    "command": {
+        "standard_flag": "-std={std}",
+        "standards": [
+            "c++11",
+            "c++14",
+            "c++17",
+            "c++20"
+        ]
+    },
+    "diagnostics": {
+        "regex": "^\"(.+?)\", line (\\d+)(?:\\.(\\d+))?: ([Cc]atastrophic error|[Ee]rror|[Ww]arning|[Rr]emark)[^:]*: (.*)",
+        "file": 1,
+        "line": 2,
+        "column": 3,
+        "severity": 4,
+        "message": 5
+    },
+    "capabilities": {
+        "parse_headers": "host",
+        "meson": false
+    },
+    "options": [
+        {
+            "tab": "Basic",
+            "groups": [
+                {
+                    "name": "Debugging",
+                    "items": [
+                        {
+                            "id": "debug_symbols",
+                            "label": "Debug information",
+                            "flag": "-g",
+                            "default": true,
+                            "role": "debug"
+                        }
+                    ]
+                },
+                {
+                    "name": "Optimization",
+                    "items": [
+                        {
+                            "id": "optimization",
+                            "default": 0,
+                            "choices": [
+                                {
+                                    "label": "Disable optimisation",
+                                    "flag": "-O0"
+                                },
+                                {
+                                    "label": "-O1",
+                                    "flag": "-O1"
+                                },
+                                {
+                                    "label": "-O2",
+                                    "flag": "-O2"
+                                },
+                                {
+                                    "label": "-O3",
+                                    "flag": "-O3"
+                                },
+                                {
+                                    "label": "-O4",
+                                    "flag": "-O4"
+                                }
+                            ],
+                            "role": "optimization"
+                        },
+                        {
+                            "id": "fast",
+                            "label": "Common performance options",
+                            "flag": "-fast"
+                        },
+                        {
+                            "id": "tp_native",
+                            "label": "Code for this CPU",
+                            "flag": "-tp=native"
+                        }
+                    ]
+                },
+                {
+                    "name": "Reports",
+                    "items": [
+                        {
+                            "id": "minfo",
+                            "label": "Report optimisations made",
+                            "flag": "-Minfo=all"
+                        },
+                        {
+                            "id": "mneginfo",
+                            "label": "Report optimisations not made",
+                            "flag": "-Mneginfo"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "tab": "Parallel",
+            "groups": [
+                {
+                    "name": "Models",
+                    "items": [
+                        {
+                            "id": "openmp",
+                            "label": "OpenMP",
+                            "flag": "-mp"
+                        },
+                        {
+                            "id": "openacc",
+                            "label": "OpenACC",
+                            "flag": "-acc"
+                        },
+                        {
+                            "id": "stdpar",
+                            "default": 0,
+                            "choices": [
+                                {
+                                    "label": "Standard algorithms run sequentially",
+                                    "flag": ""
+                                },
+                                {
+                                    "label": "Parallel algorithms on the GPU",
+                                    "flag": "-stdpar=gpu"
+                                },
+                                {
+                                    "label": "Parallel algorithms on CPU cores",
+                                    "flag": "-stdpar=multicore"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

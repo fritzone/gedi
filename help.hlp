@@ -17,7 +17,7 @@ Welcome to the Garland Turbine help system. This guide provides detailed informa
 [[navigation|Navigation and Search]]
 [[replace|Search and Replace]]
 [[building|Compiling and Running]]
-[[compiler_options|Compiler Options Dialog]]
+[[compiler_options|Compile Options Dialog]]
 [[compiler_switches|Detailed Compiler Switches Index]]
 [[project_mgmt|Project Management]]
 [[project_panel|Project Panel]]
@@ -106,9 +106,11 @@ If compilation fails, the output window will highlight errors. You can navigate 
 Return to [[main|Main Menu]].
 
 [compiler_options]
-**## Compiler Options Dialog ##**
+**## Compile Options Dialog ##**
 
-The redesigned Compiler Options dialog (**Alt+B -> O**) provides a powerful interface for configuring your build process.
+The Compile Options dialog (**Alt+B -> O**) provides a powerful interface for configuring your build process. Which compiler is used is chosen separately, under **Options -> Compiler Options** (see [[options|Options]]).
+
+The options shown are those of the selected compiler, taken from its definition file (see [[options|Compiler Options]]); the title names the compiler. For GCC, Clang and GCC cross compilers:
 
 * **C++ Standard**: Select your desired language version (c++11 through c++26) from the dropdown at the top.
 * **Tabbed Categories**: Switches are organized into three tabs:
@@ -116,7 +118,17 @@ The redesigned Compiler Options dialog (**Alt+B -> O**) provides a powerful inte
     - **Advanced**: Professional diagnostics, sanitizers (ASan/UBSan), and LTO.
     - **Expert**: Situational flags, functionality controls (exceptions/RTTI), and linker options.
 * **Final Command**: A live preview of the full command that will be sent to the compiler. This field is scrollable using arrow keys.
+* **Test**: Compiles a one-line program once per option and marks the options the compiler rejects as "not supported". Useful for an unusual or old compiler; the result is remembered until the compiler changes.
 * **Copy to Clipboard**: Use the dedicated **Copy** button to quickly export the generated command for use in terminals or scripts.
+
+**Microsoft Visual C++** (Windows): cl.exe's own options - debug information, optimisation, warning level, exceptions, RTTI, conformance mode, runtime library, whole-program optimisation, AddressSanitizer and more.
+
+**Open Watcom**: when Open Watcom is the selected compiler (Options -> Compiler Options), this dialog shows Watcom's options instead, kept separately from the GCC/Clang ones:
+* **Target CPU** replaces the C++ Standard (Watcom has no standard switch): 386, 486, Pentium or Pentium Pro.
+* **Basic**: debug information and its format (DWARF for gdb, Watcom, CodeView), optimisation (none, size, speed, maximum) and a linker map file.
+* **Language**: warning level 0-4, maximal warnings, warnings as errors; C++ exceptions (on by default here; Watcom's own default is off), RTTI for typeid/dynamic_cast (off by default), strict ISO C++, C++0x features, signed char.
+* **Code Gen**: software floating point, frame pointer, stack checks, and the optimizer's inlining, loop and aliasing options.
+For CMake projects the same options are passed in Watcom's native form (e.g. -xs, -xr, -w4); the map file and optional flags apply to single files and Make projects only.
 
 **Note**: Settings are saved **per-buffer**, allowing different configuration for each open file.
 
@@ -472,7 +484,7 @@ Gedi has a built-in project system for managing multi-file C++ builds. Projects 
 **Creating a Project:**
 * Open the **Project** menu and choose **New Project**.
 * A dialog will guide you through setting the project name, root directory, build system, C++ standard, compiler flags, and any linked libraries.
-* Build systems: CMake, Make, Meson, or **Watcom**. A Watcom project gets a `makefile` for Open Watcom's `wmake` that builds a 16-bit DOS program by default (change `SYSTEM`, `MODEL`, `CC` and `CXX` at the top of the makefile for 32-bit DOS or Windows). C files are compiled with `wcc`, C++ with `wpp`, assembly with `wasm`; libraries are made with `wlib` and programs linked with `wlink`. Gedi regenerates the makefile when you add, move or remove files and targets. The C++ standard and system libraries don't apply to Watcom projects, and the program can be built but not run or debugged from Gedi.
+* Build systems: CMake, Make, Meson, or **Watcom**. A Watcom project gets a `makefile` for Open Watcom's `wmake`. Instead of a C++ standard it has a **Platform**: 16-bit DOS, 32-bit DOS (DOS/4GW), 16-bit Windows 3.x, 32-bit Windows, 32-bit OS/2 or 32-bit Linux. The platform picks the linker system, memory model, compilers (`wcc`/`wpp` for 16-bit, `wcc386`/`wpp386` for 32-bit) and headers in the generated makefile; change it later in **Project > Properties**, and gedi rewrites the makefile and rebuilds everything. Assembly is built with `wasm`, libraries with `wlib`, programs linked with `wlink`. Gedi regenerates the makefile when you add, move or remove files and targets. System libraries don't apply to Watcom projects. A program for the platform gedi runs on (32-bit Linux on Linux, 32-bit Windows on Windows) can be run and debugged from gedi; for the other platforms it can be built only.
 * Gedi supports three build systems: **cmake**, **make**, and **meson**. After confirming, it generates the corresponding build file (`CMakeLists.txt`, `Makefile`, or `meson.build`) automatically.
 
 **Opening a Project:**
@@ -612,6 +624,19 @@ The **Editor Settings** dialog (**Alt+O -> S**) allows you to customize your env
 * **Color Scheme**: Select from various built-in themes to change the IDE's look and feel.
 
 Internal groups in settings use single-line borders for a clean visual hierarchy.
+
+**## Compiler Options ##**
+
+The **Compiler Options** dialog (**Alt+O -> C**) shows the compiler gedi currently uses, with its version and path, and lets you pick another one:
+
+* **Compiler**: Choose from the compilers gedi has a definition for - over fifty: GCC and Clang and their vendor builds (Apple, AMD AOCC, Intel, IBM, Cray), Zig, Cosmopolitan; Microsoft Visual C++, clang-cl, Borland/Embarcadero and Digital Mars on Windows; NVIDIA CUDA and HPC, AMD HIP; Oracle, HP and IBM XL; embedded toolchains (Arm GCC, Keil, IAR, TI, RISC-V, AVR, MSP430, ESP32, PIC32); cross compilers to Windows, Android and WebAssembly (MinGW-w64, NDK, WASI SDK, Emscripten); retro and homebrew toolchains (DJGPP, GCC IA-16, Open Watcom, Amiga, Atari, devkitPro, PSP, PlayStation, N64, Dreamcast) - and any you have introduced. The line below describes the choice; compilers/README.md lists them all.
+* **Path**: The compiler executable. gedi suggests the one it finds on PATH; **Browse** opens a file dialog filtered to that compiler's names. Whatever you pick is identified: a different known compiler is selected for you, and an unknown one is pointed at **New...**. Visual C++ is located automatically.
+* The line below the path shows the version of the newly picked compiler, or why it cannot be used, or that it looks like a different compiler than the one selected.
+* **New...**: Introduces a compiler gedi does not know - a cross compiler, a vendor or hobby compiler, an old one. Give it a name and its executable, say what it is like (GCC-, Clang-, MSVC- or Open Watcom-compatible, or generic) and whether it is a cross compiler; gedi suggests the answers from the executable. It is saved as a definition file in **~/.config/gedi/compilers/**, which you can edit to describe the compiler fully - its options, output switch, error format and more (see compilers/README.md).
+
+**Ok** saves the choice for all files and projects and applies it immediately; Build -> Compile Options then shows that compiler's options. Programs built by a cross compiler are compiled but not run or debugged.
+
+**Open Watcom**: gedi builds with **owcc**, Watcom's gcc-style driver, and the Compile Options dialog then shows Open Watcom's own options instead of the GCC/Clang ones (see [[compiler_options|Compile Options]]). CMake projects are built with Watcom's own generator in a separate **build-watcom** directory; Meson projects cannot be built with Open Watcom.
 
 Return to [[main|Main Menu]].
 

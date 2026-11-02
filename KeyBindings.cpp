@@ -57,6 +57,7 @@ void KeyBindings::loadDefaults() {
     addBinding(EditorAction::ACT_PREV_BUFFER, KEY_F(18), "Shift+F6"); 
     addBinding(EditorAction::ACT_CLOSE_BUFFER, CTRL('W'), "Ctrl+W");
     addBinding(EditorAction::ACT_SETTINGS, -1, "");
+    addBinding(EditorAction::ACT_COMPILER, -1, "");
     addBinding(EditorAction::ACT_HELP, KEY_F(1), "F1");
     addBinding(EditorAction::ACT_ABOUT, -1, "");
     addBinding(EditorAction::ACT_TOGGLE_COMMENT, CTRL('/'), "Ctrl+/");

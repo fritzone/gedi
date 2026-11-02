@@ -1,0 +1,16 @@
+{
+    "id": "gcc-ia16",
+    "name": "GCC IA-16 (16-bit DOS)",
+    "inherits": "gcc-cross",
+    "order": 131,
+    "description": "TK Chia's GCC port for 16-bit x86 real mode: DOS programs for the 8086 and up.",
+    "match": {
+        "executables": [
+            "ia16-elf-g++"
+        ],
+        "priority": 5
+    },
+    "command": {
+        "exe_ext": ".exe"
+    }
+}

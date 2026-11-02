@@ -1,0 +1,13 @@
+{
+    "id": "clang",
+    "name": "Clang / LLVM",
+    "description": "The LLVM C++ compiler; takes GCC's options.",
+    "inherits": "gnu",
+    "order": 20,
+    "setup": "clang",
+    "match": {
+        "executables": ["clang++", "clang++-*", "c++"],
+        "version_regex": "clang version",
+        "target": "host"
+    }
+}

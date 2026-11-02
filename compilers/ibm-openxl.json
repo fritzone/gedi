@@ -1,0 +1,20 @@
+{
+    "id": "ibm-openxl",
+    "name": "IBM Open XL C/C++",
+    "inherits": "clang",
+    "order": 25,
+    "description": "IBM's Clang-based compiler for AIX and Linux on Power.",
+    "match": {
+        "executables": [
+            "ibm-clang++",
+            "ibm-clang++_r",
+            "xlclang++"
+        ],
+        "version_regex": "IBM",
+        "target": ""
+    },
+    "setup": "plain",
+    "capabilities": {
+        "parse_headers": "host"
+    }
+}

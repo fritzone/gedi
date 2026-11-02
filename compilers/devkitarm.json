@@ -1,0 +1,69 @@
+{
+    "id": "devkitarm",
+    "name": "devkitARM (GBA / DS / 3DS)",
+    "inherits": "arm-gcc",
+    "order": 140,
+    "description": "devkitPro's Arm toolchain for Game Boy Advance, Nintendo DS and 3DS homebrew.",
+    "match": {
+        "executables": [
+            "arm-none-eabi-g++"
+        ],
+        "version_regex": "devkitARM",
+        "priority": 10
+    },
+    "extra_options": [
+        {
+            "tab": "Target",
+            "groups": [
+                {
+                    "name": "Console",
+                    "items": [
+                        {
+                            "id": "console",
+                            "default": 1,
+                            "choices": [
+                                {
+                                    "label": "None",
+                                    "flag": ""
+                                },
+                                {
+                                    "label": "Game Boy Advance",
+                                    "flag": "-specs=gba.specs"
+                                },
+                                {
+                                    "label": "Nintendo DS (ARM9)",
+                                    "flag": "-specs=ds_arm9.specs"
+                                },
+                                {
+                                    "label": "Nintendo 3DS",
+                                    "flag": "-specs=3dsx.specs"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "name": "Instruction set",
+                    "items": [
+                        {
+                            "id": "thumb",
+                            "label": "Thumb instructions",
+                            "flag": "-mthumb",
+                            "default": true
+                        }
+                    ]
+                },
+                {
+                    "name": "Runtime",
+                    "items": [
+                        {
+                            "id": "gc_sections",
+                            "label": "Remove unused functions and data",
+                            "flag": "-ffunction-sections -fdata-sections -Wl,--gc-sections"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

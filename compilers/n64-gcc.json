@@ -1,0 +1,16 @@
+{
+    "id": "n64-gcc",
+    "name": "libdragon (Nintendo 64)",
+    "inherits": "gcc-cross",
+    "order": 146,
+    "description": "GCC for the Nintendo 64's MIPS VR4300, as set up by libdragon.",
+    "match": {
+        "executables": [
+            "mips64-elf-g++"
+        ],
+        "priority": 5
+    },
+    "command": {
+        "exe_ext": ".elf"
+    }
+}

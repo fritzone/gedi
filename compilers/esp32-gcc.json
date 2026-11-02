@@ -1,0 +1,22 @@
+{
+    "id": "esp32-gcc",
+    "name": "ESP32 Xtensa GCC (ESP-IDF)",
+    "inherits": "gcc-cross",
+    "order": 108,
+    "description": "Espressif's Xtensa GCC for ESP32 chips. Real projects are normally built through ESP-IDF's CMake.",
+    "match": {
+        "executables": [
+            "xtensa-esp32-elf-g++",
+            "xtensa-esp32s2-elf-g++",
+            "xtensa-esp32s3-elf-g++",
+            "xtensa-esp-elf-g++"
+        ],
+        "priority": 5
+    },
+    "command": {
+        "always": [
+            "-mlongcalls"
+        ],
+        "exe_ext": ".elf"
+    }
+}

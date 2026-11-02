@@ -35,6 +35,17 @@ DialogResult DialogBase::run(Renderer& renderer)
     WINDOW* behind = newwin(h_ + 1, w_ + 1, starty, startx);
     copywin(stdscr, behind, starty, startx, 0, 0, h_, w_, FALSE);
 
+    // The whole screen as it was, too: a combo's dropdown can hang out past the
+    // dialog's frame, and what it covered there has to come back when it closes.
+    auto snapshotScreen = [&]() -> WINDOW* {
+        const int rows = renderer.getHeight(), cols = renderer.getWidth();
+        WINDOW* w = newwin(rows, cols, 0, 0);
+        if (w) copywin(stdscr, w, 0, 0, 0, 0, rows - 1, cols - 1, FALSE);
+        return w;
+    };
+    WINDOW* screen = snapshotScreen();
+    const ComboBox* last_open = nullptr;    // the dropdown the previous frame drew
+
     ComboBox::s_open = nullptr;   // no dropdown open when a dialog starts
 
     onInit();
@@ -59,6 +70,14 @@ DialogResult DialogBase::run(Renderer& renderer)
     mouse_hover_pressed_ = false;
 
     while (true) {
+        // A dropdown closed (or another opened) since the last frame: put back
+        // everything it painted over, then the dialog on top. Dialogs with a
+        // background callback repaint the background every frame anyway.
+        if (last_open && ComboBox::s_open != last_open && !background_fn_ && screen) {
+            copywin(screen, stdscr, 0, 0, 0, 0,
+                    renderer.getHeight() - 1, renderer.getWidth() - 1, FALSE);
+            drawStaticFrame();
+        }
         if (background_fn_) {
             background_fn_();
             renderer.drawShadow(startx, starty, w_, h_);
@@ -67,6 +86,7 @@ DialogResult DialogBase::run(Renderer& renderer)
                 " " + title_ + " ", Renderer::CP_DIALOG_TITLE, A_BOLD);
         }
         drawFrame(renderer, startx, starty, pressed_);
+        last_open = ComboBox::s_open;
 
         if (pressed_) {
             runPressAnimation(renderer, startx, starty);
@@ -112,6 +132,9 @@ DialogResult DialogBase::run(Renderer& renderer)
             behind = newwin(h_ + 1, w_ + 1, starty, startx);
             if (behind)
                 copywin(stdscr, behind, starty, startx, 0, 0, h_, w_, FALSE);
+            if (screen) delwin(screen);
+            screen = snapshotScreen();
+            last_open = nullptr;
             if (!background_fn_)
                 drawStaticFrame();
             continue;
@@ -154,10 +177,16 @@ DialogResult DialogBase::run(Renderer& renderer)
         if (hr == HandleResult::CLOSE) break;
     }
 
-    if (behind) {
+    if (last_open && screen) {
+        // Closed with a dropdown still open: it may reach past the frame.
+        copywin(screen, stdscr, 0, 0, 0, 0,
+                renderer.getHeight() - 1, renderer.getWidth() - 1, FALSE);
+    } else if (behind) {
         copywin(behind, stdscr, 0, 0, starty, startx, starty + h_, startx + w_, FALSE);
-        delwin(behind);
     }
+    if (behind) delwin(behind);
+    if (screen) delwin(screen);
+    ComboBox::s_open = nullptr;
     nodelay(stdscr, TRUE);
     renderer.showCursor();
     return result_;
@@ -732,8 +761,10 @@ HandleResult DialogBase::dispatchMouse(const MEVENT& ev, int startx, int starty)
                         group_focus_ = g;
                         ol.cursor = rows[abs_row].opt_idx;
                         auto& opt = ol.options[ol.cursor];
-                        if (opt.is_radio) *opt.i_val = opt.radio_val;
-                        else              *opt.b_val = !*opt.b_val;
+                        if (opt.disabled)    return HandleResult::CONTINUE;
+                        if (opt.is_radio)    *opt.i_val  = opt.radio_val;
+                        else if (opt.ic_val) *opt.ic_val = *opt.ic_val ? 0 : 1;
+                        else                 *opt.b_val  = !*opt.b_val;
                         return HandleResult::CONTINUE;
                     }
                 }

@@ -1,0 +1,90 @@
+{
+    "id": "hp-acc",
+    "name": "HP aC++ (HP-UX)",
+    "order": 91,
+    "description": "HP's C++ compiler for HP-UX on Itanium.",
+    "setup": "plain",
+    "match": {
+        "executables": [
+            "aCC"
+        ],
+        "version_args": "-V",
+        "version_regex": "aC\\+\\+"
+    },
+    "command": {
+        "standard_flag": ""
+    },
+    "diagnostics": {
+        "regex": "^\"(.+?)\", line (\\d+)(?:\\.(\\d+))?: ([Cc]atastrophic error|[Ee]rror|[Ww]arning|[Rr]emark)[^:]*: (.*)",
+        "file": 1,
+        "line": 2,
+        "column": 3,
+        "severity": 4,
+        "message": 5
+    },
+    "capabilities": {
+        "parse_headers": "host",
+        "meson": false
+    },
+    "options": [
+        {
+            "tab": "Basic",
+            "groups": [
+                {
+                    "name": "Debugging",
+                    "items": [
+                        {
+                            "id": "debug_symbols",
+                            "label": "Debug information",
+                            "flag": "-g",
+                            "default": true,
+                            "role": "debug"
+                        }
+                    ]
+                },
+                {
+                    "name": "Optimization",
+                    "items": [
+                        {
+                            "id": "optimization",
+                            "default": 0,
+                            "choices": [
+                                {
+                                    "label": "No optimisation",
+                                    "flag": "+O0"
+                                },
+                                {
+                                    "label": "+O1",
+                                    "flag": "+O1"
+                                },
+                                {
+                                    "label": "+O2",
+                                    "flag": "+O2"
+                                },
+                                {
+                                    "label": "+O3",
+                                    "flag": "+O3"
+                                },
+                                {
+                                    "label": "+O4",
+                                    "flag": "+O4"
+                                }
+                            ],
+                            "role": "optimization"
+                        }
+                    ]
+                },
+                {
+                    "name": "Code generation",
+                    "items": [
+                        {
+                            "id": "dd64",
+                            "label": "64-bit code",
+                            "flag": "+DD64"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

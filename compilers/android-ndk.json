@@ -1,0 +1,32 @@
+{
+    "id": "android-ndk",
+    "name": "Android NDK Clang",
+    "inherits": "clang-cross",
+    "order": 121,
+    "description": "The Android NDK's Clang, through its <arch>-linux-android<API>-clang++ wrappers.",
+    "match": {
+        "executables": [
+            "*-linux-android*-clang++",
+            "*-linux-androideabi*-clang++"
+        ],
+        "version_regex": "Android",
+        "priority": 5
+    },
+    "extra_options": [
+        {
+            "tab": "Android",
+            "groups": [
+                {
+                    "name": "Runtime",
+                    "items": [
+                        {
+                            "id": "static_stl",
+                            "label": "Static C++ runtime",
+                            "flag": "-static-libstdc++"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

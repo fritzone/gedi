@@ -1,0 +1,127 @@
+{
+    "id": "dmc",
+    "name": "Digital Mars C++",
+    "order": 45,
+    "platforms": [
+        "windows"
+    ],
+    "description": "Walter Bright's Digital Mars C/C++ compiler (dmc).",
+    "setup": "plain",
+    "match": {
+        "executables": [
+            "dmc"
+        ],
+        "version_args": "",
+        "version_regex": "Digital Mars"
+    },
+    "command": {
+        "output": "-o{out}",
+        "compile_only": "-c",
+        "object_output": "-o{out}",
+        "exe_ext": ".exe",
+        "host_libraries": false,
+        "standard_flag": ""
+    },
+    "diagnostics": {
+        "regex": "^(.+?)\\((\\d+)\\) : (Lexical error|Fatal error|Error|Warning(?: \\d+)?): (.*)",
+        "file": 1,
+        "line": 2,
+        "column": 0,
+        "severity": 3,
+        "message": 4
+    },
+    "capabilities": {
+        "parse_headers": "host",
+        "meson": false,
+        "cmake": false
+    },
+    "options": [
+        {
+            "tab": "Basic",
+            "groups": [
+                {
+                    "name": "Debugging",
+                    "items": [
+                        {
+                            "id": "debug_symbols",
+                            "label": "Debug information",
+                            "flag": "-g",
+                            "default": true,
+                            "role": "debug"
+                        }
+                    ]
+                },
+                {
+                    "name": "Optimization",
+                    "items": [
+                        {
+                            "id": "optimization",
+                            "default": 0,
+                            "choices": [
+                                {
+                                    "label": "No optimisation",
+                                    "flag": "-o-"
+                                },
+                                {
+                                    "label": "Optimise for space",
+                                    "flag": "-o+space"
+                                },
+                                {
+                                    "label": "Optimise for speed",
+                                    "flag": "-o"
+                                }
+                            ],
+                            "role": "optimization"
+                        }
+                    ]
+                },
+                {
+                    "name": "Warnings",
+                    "items": [
+                        {
+                            "id": "no_warnings",
+                            "label": "Suppress all warnings",
+                            "flag": "-w"
+                        },
+                        {
+                            "id": "werror",
+                            "label": "Treat warnings as errors",
+                            "flag": "-wx"
+                        },
+                        {
+                            "id": "warn_casts",
+                            "label": "Warn on C-style casts",
+                            "flag": "-wc"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "tab": "Language",
+            "groups": [
+                {
+                    "name": "C++",
+                    "items": [
+                        {
+                            "id": "exceptions",
+                            "label": "Exception handling",
+                            "flag": "-Ae",
+                            "default": true
+                        },
+                        {
+                            "id": "rtti",
+                            "label": "Run-time type information",
+                            "flag": "-Ar"
+                        },
+                        {
+                            "id": "strict",
+                            "label": "Strict ANSI, no extensions",
+                            "flag": "-A"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

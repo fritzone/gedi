@@ -191,6 +191,11 @@ NewProjectDialog::NewProjectDialog(Renderer& renderer, ProjectTemplate& t)
                           /*x=*/18, /*y=*/CFG_BOX_Y + 2, /*w=*/12);
     cfg_combo_.open_up = true;   // combo sits low; drop the list upward
 
+    for (const auto& p : kWatcomPlatforms) platforms_.push_back(p.label);
+    plat_combo_ = ComboBox(platforms_, watcomPlatformIndex(t.watcom_platform),
+                           /*x=*/18, /*y=*/CFG_BOX_Y + 2, /*w=*/26);
+    plat_combo_.open_up = true;
+
     adjustScroll(name_cursor_, FIELD_W_NAME, name_scroll_);
     adjustScroll(path_cursor_, FIELD_W_PATH, path_scroll_);
 }
@@ -284,7 +289,8 @@ void NewProjectDialog::onInit()
                 .on_activate = [this]() -> HandleResult {
                     if (m_template.name.empty())
                         return HandleResult::CONTINUE;
-                    m_template.cpp_standard = cfg_combo_.selectedText();
+                    m_template.cpp_standard    = cfg_combo_.selectedText();
+                    m_template.watcom_platform = kWatcomPlatforms[plat_combo_.selected_idx].key;
                     result().accept();
                     return HandleResult::CLOSE;
                 }
@@ -421,15 +427,12 @@ void NewProjectDialog::onDraw(Renderer& renderer, int startx, int starty)
                 rx += 4 + (int)strlen(kBuildSystemLabels[i]) + 1;  // mark(3) + space + label + gap
             }
 
-            // Row 2: C++ Standard combo (Watcom's wpp has no -std= switch)
+            // Row 2: C++ Standard combo, or for Open Watcom - whose wpp has no
+            // -std= switch - the platform to build for.
             const int fy2 = starty + CFG_BOX_Y + 2;
-            renderer.drawText(inner_x + 2, fy2, "C++ Standard:", Renderer::CP_DIALOG);
-            if (isWatcom())
-                renderer.drawText(inner_x + 16, fy2, "n/a - set by Open Watcom's compiler",
-                                  Renderer::CP_DIALOG);
-            else
-                cfg_combo_.draw(renderer, startx, starty,
-                                grp_focused && (inner_focus == 1));
+            renderer.drawText(inner_x + 2, fy2, isWatcom() ? "Platform:" : "C++ Standard:",
+                              Renderer::CP_DIALOG);
+            rowCombo().draw(renderer, startx, starty, grp_focused && (inner_focus == 1));
 
             // Row 3: Checkboxes
             const int fy3 = starty + CFG_BOX_Y + 3;
@@ -611,8 +614,6 @@ HandleResult NewProjectDialog::onKey(wint_t ch)
         if (ch == KEY_UP || ch == KEY_DOWN) {
             if (ch == KEY_DOWN) g.inner_focus = (g.inner_focus + 1) % 3;
             else                g.inner_focus = (g.inner_focus == 0) ? 2 : g.inner_focus - 1;
-            if (g.inner_focus == 1 && isWatcom())          // no C++ standard to pick
-                g.inner_focus = (ch == KEY_DOWN) ? 2 : 0;
             return HandleResult::CONTINUE;
         }
 
@@ -622,7 +623,7 @@ HandleResult NewProjectDialog::onKey(wint_t ch)
             if (ch == KEY_RIGHT && bs_cursor_ < kBuildSystemCount - 1)
             { ++bs_cursor_; m_template.build_system = bs_cursor_; return HandleResult::CONTINUE; }
         } else if (g.inner_focus == 1) {
-            cfg_combo_.handleKey(ch);
+            rowCombo().handleKey(ch);
         } else {
             if (ch == KEY_LEFT  && cfg_chk_cursor_ > 0) { --cfg_chk_cursor_; return HandleResult::CONTINUE; }
             if (ch == KEY_RIGHT && cfg_chk_cursor_ < 1) { ++cfg_chk_cursor_; return HandleResult::CONTINUE; }
@@ -696,9 +697,9 @@ bool NewProjectDialog::onMouseClick(const MEVENT& ev, int startx, int starty)
     };
 
     if (active == 0) {
-        // C++ Standard combo. Handle it first: when open, its dropdown floats
-        // over the controls below, so clicks there must reach the list.
-        if (!isWatcom() && cfg_combo_.handleMouse(startx, starty, ev.x, ev.y)) {
+        // C++ Standard / Platform combo. Handle it first: when open, its
+        // dropdown floats over the controls above, so clicks there must reach the list.
+        if (rowCombo().handleMouse(startx, starty, ev.x, ev.y)) {
             setGroupFocus(GRP_CFG);
             groups()[GRP_CFG].inner_focus = 1;
             return true;

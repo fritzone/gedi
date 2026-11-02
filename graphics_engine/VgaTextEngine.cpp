@@ -1,4 +1,5 @@
 #include "VgaTextEngine.h"
+#include "app_icon.h"
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
@@ -27,6 +28,20 @@ void VgaTextEngine::init_sdl() {
 
     window = SDL_CreateWindow("Garland Turbine C++", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                               window_w, window_h, SDL_WINDOW_RESIZABLE);
+
+    // The application's icon for the taskbar, Alt+Tab and the window list.
+    // Without it the window manager shows a generic one: on Linux nothing
+    // else gives an SDL window an icon unless an installed .desktop file
+    // happens to match it.
+    if (window) {
+        SDL_Surface* icon = SDL_CreateRGBSurfaceWithFormatFrom(
+            const_cast<std::uint32_t*>(kAppIconPixels), kAppIconSize, kAppIconSize,
+            32, kAppIconSize * 4, SDL_PIXELFORMAT_ABGR8888);
+        if (icon) {
+            SDL_SetWindowIcon(window, icon);
+            SDL_FreeSurface(icon);
+        }
+    }
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
 
     // NEW: Hide the OS hardware cursor

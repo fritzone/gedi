@@ -1,0 +1,75 @@
+{
+    "id": "zig",
+    "name": "Zig (zig c++)",
+    "inherits": "clang",
+    "order": 29,
+    "description": "Zig's bundled Clang and libc++; cross-compiles to any target Zig knows with -target.",
+    "match": {
+        "executables": [
+            "zig"
+        ],
+        "version_args": "version",
+        "version_regex": "",
+        "target": ""
+    },
+    "setup": "plain",
+    "command": {
+        "args": [
+            "c++"
+        ]
+    },
+    "capabilities": {
+        "parse_headers": "host",
+        "cmake": false
+    },
+    "extra_options": [
+        {
+            "tab": "Target",
+            "groups": [
+                {
+                    "name": "Target",
+                    "items": [
+                        {
+                            "id": "zig_target",
+                            "default": 0,
+                            "choices": [
+                                {
+                                    "label": "This computer",
+                                    "flag": ""
+                                },
+                                {
+                                    "label": "Linux x86-64 (glibc)",
+                                    "flag": "-target x86_64-linux-gnu"
+                                },
+                                {
+                                    "label": "Linux x86-64 (musl, static)",
+                                    "flag": "-target x86_64-linux-musl"
+                                },
+                                {
+                                    "label": "Linux AArch64",
+                                    "flag": "-target aarch64-linux-gnu"
+                                },
+                                {
+                                    "label": "Windows x86-64",
+                                    "flag": "-target x86_64-windows-gnu"
+                                },
+                                {
+                                    "label": "macOS AArch64",
+                                    "flag": "-target aarch64-macos"
+                                },
+                                {
+                                    "label": "macOS x86-64",
+                                    "flag": "-target x86_64-macos"
+                                },
+                                {
+                                    "label": "WebAssembly (WASI)",
+                                    "flag": "-target wasm32-wasi"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

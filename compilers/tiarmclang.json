@@ -1,0 +1,53 @@
+{
+    "id": "tiarmclang",
+    "name": "TI Arm Clang (tiarmclang)",
+    "inherits": "clang-cross",
+    "order": 104,
+    "description": "Texas Instruments' Clang-based compiler for its Arm devices.",
+    "match": {
+        "executables": [
+            "tiarmclang"
+        ],
+        "version_regex": "",
+        "target": ""
+    },
+    "setup": "plain",
+    "command": {
+        "exe_ext": ".out"
+    },
+    "capabilities": {
+        "parse_headers": "host",
+        "meson": false
+    },
+    "top_option": {
+        "id": "cpu",
+        "default": 0,
+        "choices": [
+            {
+                "label": "default",
+                "flag": ""
+            },
+            {
+                "label": "Cortex-M0+",
+                "flag": "-mcpu=cortex-m0plus"
+            },
+            {
+                "label": "Cortex-M3",
+                "flag": "-mcpu=cortex-m3"
+            },
+            {
+                "label": "Cortex-M4",
+                "flag": "-mcpu=cortex-m4"
+            },
+            {
+                "label": "Cortex-M33",
+                "flag": "-mcpu=cortex-m33"
+            },
+            {
+                "label": "Cortex-R5",
+                "flag": "-mcpu=cortex-r5"
+            }
+        ],
+        "label": "Target CPU"
+    }
+}

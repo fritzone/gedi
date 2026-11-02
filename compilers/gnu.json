@@ -1,0 +1,84 @@
+{
+    "id": "gnu",
+    "name": "GCC-compatible",
+    "description": "Base for GCC, Clang and their cross compilers: the GNU option set.",
+    "abstract": true,
+    "setup": "gcc",
+
+    "command": {
+        "output": "-o {out}",
+        "include": "-I{dir}",
+        "define": "-D{def}",
+        "standard_flag": "-std={std}",
+        "standards": ["c++11", "c++14", "c++17", "c++20", "c++23", "c++26"]
+    },
+    "diagnostics": "gnu",
+    "capabilities": { "runs_on_host": true, "debuggable": true, "parse_headers": "self" },
+
+    "options": [
+        { "tab": "Basic", "groups": [
+            { "name": "Optimization", "items": [
+                { "id": "debug_symbols", "label": "Generate debug symbols", "flag": "-g", "default": true, "role": "debug" },
+                { "id": "optimization_level", "role": "optimization", "default": 0, "choices": [
+                    { "label": "Disable optimisation", "flag": "-O0" },
+                    { "label": "Balanced optimisation", "flag": "-O2" },
+                    { "label": "High optimisation", "flag": "-O3" } ] }
+            ] },
+            { "name": "Warnings", "items": [
+                { "id": "wall",      "label": "Enable common warnings",  "flag": "-Wall",      "default": true },
+                { "id": "wextra",    "label": "Enable extra warnings",   "flag": "-Wextra",    "default": true },
+                { "id": "wpedantic", "label": "Strict ISO compliance",   "flag": "-Wpedantic" },
+                { "id": "werror",    "label": "Treat warnings as errors", "flag": "-Werror" }
+            ] }
+        ] },
+        { "tab": "Advanced", "groups": [
+            { "name": "Warnings", "items": [
+                { "id": "wconversion",         "label": "Warn on implicit conversions",   "flag": "-Wconversion" },
+                { "id": "wsign_conversion",    "label": "Warn on signed/unsigned conv",   "flag": "-Wsign-conversion" },
+                { "id": "wshadow",             "label": "Warn on variable shadowing",     "flag": "-Wshadow" },
+                { "id": "wnon_virtual_dtor",   "label": "Warn on non-virtual destructors", "flag": "-Wnon-virtual-dtor" },
+                { "id": "wold_style_cast",     "label": "Warn on old-style casts",        "flag": "-Wold-style-cast" },
+                { "id": "woverloaded_virtual", "label": "Warn on overloaded virtuals",    "flag": "-Woverloaded-virtual" },
+                { "id": "wnull_dereference",   "label": "Warn on null dereference",       "flag": "-Wnull-dereference" },
+                { "id": "wdouble_promotion",   "label": "Warn on double promotion",       "flag": "-Wdouble-promotion" },
+                { "id": "wformat_2",           "label": "Strict format string checking",  "flag": "-Wformat=2" }
+            ] },
+            { "name": "Sanitizer", "items": [
+                { "id": "fno_omit_frame_pointer", "label": "Keep frame pointer",      "flag": "-fno-omit-frame-pointer" },
+                { "id": "fsanitize_address_ub",   "label": "Enable ASan and UBSan",   "flag": "-fsanitize=address,undefined" },
+                { "id": "fsanitize_leak",         "label": "Enable LeakSanitizer",    "flag": "-fsanitize=leak" },
+                { "id": "flto",                   "label": "Enable LTO",              "flag": "-flto" }
+            ] },
+            { "name": "Optimizer", "items": [
+                { "id": "march_native", "label": "Optimise for host CPU", "flag": "-march=native" },
+                { "id": "mtune_native", "label": "Tune for host CPU",     "flag": "-mtune=native" }
+            ] }
+        ] },
+        { "tab": "Expert", "groups": [
+            { "name": "Warnings", "items": [
+                { "id": "wcast_align",      "label": "Warn on cast alignment",    "flag": "-Wcast-align" },
+                { "id": "wcast_qual",       "label": "Warn on cast qualifiers",   "flag": "-Wcast-qual" },
+                { "id": "wswitch_enum",     "label": "Warn on missing enum cases", "flag": "-Wswitch-enum" },
+                { "id": "wundef",           "label": "Warn on undefined macros",  "flag": "-Wundef" },
+                { "id": "wredundant_decls", "label": "Warn on redundant decls",   "flag": "-Wredundant-decls" },
+                { "id": "wlogical_op",      "label": "Warn on logical op issues", "flag": "-Wlogical-op" },
+                { "id": "wuseless_cast",    "label": "Warn on useless casts",     "flag": "-Wuseless-cast" },
+                { "id": "weffcxx",          "label": "Effective C++ warnings",    "flag": "-Weffc++" }
+            ] },
+            { "name": "Functionality", "items": [
+                { "id": "fno_exceptions",     "label": "Disable exceptions",       "flag": "-fno-exceptions" },
+                { "id": "fno_rtti",           "label": "Disable RTTI",             "flag": "-fno-rtti" },
+                { "id": "fvisibility_hidden", "label": "Hide symbols by default",  "flag": "-fvisibility=hidden" },
+                { "id": "fstrict_aliasing",   "label": "Enable strict aliasing",   "flag": "-fstrict-aliasing" }
+            ] },
+            { "name": "Sanitizer", "items": [
+                { "id": "fsanitize_pointer_compare",  "label": "Sanitise ptr comparisons", "flag": "-fsanitize=pointer-compare" },
+                { "id": "fsanitize_pointer_subtract", "label": "Sanitise ptr arithmetic",  "flag": "-fsanitize=pointer-subtract" }
+            ] },
+            { "name": "Linker", "items": [
+                { "id": "wl_as_needed", "label": "Remove unused libraries", "flag": "-Wl,--as-needed" },
+                { "id": "wl_o1",        "label": "Optimise linking",        "flag": "-Wl,-O1" }
+            ] }
+        ] }
+    ]
+}

@@ -1,0 +1,17 @@
+{
+    "id": "ps2-gcc",
+    "name": "PS2SDK (PlayStation 2 EE)",
+    "inherits": "gcc-cross",
+    "order": 144,
+    "description": "GCC for the PlayStation 2's Emotion Engine (ps2dev).",
+    "match": {
+        "executables": [
+            "mips64r5900el-ps2-elf-g++",
+            "ee-g++"
+        ],
+        "priority": 5
+    },
+    "command": {
+        "exe_ext": ".elf"
+    }
+}

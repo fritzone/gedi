@@ -1,0 +1,17 @@
+{
+    "id": "dreamcast-gcc",
+    "name": "KallistiOS (Sega Dreamcast)",
+    "inherits": "gcc-cross",
+    "order": 147,
+    "description": "GCC for the Dreamcast's SuperH SH-4, with KallistiOS.",
+    "match": {
+        "executables": [
+            "sh-elf-g++",
+            "kos-c++"
+        ],
+        "priority": 5
+    },
+    "command": {
+        "exe_ext": ".elf"
+    }
+}

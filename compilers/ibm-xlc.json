@@ -1,0 +1,110 @@
+{
+    "id": "ibm-xlc",
+    "name": "IBM XL C/C++ (xlC)",
+    "order": 92,
+    "description": "IBM's classic XL C/C++ for AIX and Linux on Power.",
+    "setup": "plain",
+    "match": {
+        "executables": [
+            "xlC",
+            "xlC_r",
+            "xlc++",
+            "xlc++_r"
+        ],
+        "version_args": "-qversion",
+        "version_regex": "IBM XL"
+    },
+    "command": {
+        "standard_flag": "",
+        "standards": [
+            "c++03",
+            "c++11"
+        ],
+        "standard_flags": {
+            "c++11": "-qlanglvl=extended0x",
+            "c++14": "-qlanglvl=extended0x",
+            "c++17": "-qlanglvl=extended0x",
+            "c++20": "-qlanglvl=extended0x",
+            "c++23": "-qlanglvl=extended0x",
+            "c++26": "-qlanglvl=extended0x"
+        }
+    },
+    "diagnostics": {
+        "regex": "^\"(.+?)\", line (\\d+)\\.(\\d+): \\S+ \\(([A-Z])\\) (.*)",
+        "file": 1,
+        "line": 2,
+        "column": 3,
+        "severity": 4,
+        "message": 5
+    },
+    "capabilities": {
+        "parse_headers": "host",
+        "meson": false
+    },
+    "options": [
+        {
+            "tab": "Basic",
+            "groups": [
+                {
+                    "name": "Debugging",
+                    "items": [
+                        {
+                            "id": "debug_symbols",
+                            "label": "Debug information",
+                            "flag": "-g",
+                            "default": true,
+                            "role": "debug"
+                        }
+                    ]
+                },
+                {
+                    "name": "Optimization",
+                    "items": [
+                        {
+                            "id": "optimization",
+                            "default": 0,
+                            "choices": [
+                                {
+                                    "label": "No optimisation",
+                                    "flag": "-O0"
+                                },
+                                {
+                                    "label": "-O2",
+                                    "flag": "-O2"
+                                },
+                                {
+                                    "label": "-O3",
+                                    "flag": "-O3"
+                                },
+                                {
+                                    "label": "-O4",
+                                    "flag": "-O4"
+                                },
+                                {
+                                    "label": "-O5",
+                                    "flag": "-O5"
+                                }
+                            ],
+                            "role": "optimization"
+                        }
+                    ]
+                },
+                {
+                    "name": "Code generation",
+                    "items": [
+                        {
+                            "id": "q64",
+                            "label": "64-bit code",
+                            "flag": "-q64"
+                        },
+                        {
+                            "id": "qsmp",
+                            "label": "OpenMP",
+                            "flag": "-qsmp=omp"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

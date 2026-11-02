@@ -1,0 +1,91 @@
+{
+    "id": "riscv-gcc",
+    "name": "RISC-V GNU Toolchain (bare metal)",
+    "inherits": "gcc-cross",
+    "order": 105,
+    "description": "GCC for RISC-V microcontrollers and cores without an OS.",
+    "match": {
+        "executables": [
+            "riscv64-unknown-elf-g++",
+            "riscv32-unknown-elf-g++",
+            "riscv-none-elf-g++",
+            "riscv64-elf-g++",
+            "riscv32-elf-g++",
+            "riscv*-elf-g++"
+        ],
+        "priority": 5
+    },
+    "command": {
+        "exe_ext": ".elf"
+    },
+    "top_option": {
+        "id": "isa",
+        "default": 0,
+        "choices": [
+            {
+                "label": "default",
+                "flag": ""
+            },
+            {
+                "label": "RV32IMAC",
+                "flag": "-march=rv32imac -mabi=ilp32"
+            },
+            {
+                "label": "RV32IMAFC",
+                "flag": "-march=rv32imafc -mabi=ilp32f"
+            },
+            {
+                "label": "RV32GC",
+                "flag": "-march=rv32gc -mabi=ilp32d"
+            },
+            {
+                "label": "RV64IMAC",
+                "flag": "-march=rv64imac -mabi=lp64"
+            },
+            {
+                "label": "RV64GC",
+                "flag": "-march=rv64gc -mabi=lp64d"
+            }
+        ],
+        "label": "Instruction set"
+    },
+    "extra_options": [
+        {
+            "tab": "Target",
+            "groups": [
+                {
+                    "name": "Runtime",
+                    "items": [
+                        {
+                            "id": "runtime",
+                            "default": 1,
+                            "choices": [
+                                {
+                                    "label": "Default C library start-up",
+                                    "flag": ""
+                                },
+                                {
+                                    "label": "No OS: newlib with stub system calls",
+                                    "flag": "--specs=nosys.specs"
+                                },
+                                {
+                                    "label": "Smaller: newlib-nano with stub system calls",
+                                    "flag": "--specs=nano.specs --specs=nosys.specs"
+                                },
+                                {
+                                    "label": "Semihosting: I/O through the debugger",
+                                    "flag": "--specs=rdimon.specs"
+                                }
+                            ]
+                        },
+                        {
+                            "id": "gc_sections",
+                            "label": "Remove unused functions and data",
+                            "flag": "-ffunction-sections -fdata-sections -Wl,--gc-sections"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

@@ -100,6 +100,9 @@ components:
       - dir: templates
         to: templates
         pattern: '*.tmpl'
+      - dir: compilers
+        to: compilers
+        pattern: '*.json'
 
   - id: toolchain
     name: 'C++ compiler toolchain (Clang)'

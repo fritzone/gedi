@@ -1,0 +1,23 @@
+{
+    "id": "cray-cce",
+    "name": "HPE Cray C++ (CCE)",
+    "inherits": "clang",
+    "order": 26,
+    "platforms": [
+        "linux"
+    ],
+    "description": "The Cray Compiling Environment's CC wrapper (Clang-based CCE).",
+    "match": {
+        "executables": [
+            "CC",
+            "crayCC"
+        ],
+        "version_regex": "Cray",
+        "target": "",
+        "priority": 10
+    },
+    "setup": "plain",
+    "capabilities": {
+        "parse_headers": "host"
+    }
+}

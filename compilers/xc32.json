@@ -1,0 +1,43 @@
+{
+    "id": "xc32",
+    "name": "Microchip XC32 (PIC32)",
+    "inherits": "gcc-cross",
+    "order": 109,
+    "description": "Microchip's GCC-based compiler for 32-bit PIC32 microcontrollers.",
+    "match": {
+        "executables": [
+            "xc32-g++"
+        ],
+        "priority": 5
+    },
+    "command": {
+        "exe_ext": ".elf"
+    },
+    "top_option": {
+        "id": "processor",
+        "default": 0,
+        "choices": [
+            {
+                "label": "default",
+                "flag": ""
+            },
+            {
+                "label": "PIC32MX250F128B",
+                "flag": "-mprocessor=32MX250F128B"
+            },
+            {
+                "label": "PIC32MX795F512L",
+                "flag": "-mprocessor=32MX795F512L"
+            },
+            {
+                "label": "PIC32MZ2048EFH144",
+                "flag": "-mprocessor=32MZ2048EFH144"
+            },
+            {
+                "label": "PIC32MK1024MCF100",
+                "flag": "-mprocessor=32MK1024MCF100"
+            }
+        ],
+        "label": "Processor"
+    }
+}

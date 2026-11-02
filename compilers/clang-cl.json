@@ -1,0 +1,23 @@
+{
+    "id": "clang-cl",
+    "name": "Clang-cl (MSVC-compatible Clang)",
+    "inherits": "msvc",
+    "order": 41,
+    "platforms": [
+        "windows"
+    ],
+    "description": "LLVM's clang-cl: takes cl.exe's options, uses the Visual Studio headers and libraries.",
+    "match": {
+        "executables": [
+            "clang-cl"
+        ],
+        "version_args": "--version",
+        "version_regex": "clang version"
+    },
+    "setup": "clang",
+    "command": {
+        "always": [
+            "/nologo"
+        ]
+    }
+}

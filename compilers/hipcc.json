@@ -1,0 +1,68 @@
+{
+    "id": "hipcc",
+    "name": "AMD ROCm HIP (hipcc)",
+    "inherits": "clang",
+    "order": 62,
+    "platforms": [
+        "linux",
+        "windows"
+    ],
+    "description": "AMD's HIP compiler driver for ROCm GPUs (Clang-based).",
+    "match": {
+        "executables": [
+            "hipcc"
+        ],
+        "version_regex": "HIP",
+        "target": ""
+    },
+    "setup": "plain",
+    "capabilities": {
+        "parse_headers": "host"
+    },
+    "extra_options": [
+        {
+            "tab": "GPU",
+            "groups": [
+                {
+                    "name": "GPU architecture",
+                    "items": [
+                        {
+                            "id": "offload_arch",
+                            "default": 0,
+                            "choices": [
+                                {
+                                    "label": "Default",
+                                    "flag": ""
+                                },
+                                {
+                                    "label": "MI50/MI60 (gfx906)",
+                                    "flag": "--offload-arch=gfx906"
+                                },
+                                {
+                                    "label": "MI100 (gfx908)",
+                                    "flag": "--offload-arch=gfx908"
+                                },
+                                {
+                                    "label": "MI200 (gfx90a)",
+                                    "flag": "--offload-arch=gfx90a"
+                                },
+                                {
+                                    "label": "MI300 (gfx942)",
+                                    "flag": "--offload-arch=gfx942"
+                                },
+                                {
+                                    "label": "RDNA 2 (gfx1030)",
+                                    "flag": "--offload-arch=gfx1030"
+                                },
+                                {
+                                    "label": "RDNA 3 (gfx1100)",
+                                    "flag": "--offload-arch=gfx1100"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

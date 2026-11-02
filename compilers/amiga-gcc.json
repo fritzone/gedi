@@ -1,0 +1,57 @@
+{
+    "id": "amiga-gcc",
+    "name": "Amiga GCC (m68k-amigaos)",
+    "inherits": "gcc-cross",
+    "order": 132,
+    "description": "Bebbo's GCC for AmigaOS on 68k Amigas.",
+    "match": {
+        "executables": [
+            "m68k-amigaos-g++"
+        ],
+        "priority": 5
+    },
+    "command": {
+        "exe_ext": ""
+    },
+    "top_option": {
+        "id": "m68k",
+        "default": 0,
+        "choices": [
+            {
+                "label": "68000",
+                "flag": "-m68000"
+            },
+            {
+                "label": "68020",
+                "flag": "-m68020"
+            },
+            {
+                "label": "68040",
+                "flag": "-m68040"
+            },
+            {
+                "label": "68060",
+                "flag": "-m68060"
+            }
+        ],
+        "label": "Processor"
+    },
+    "extra_options": [
+        {
+            "tab": "AmigaOS",
+            "groups": [
+                {
+                    "name": "Runtime",
+                    "items": [
+                        {
+                            "id": "noixemul",
+                            "label": "Without ixemul.library",
+                            "flag": "-noixemul",
+                            "default": true
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

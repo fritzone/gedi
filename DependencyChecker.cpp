@@ -300,6 +300,7 @@ bool DependencyChecker::check(Toolchain& out, bool ignore)
             out.pkg_config = j.value("pkg_config", "");
             out.python3    = j.value("python3",    "");
             out.kind       = j.value("kind",       "");
+            out.compiler   = j.value("compiler",   "");
             out.bin_dirs   = j.value("bin_dirs", std::vector<std::string>{});
             out.env        = j.value("env", std::map<std::string, std::string>{});
 
@@ -423,6 +424,7 @@ bool DependencyChecker::check(Toolchain& out, bool ignore)
         // Carried through so a re-probe cannot drop the environment a
         // configured toolchain needs to run.
         if (!t.kind.empty())     j["kind"]     = t.kind;
+        if (!t.compiler.empty()) j["compiler"] = t.compiler;
         if (!t.bin_dirs.empty()) j["bin_dirs"] = t.bin_dirs;
         if (!t.env.empty())      j["env"]      = t.env;
 

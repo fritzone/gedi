@@ -1,0 +1,84 @@
+{
+    "id": "msvc",
+    "name": "Microsoft Visual C++ (MSVC)",
+    "description": "cl.exe from Visual Studio or its Build Tools.",
+    "order": 40,
+    "platforms": ["windows"],
+    "setup": "msvc",
+    "match": {
+        "executables": ["cl"],
+        "version_args": "",
+        "version_regex": "Microsoft"
+    },
+
+    "command": {
+        "always": ["/nologo"],
+        "output": "/Fe:{out}",
+        "compile_only": "/c",
+        "object_output": "/Fo:{out}",
+        "include": "/I{dir}",
+        "define": "/D{def}",
+        "exe_ext": ".exe",
+        "host_libraries": false,
+        "standard_flag": "/std:{std}",
+        "standards": ["c++11", "c++14", "c++17", "c++20", "c++23", "c++26"],
+        "standard_flags": { "c++11": "", "c++23": "/std:c++latest", "c++26": "/std:c++latest" }
+    },
+    "diagnostics": "msvc",
+    "capabilities": { "parse_headers": "host", "make": false },
+
+    "options": [
+        { "tab": "Basic", "groups": [
+            { "name": "Debugging", "items": [
+                { "id": "debug_symbols", "label": "Generate debug information", "flag": "/Zi", "default": true, "role": "debug" }
+            ] },
+            { "name": "Optimization", "items": [
+                { "id": "optimization", "role": "optimization", "default": 0, "choices": [
+                    { "label": "Disable optimisation", "flag": "/Od" },
+                    { "label": "Optimise for size",    "flag": "/O1" },
+                    { "label": "Optimise for speed",   "flag": "/O2" },
+                    { "label": "Maximum optimisation", "flag": "/Ox" } ] }
+            ] },
+            { "name": "Warnings", "items": [
+                { "id": "warning_level", "default": 4, "choices": [
+                    { "label": "No warnings",          "flag": "/W0" },
+                    { "label": "Warning level 1",      "flag": "/W1" },
+                    { "label": "Warning level 2",      "flag": "/W2" },
+                    { "label": "Warning level 3",      "flag": "/W3" },
+                    { "label": "Warning level 4",      "flag": "/W4" },
+                    { "label": "All warnings",         "flag": "/Wall" } ] },
+                { "id": "werror", "label": "Treat warnings as errors", "flag": "/WX" }
+            ] }
+        ] },
+        { "tab": "Language", "groups": [
+            { "name": "C++", "items": [
+                { "id": "exceptions",   "label": "Enable C++ exceptions",           "flag": "/EHsc", "default": true },
+                { "id": "no_rtti",      "label": "Disable RTTI",                    "flag": "/GR-" },
+                { "id": "permissive",   "label": "Standards conformance mode",      "flag": "/permissive-" },
+                { "id": "zc_cplusplus", "label": "Report the real __cplusplus",     "flag": "/Zc:__cplusplus" },
+                { "id": "utf8",         "label": "UTF-8 source and execution sets", "flag": "/utf-8" }
+            ] },
+            { "name": "Runtime library", "items": [
+                { "id": "runtime", "default": 0, "choices": [
+                    { "label": "Compiler default", "flag": "" },
+                    { "label": "Static",           "flag": "/MT" },
+                    { "label": "Static, debug",    "flag": "/MTd" },
+                    { "label": "DLL",              "flag": "/MD" },
+                    { "label": "DLL, debug",       "flag": "/MDd" } ] }
+            ] }
+        ] },
+        { "tab": "Code Gen", "groups": [
+            { "name": "Code generation", "items": [
+                { "id": "whole_program", "label": "Whole program optimisation",     "flag": "/GL" },
+                { "id": "fp_fast",       "label": "Fast floating point",            "flag": "/fp:fast" },
+                { "id": "avx2",          "label": "Use AVX2 instructions",          "flag": "/arch:AVX2" },
+                { "id": "parallel",      "label": "Compile with several processes", "flag": "/MP" }
+            ] },
+            { "name": "Safety", "items": [
+                { "id": "asan",        "label": "AddressSanitizer",               "flag": "/fsanitize=address" },
+                { "id": "sdl",         "label": "Additional security checks",     "flag": "/sdl" },
+                { "id": "no_security", "label": "Disable buffer security checks", "flag": "/GS-" }
+            ] }
+        ] }
+    ]
+}

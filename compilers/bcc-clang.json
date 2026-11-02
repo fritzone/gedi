@@ -1,0 +1,36 @@
+{
+    "id": "bcc-clang",
+    "name": "Embarcadero C++ (bcc32c / bcc64)",
+    "inherits": "clang",
+    "order": 44,
+    "platforms": [
+        "windows"
+    ],
+    "description": "C++Builder's Clang-based compilers.",
+    "match": {
+        "executables": [
+            "bcc32c",
+            "bcc32x",
+            "bcc64",
+            "bcc64x"
+        ],
+        "version_regex": "",
+        "target": ""
+    },
+    "setup": "plain",
+    "command": {
+        "exe_ext": ".exe",
+        "host_libraries": false
+    },
+    "capabilities": {
+        "parse_headers": "host"
+    },
+    "remove_options": [
+        "march_native",
+        "mtune_native",
+        "fsanitize_address_ub",
+        "fsanitize_leak",
+        "fsanitize_pointer_compare",
+        "fsanitize_pointer_subtract"
+    ]
+}

@@ -1,0 +1,141 @@
+{
+    "id": "oracle-cc",
+    "name": "Oracle Developer Studio C++ (CC)",
+    "order": 90,
+    "description": "Oracle's (formerly Sun's) C++ compiler for Solaris and Linux; C++14 at most.",
+    "setup": "plain",
+    "match": {
+        "executables": [
+            "CC"
+        ],
+        "version_args": "-V",
+        "version_regex": "Studio|Sun C\\+\\+",
+        "priority": 10
+    },
+    "command": {
+        "standard_flag": "-std={std}",
+        "standards": [
+            "c++03",
+            "c++11",
+            "c++14"
+        ],
+        "standard_flags": {
+            "c++17": "-std=c++14",
+            "c++20": "-std=c++14",
+            "c++23": "-std=c++14",
+            "c++26": "-std=c++14"
+        }
+    },
+    "diagnostics": {
+        "regex": "^\"(.+?)\", line (\\d+)(?:\\.(\\d+))?: ([Cc]atastrophic error|[Ee]rror|[Ww]arning|[Rr]emark)[^:]*: (.*)",
+        "file": 1,
+        "line": 2,
+        "column": 3,
+        "severity": 4,
+        "message": 5
+    },
+    "capabilities": {
+        "parse_headers": "host",
+        "meson": false
+    },
+    "options": [
+        {
+            "tab": "Basic",
+            "groups": [
+                {
+                    "name": "Debugging",
+                    "items": [
+                        {
+                            "id": "debug_symbols",
+                            "label": "Debug information",
+                            "flag": "-g",
+                            "default": true,
+                            "role": "debug"
+                        }
+                    ]
+                },
+                {
+                    "name": "Optimization",
+                    "items": [
+                        {
+                            "id": "optimization",
+                            "default": 0,
+                            "choices": [
+                                {
+                                    "label": "No optimisation",
+                                    "flag": ""
+                                },
+                                {
+                                    "label": "-xO1",
+                                    "flag": "-xO1"
+                                },
+                                {
+                                    "label": "-xO2",
+                                    "flag": "-xO2"
+                                },
+                                {
+                                    "label": "-xO3",
+                                    "flag": "-xO3"
+                                },
+                                {
+                                    "label": "-xO4",
+                                    "flag": "-xO4"
+                                },
+                                {
+                                    "label": "-xO5",
+                                    "flag": "-xO5"
+                                }
+                            ],
+                            "role": "optimization"
+                        },
+                        {
+                            "id": "fast",
+                            "label": "Common performance options",
+                            "flag": "-fast"
+                        }
+                    ]
+                },
+                {
+                    "name": "Warnings",
+                    "items": [
+                        {
+                            "id": "w1",
+                            "label": "More warnings",
+                            "flag": "+w"
+                        },
+                        {
+                            "id": "w2",
+                            "label": "Even more warnings",
+                            "flag": "+w2"
+                        },
+                        {
+                            "id": "errwarn",
+                            "label": "Treat warnings as errors",
+                            "flag": "-errwarn=%all"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "tab": "Code Gen",
+            "groups": [
+                {
+                    "name": "Code generation",
+                    "items": [
+                        {
+                            "id": "m64",
+                            "label": "64-bit code",
+                            "flag": "-m64"
+                        },
+                        {
+                            "id": "openmp",
+                            "label": "OpenMP",
+                            "flag": "-xopenmp"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,46 @@
+{
+    "id": "intel-icx",
+    "name": "Intel oneAPI C++ for Windows (icx)",
+    "inherits": "msvc",
+    "order": 42,
+    "platforms": [
+        "windows"
+    ],
+    "description": "Intel's LLVM-based compiler with cl.exe-style options; needs Visual Studio's libraries.",
+    "match": {
+        "executables": [
+            "icx",
+            "icx-cl"
+        ],
+        "version_args": "--version",
+        "version_regex": "Intel"
+    },
+    "setup": "clang",
+    "extra_options": [
+        {
+            "tab": "Intel",
+            "groups": [
+                {
+                    "name": "Code generation",
+                    "items": [
+                        {
+                            "id": "qopenmp",
+                            "label": "OpenMP",
+                            "flag": "/Qopenmp"
+                        },
+                        {
+                            "id": "qxhost",
+                            "label": "Best instructions for this CPU",
+                            "flag": "/QxHost"
+                        },
+                        {
+                            "id": "qipo",
+                            "label": "Interprocedural optimisation",
+                            "flag": "/Qipo"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Garland Turbine (graphical)
+GenericName=C++ IDE
+Comment=A C++ programmers' editor and IDE in a VGA-style window
+Exec=gedi-gui %F
+Icon=gedi-gui
+Terminal=false
+StartupWMClass=gedi-gui
+Categories=Development;IDE;TextEditor;
+Keywords=Text;Editor;C++;IDE;Compiler;Debugger;
+MimeType=text/x-c++src;text/x-c++hdr;text/x-chdr;text/x-csrc;

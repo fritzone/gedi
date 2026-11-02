@@ -1,0 +1,49 @@
+{
+    "id": "mingw-cross",
+    "name": "MinGW-w64 cross compiler (to Windows)",
+    "inherits": "gcc-cross",
+    "order": 120,
+    "platforms": [
+        "linux",
+        "macos"
+    ],
+    "description": "Builds Windows programs from Linux or macOS.",
+    "match": {
+        "executables": [
+            "x86_64-w64-mingw32-g++",
+            "i686-w64-mingw32-g++",
+            "*-w64-mingw32-g++*"
+        ],
+        "priority": 5
+    },
+    "command": {
+        "exe_ext": ".exe"
+    },
+    "extra_options": [
+        {
+            "tab": "Windows",
+            "groups": [
+                {
+                    "name": "Windows",
+                    "items": [
+                        {
+                            "id": "static",
+                            "label": "Link everything statically",
+                            "flag": "-static"
+                        },
+                        {
+                            "id": "mwindows",
+                            "label": "GUI program (no console window)",
+                            "flag": "-mwindows"
+                        },
+                        {
+                            "id": "municode",
+                            "label": "Unicode entry point (wmain)",
+                            "flag": "-municode"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

@@ -1,0 +1,11 @@
+{
+    "id": "generic",
+    "name": "Generic",
+    "description": "Base for a compiler gedi knows nothing about: names its output with -o, no options of its own.",
+    "abstract": true,
+    "setup": "plain",
+    "command": { "output": "-o {out}", "standard_flag": "", "host_libraries": false },
+    "diagnostics": "gnu",
+    "capabilities": { "parse_headers": "host" },
+    "options": []
+}

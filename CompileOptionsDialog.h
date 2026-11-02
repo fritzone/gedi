@@ -1,10 +1,10 @@
 #pragma once
-#include "Config.h"
 #include "DialogBase.h"
+#include "CompilerDefs.h"
 #include "CompilerSettings.h"
 #include "GediProject.h"
 #include "Renderer.h"
-#include "ToolchainDetect.h"
+#include <set>
 #include <string>
 #include <vector>
 
@@ -14,32 +14,30 @@ class BuildSystem;
 // CompileOptionsDialog / Build Options dialog
 //
 // Per-file mode  (project == nullptr):
-//   Title: "Compiler Options"
-//   "Final Command" preview: gcc / clang invocation for the current file.
+//   Title: "Compile Options - <compiler>"
+//   "Final Command" preview: the compiler invocation for the current file.
 //   Ok writes back to the passed CompilerSettings (EditorBuffer's).
 //
 // Project mode   (project != nullptr):
-//   Title: "Build Options — <project name>"
+//   Title: "Build Options - <project name>"
 //   "Build Command" preview: cmake / make / meson invocation with these flags.
 //   Ok writes back to the passed CompilerSettings (GediProject's) then the
 //   caller is responsible for saving the project.
 //
-// The "Compiler" tab is the same in both modes: it names the compiler currently
-// in use and lets it be changed, the way setup does. That setting is global -
-// it lives in toolchain.json, not in the per-file or per-project options - so Ok
-// writes it there, applies its environment to the running editor and tells
-// BuildSystem to forget what it derived from the old one.
+// Everything compiler-specific comes from the configured compiler's definition
+// (CompilerDefs.h): the tabs and their options, the top row (the C++ standard,
+// or the definition's own top option such as Open Watcom's Target CPU) and the
+// command the preview shows. Which compiler that is is chosen in Options >
+// Compiler Options (CompilerDialog). Test tries each option on the compiler and
+// marks the ones it rejects.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 class CompileOptionsDialog : private DialogBase {
 public:
     // Per-file mode:  pass project=nullptr and a source filename for the preview.
     // Project mode:   pass the project pointer; filename is ignored.
-    // `config` is the editor's live configuration; its toolchain is updated in
-    // place when the user picks a different compiler.
     static void show(Renderer&          renderer,
                      BuildSystem&       buildSystem,
-                     Config&            config,
                      CompilerSettings&  settings,
                      const GediProject* project  = nullptr,
                      const std::string& filename = "");
@@ -47,7 +45,6 @@ public:
 private:
     CompileOptionsDialog(Renderer&          renderer,
                          BuildSystem&       buildSystem,
-                         Config&            config,
                          CompilerSettings&  settings,
                          const GediProject* project,
                          const std::string& filename);
@@ -56,84 +53,50 @@ private:
     void onDraw(Renderer& renderer, int startx, int starty) override;
     HandleResult onKey(wint_t ch) override;
     bool onTab(bool forward) override;
-    bool onMouseClick(const MEVENT& ev, int startx, int starty) override;
 
-    //  Layout constants 
-    // Sized to fit an 80x25 screen (was 84x34). Vertical layout is packed so the
-    // scrollable option list keeps a usable number of rows at this height.
+    //  Layout constants
+    // Sized to fit an 80x25 screen. Rows, top to bottom: title border, blank,
+    // top row (C++ standard / the compiler's top option), tab bar + its
+    // separator, option list, Optional flags box, command box, buttons, the
+    // buttons' drop shadow, bottom border. The shadow needs a row of its own or
+    // it lands on the border.
     static constexpr int W            = 78;
     static constexpr int H            = 23;
     static constexpr int COMBO_Y      = 2;
-    static constexpr int TAB_Y        = 4;
-    static constexpr int OPT_Y        = 5;
-    static constexpr int FLAGS_BOX_Y  = H - 9;   // = 14
-    static constexpr int FLAGS_BOX_H  = 3;       // rows 14..16
-    static constexpr int OPT_ROWS     = FLAGS_BOX_Y - OPT_Y;  // = 9 visible rows
-    static constexpr int OPT_BOX_H   = OPT_ROWS + 2;
-    static constexpr int CMD_BOX_Y    = H - 6;   // = 17
-    static constexpr int CMD_BOX_H    = 4;       // rows 17..20
-    static constexpr int CMD_VIEW_H   = 2;
-    static constexpr int BTN_Y        = H - 2;   // = 21
+    static constexpr int TAB_Y        = 3;       // separator line on TAB_Y + 1
+    static constexpr int OPT_Y        = TAB_Y + 2;            // = 5
+    static constexpr int BTN_Y        = H - 3;                // = 20 (shadow on 21)
+    static constexpr int CMD_BOX_H    = 4;
+    static constexpr int CMD_VIEW_H   = CMD_BOX_H - 2;
+    static constexpr int CMD_BOX_Y    = BTN_Y - CMD_BOX_H;    // = 16, rows 16..19
+    static constexpr int FLAGS_BOX_H  = 3;
+    static constexpr int FLAGS_BOX_Y  = CMD_BOX_Y - FLAGS_BOX_H;  // = 13, rows 13..15
+    static constexpr int OPT_ROWS     = FLAGS_BOX_Y - OPT_Y;  // = 8 visible rows
 
-    // Compiler tab: fills the same rows the option list uses (OPT_Y .. OPT_Y+8).
-    static constexpr int TC_CUR_Y    = OPT_Y;         // "Current:" line
-    static constexpr int TC_CURP_Y   = OPT_Y + 1;     // the path it resolves to
-    static constexpr int TC_KIND_Y   = OPT_Y + 3;     // first of four radio rows
-    static constexpr int TC_PATH_Y   = OPT_Y + 7;     // path field + Browse
-    static constexpr int TC_NOTE_Y   = OPT_Y + 8;     // what the pick resolved to
-    static constexpr int TC_FIELD_X  = 10;
-    static constexpr int TC_BROWSE_X = W - 14;
-    static constexpr int TC_BROWSE_W = 9;             // " &Browse "
-    static constexpr int TC_FIELD_W  = TC_BROWSE_X - TC_FIELD_X - 2;
-
-    //  Compiler tab
-    bool compilerTab();                 // is the Compiler tab the active one?
-    void drawCompilerTab(Renderer& renderer, int sx, int sy);
-    void probeCompiler();               // refresh pending_ / tc_error_ for the current pick
-    void applyCompiler();               // record the pick and make the editor use it
-    void browseForCompiler();           // the Open File dialog, filtered to this kind
-    void pressBrowse();                 // press animation, then browseForCompiler()
-    bool tcPathUsable() const;          // false for MSVC, which locates itself
     std::string previewCommand();       // what the preview box and Copy show
-    std::vector<int> tabStops();        // focus order, minus the hidden group
+    std::vector<OptionList::Option> options(int tab);   // the list for one tab
+    void runTest();                     // Test: try every option on the compiler
+    std::vector<int> tabStops();        // focus order
 
-    Renderer&          renderer_;
-    BuildSystem&       buildSystem_;
-    Config&            config_;         // the editor's live configuration
-    CompilerSettings&  settings_;       // target written on Ok
-    const GediProject* project_;        // null = per-file mode
-    std::string        filename_;       // source file for per-file preview
+    Renderer&                    renderer_;
+    BuildSystem&                 buildSystem_;
+    const compilers::Definition& def_;       // the configured compiler
+    CompilerSettings&            settings_;  // target written on Ok
+    const GediProject*           project_;   // null = per-file mode
+    std::string                  filename_;  // source file for per-file preview
 
-    CompilerSettings   temp_;           // working copy
+    CompilerSettings      temp_;             // working copy
+    CompilerOptionValues* vals_ = nullptr;   // temp_'s values for def_
 
-    std::vector<std::string> standards_;
-    int  std_idx_  = 0;
+    std::vector<std::string> top_items_;     // the top row's combo items
+    std::set<std::string>    unsupported_;   // options the compiler rejected when tested
     int  cmd_top_row_ = 0;
 
-    //  Compiler tab state
-    std::vector<toolchain::Kind> tc_kinds_;   // the pickable kinds, in display order
-    int  tc_sel_ = 0;                   // index into tc_kinds_
-    std::string tc_path_;               // compiler path for the kinds that need one
-    int  tc_path_cursor_ = 0;
-    int  tc_path_scroll_ = 0;
-    bool tc_dirty_   = true;            // the pick changed; re-probe before drawing
-    bool tc_changed_ = false;           // the user actually touched it; Ok applies
-    toolchain::Setup pending_;          // what the current pick resolves to
-    std::string tc_error_;
-    std::string current_desc_;          // version banner of the compiler in use
-
-    static constexpr int GRP_STANDARD = 0;
+    static constexpr int GRP_STANDARD = 0;   // the top row
     static constexpr int GRP_TABS     = 1;
     static constexpr int GRP_OPTIONS  = 2;
     static constexpr int GRP_FLAGS    = 3;
     static constexpr int GRP_CMD      = 4;
-    static constexpr int GRP_COMPILER = 5;
 
-    // GRP_COMPILER inner-focus items, like NewProjectDialog's path group.
-    static constexpr int TC_INNER_KIND   = 0;
-    static constexpr int TC_INNER_PATH   = 1;
-    static constexpr int TC_INNER_BROWSE = 2;
-
-    static constexpr int TAB_COMPILER = 3;   // index in the tab bar
-    static constexpr int BTN_COUNT    = 3;   // Ok / Copy / Cancel
+    static constexpr int BTN_COUNT    = 4;   // Ok / Test / Copy / Cancel
 };

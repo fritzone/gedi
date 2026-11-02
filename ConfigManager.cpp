@@ -125,6 +125,7 @@ void ConfigManager::loadToolchain(Config& config) {
         config.toolchain.pkg_config = j.value("pkg_config", "");
         config.toolchain.python3    = j.value("python3",    "");
         config.toolchain.kind       = j.value("kind",       "");
+        config.toolchain.compiler   = j.value("compiler",   "");
         config.toolchain.bin_dirs   = j.value("bin_dirs",
                                               std::vector<std::string>{});
         config.toolchain.env        = j.value("env",

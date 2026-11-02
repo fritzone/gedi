@@ -1,0 +1,175 @@
+{
+    "id": "arm-gcc",
+    "name": "Arm GNU Toolchain (arm-none-eabi)",
+    "inherits": "gcc-cross",
+    "order": 100,
+    "description": "GCC for bare-metal Arm Cortex-M/R/A: microcontrollers and boards without an OS.",
+    "match": {
+        "executables": [
+            "arm-none-eabi-g++"
+        ],
+        "priority": 5
+    },
+    "command": {
+        "exe_ext": ".elf"
+    },
+    "top_option": {
+        "id": "cpu",
+        "default": 0,
+        "choices": [
+            {
+                "label": "default",
+                "flag": ""
+            },
+            {
+                "label": "Cortex-M0",
+                "flag": "-mcpu=cortex-m0"
+            },
+            {
+                "label": "Cortex-M0+",
+                "flag": "-mcpu=cortex-m0plus"
+            },
+            {
+                "label": "Cortex-M3",
+                "flag": "-mcpu=cortex-m3"
+            },
+            {
+                "label": "Cortex-M4",
+                "flag": "-mcpu=cortex-m4"
+            },
+            {
+                "label": "Cortex-M7",
+                "flag": "-mcpu=cortex-m7"
+            },
+            {
+                "label": "Cortex-M23",
+                "flag": "-mcpu=cortex-m23"
+            },
+            {
+                "label": "Cortex-M33",
+                "flag": "-mcpu=cortex-m33"
+            },
+            {
+                "label": "Cortex-M55",
+                "flag": "-mcpu=cortex-m55"
+            },
+            {
+                "label": "Cortex-R5",
+                "flag": "-mcpu=cortex-r5"
+            },
+            {
+                "label": "Cortex-A7",
+                "flag": "-mcpu=cortex-a7"
+            },
+            {
+                "label": "Cortex-A9",
+                "flag": "-mcpu=cortex-a9"
+            }
+        ],
+        "label": "Target CPU"
+    },
+    "extra_options": [
+        {
+            "tab": "Target",
+            "groups": [
+                {
+                    "name": "Instruction set",
+                    "items": [
+                        {
+                            "id": "thumb",
+                            "label": "Thumb instructions",
+                            "flag": "-mthumb",
+                            "default": true
+                        }
+                    ]
+                },
+                {
+                    "name": "Floating-point ABI",
+                    "items": [
+                        {
+                            "id": "float_abi",
+                            "default": 0,
+                            "choices": [
+                                {
+                                    "label": "Software floating point",
+                                    "flag": "-mfloat-abi=soft"
+                                },
+                                {
+                                    "label": "Hardware, software calling convention",
+                                    "flag": "-mfloat-abi=softfp"
+                                },
+                                {
+                                    "label": "Hardware",
+                                    "flag": "-mfloat-abi=hard"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "name": "Floating-point unit",
+                    "items": [
+                        {
+                            "id": "fpu",
+                            "default": 0,
+                            "choices": [
+                                {
+                                    "label": "Default",
+                                    "flag": ""
+                                },
+                                {
+                                    "label": "FPv4-SP (Cortex-M4F)",
+                                    "flag": "-mfpu=fpv4-sp-d16"
+                                },
+                                {
+                                    "label": "FPv5-SP (Cortex-M7, single)",
+                                    "flag": "-mfpu=fpv5-sp-d16"
+                                },
+                                {
+                                    "label": "FPv5 (Cortex-M7, double)",
+                                    "flag": "-mfpu=fpv5-d16"
+                                },
+                                {
+                                    "label": "NEON (Cortex-A)",
+                                    "flag": "-mfpu=neon-vfpv4"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "name": "Runtime",
+                    "items": [
+                        {
+                            "id": "runtime",
+                            "default": 1,
+                            "choices": [
+                                {
+                                    "label": "Default C library start-up",
+                                    "flag": ""
+                                },
+                                {
+                                    "label": "No OS: newlib with stub system calls",
+                                    "flag": "--specs=nosys.specs"
+                                },
+                                {
+                                    "label": "Smaller: newlib-nano with stub system calls",
+                                    "flag": "--specs=nano.specs --specs=nosys.specs"
+                                },
+                                {
+                                    "label": "Semihosting: I/O through the debugger",
+                                    "flag": "--specs=rdimon.specs"
+                                }
+                            ]
+                        },
+                        {
+                            "id": "gc_sections",
+                            "label": "Remove unused functions and data",
+                            "flag": "-ffunction-sections -fdata-sections -Wl,--gc-sections"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

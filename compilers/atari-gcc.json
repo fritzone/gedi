@@ -1,0 +1,36 @@
+{
+    "id": "atari-gcc",
+    "name": "Atari ST GCC (m68k-atari-mint)",
+    "inherits": "gcc-cross",
+    "order": 133,
+    "description": "GCC for Atari ST/TT/Falcon (TOS and MiNT).",
+    "match": {
+        "executables": [
+            "m68k-atari-mint-g++",
+            "m68k-atari-mintelf-g++"
+        ],
+        "priority": 5
+    },
+    "command": {
+        "exe_ext": ".tos"
+    },
+    "top_option": {
+        "id": "m68k",
+        "default": 0,
+        "choices": [
+            {
+                "label": "68000",
+                "flag": "-m68000"
+            },
+            {
+                "label": "68020-60",
+                "flag": "-m68020-60"
+            },
+            {
+                "label": "ColdFire V4e",
+                "flag": "-mcpu=5475"
+            }
+        ],
+        "label": "Processor"
+    }
+}

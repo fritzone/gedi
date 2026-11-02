@@ -14,6 +14,7 @@ struct ProjectTemplate {
     std::string path;
     int         build_system       = 0;     // index into kBuildSystemKeys (CMake, Make, Meson, Watcom)
     std::string cpp_standard       = "c++17";
+    std::string watcom_platform    = "dos16";   // key into kWatcomPlatforms (Watcom only)
     bool        init_git           = false;
     bool        create_main        = true;
     bool        create_project_dir = true;
@@ -99,7 +100,7 @@ private:
 
     int activeTab();   // convenience accessor for the tab control's active tab
 
-    // Open Watcom selected: no C++ standard, no system libraries
+    // Open Watcom selected: a platform instead of a C++ standard, no system libraries
     bool isWatcom() const
     {
         return std::string_view(kBuildSystemKeys[m_template.build_system]) == "watcom";
@@ -118,9 +119,15 @@ private:
     //  Config group state (managed manually) 
     int      bs_cursor_;         // build-system radio cursor
     int      cfg_chk_cursor_ = 0; // checkbox row cursor: 0=init_git, 1=create_main
-    ComboBox cfg_combo_;
+    ComboBox cfg_combo_;                 // C++ standard (CMake / Make / Meson)
     std::vector<std::string> standards_;
     int                      std_idx_;
+    ComboBox plat_combo_;                // platform (Open Watcom), in the same row
+    std::vector<std::string> platforms_;
+
+    // Whichever of the two the selected build system shows.
+    ComboBox&       rowCombo()       { return isWatcom() ? plat_combo_ : cfg_combo_; }
+    const ComboBox& rowCombo() const { return isWatcom() ? plat_combo_ : cfg_combo_; }
 
     //  Library panel state 
     std::vector<LibraryInfo> m_libraries;

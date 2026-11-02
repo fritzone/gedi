@@ -1,0 +1,37 @@
+{
+    "id": "devkitppc",
+    "name": "devkitPPC (GameCube / Wii)",
+    "inherits": "gcc-cross",
+    "order": 141,
+    "description": "devkitPro's PowerPC toolchain for GameCube and Wii homebrew.",
+    "match": {
+        "executables": [
+            "powerpc-eabi-g++"
+        ],
+        "version_regex": "devkitPPC",
+        "priority": 10
+    },
+    "command": {
+        "always": [
+            "-mcpu=750",
+            "-meabi",
+            "-mhard-float"
+        ],
+        "exe_ext": ".elf"
+    },
+    "top_option": {
+        "id": "console",
+        "default": 0,
+        "choices": [
+            {
+                "label": "Wii",
+                "flag": "-mrvl -DGEKKO"
+            },
+            {
+                "label": "GameCube",
+                "flag": "-mogc -DGEKKO"
+            }
+        ],
+        "label": "Console"
+    }
+}

@@ -1,0 +1,81 @@
+{
+    "id": "intel-icpx",
+    "name": "Intel oneAPI DPC++/C++ (icpx)",
+    "inherits": "clang",
+    "order": 23,
+    "platforms": [
+        "linux"
+    ],
+    "description": "Intel's LLVM-based compiler, with SYCL and OpenMP offload.",
+    "match": {
+        "executables": [
+            "icpx"
+        ],
+        "version_regex": "Intel",
+        "target": ""
+    },
+    "extra_options": [
+        {
+            "tab": "Intel",
+            "groups": [
+                {
+                    "name": "Parallelism",
+                    "items": [
+                        {
+                            "id": "fsycl",
+                            "label": "SYCL (data parallel C++)",
+                            "flag": "-fsycl"
+                        },
+                        {
+                            "id": "qopenmp",
+                            "label": "OpenMP",
+                            "flag": "-qopenmp"
+                        },
+                        {
+                            "id": "qmkl",
+                            "label": "Link the oneMKL math library",
+                            "flag": "-qmkl"
+                        }
+                    ]
+                },
+                {
+                    "name": "Code generation",
+                    "items": [
+                        {
+                            "id": "xhost",
+                            "label": "Best instructions for this CPU",
+                            "flag": "-xHost"
+                        },
+                        {
+                            "id": "ipo",
+                            "label": "Interprocedural optimisation",
+                            "flag": "-ipo"
+                        },
+                        {
+                            "id": "fp_model",
+                            "default": 0,
+                            "choices": [
+                                {
+                                    "label": "Default floating point model",
+                                    "flag": ""
+                                },
+                                {
+                                    "label": "Precise",
+                                    "flag": "-fp-model=precise"
+                                },
+                                {
+                                    "label": "Fast",
+                                    "flag": "-fp-model=fast"
+                                },
+                                {
+                                    "label": "Strict",
+                                    "flag": "-fp-model=strict"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

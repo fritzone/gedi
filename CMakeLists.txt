@@ -79,6 +79,8 @@ set(GEDI_COMMON_SOURCES
     ReplaceDialog.cpp
     GoToLineDialog.cpp
     CompileOptionsDialog.cpp
+    CompilerDialog.cpp
+    CompilerDefs.cpp
     BuildOutputDialog.cpp
     HelpDialog.cpp
     NewProjectDialog.cpp
@@ -109,14 +111,18 @@ function(copy_data_files target)
     endforeach()
 endfunction()
 
-# Copies the build-system template files (templates/*.tmpl) next to a target so
-# regenerateBuildFile() can find them at runtime alongside the executable.
+# Copies the build-system template files (templates/*.tmpl) and the compiler
+# definitions (compilers/*.json) next to a target so the editor finds them at
+# runtime alongside the executable.
 function(copy_templates target)
     add_custom_command(TARGET ${target} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_SOURCE_DIR}/templates
             $<TARGET_FILE_DIR:${target}>/templates
-        COMMENT "Copying build-system templates to ${target} build directory")
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_SOURCE_DIR}/compilers
+            $<TARGET_FILE_DIR:${target}>/compilers
+        COMMENT "Copying build-system templates and compiler definitions to ${target} build directory")
 endfunction()
 
 # ===========================================================================
@@ -219,6 +225,15 @@ if(SDL2_FOUND)
     install(TARGETS gedi-gui DESTINATION bin)
     install(FILES graphics_engine/VGA9.F16 DESTINATION share/gedi)
     install(FILES icons/gedi_1.0-icon.png DESTINATION share/gedi/icons)
+    # Desktop integration on Linux: a menu entry whose StartupWMClass matches
+    # the window's class (SDL names it after the executable, "gedi-gui"), and
+    # its icon in the icon theme, so the launcher, the taskbar and pinned
+    # entries all show gedi's icon. The window sets the same icon on itself
+    # (graphics_engine/app_icon.h) for when gedi-gui runs without being installed.
+    if(UNIX AND NOT APPLE)
+        install(FILES gedi-gui.desktop DESTINATION share/applications)
+        install(FILES icons/gedi-gui.png DESTINATION share/icons/hicolor/256x256/apps)
+    endif()
 
     # Windows has no system libclang/SDL2 - drop the vendored DLLs next to the
     # freshly built executable so it runs without extra PATH setup.
@@ -251,6 +266,11 @@ install(
     DIRECTORY templates
     DESTINATION share/gedi
     FILES_MATCHING PATTERN "*.tmpl"
+)
+install(
+    DIRECTORY compilers
+    DESTINATION share/gedi
+    FILES_MATCHING PATTERN "*.json" PATTERN "*.md"
 )
 install(
     FILES cguess.py

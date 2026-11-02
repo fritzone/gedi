@@ -1,0 +1,31 @@
+{
+    "id": "clang-cross",
+    "name": "Clang cross compiler",
+    "inherits": "clang",
+    "order": 31,
+    "description": "A Clang set up for another platform (a *-clang++ wrapper, osxcross, ...): builds here, runs elsewhere.",
+    "match": {
+        "executables": [
+            "clang++",
+            "clang++-*",
+            "*-clang++",
+            "*-clang++-*"
+        ],
+        "target": "cross"
+    },
+    "command": {
+        "host_libraries": false
+    },
+    "capabilities": {
+        "runs_on_host": false,
+        "debuggable": false
+    },
+    "remove_options": [
+        "march_native",
+        "mtune_native",
+        "fsanitize_address_ub",
+        "fsanitize_leak",
+        "fsanitize_pointer_compare",
+        "fsanitize_pointer_subtract"
+    ]
+}

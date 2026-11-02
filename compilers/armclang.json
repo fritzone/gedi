@@ -1,0 +1,80 @@
+{
+    "id": "armclang",
+    "name": "Arm Compiler 6 (armclang, Keil MDK)",
+    "inherits": "clang-cross",
+    "order": 101,
+    "description": "Arm's Clang-based compiler for Cortex-M/R/A, as in Keil MDK.",
+    "match": {
+        "executables": [
+            "armclang"
+        ],
+        "version_regex": "",
+        "target": ""
+    },
+    "setup": "plain",
+    "command": {
+        "always": [
+            "--target=arm-arm-none-eabi"
+        ],
+        "exe_ext": ".axf"
+    },
+    "capabilities": {
+        "parse_headers": "host",
+        "meson": false
+    },
+    "top_option": {
+        "id": "cpu",
+        "default": 0,
+        "choices": [
+            {
+                "label": "default",
+                "flag": ""
+            },
+            {
+                "label": "Cortex-M0",
+                "flag": "-mcpu=cortex-m0"
+            },
+            {
+                "label": "Cortex-M0+",
+                "flag": "-mcpu=cortex-m0plus"
+            },
+            {
+                "label": "Cortex-M3",
+                "flag": "-mcpu=cortex-m3"
+            },
+            {
+                "label": "Cortex-M4",
+                "flag": "-mcpu=cortex-m4"
+            },
+            {
+                "label": "Cortex-M7",
+                "flag": "-mcpu=cortex-m7"
+            },
+            {
+                "label": "Cortex-M23",
+                "flag": "-mcpu=cortex-m23"
+            },
+            {
+                "label": "Cortex-M33",
+                "flag": "-mcpu=cortex-m33"
+            },
+            {
+                "label": "Cortex-M55",
+                "flag": "-mcpu=cortex-m55"
+            },
+            {
+                "label": "Cortex-R5",
+                "flag": "-mcpu=cortex-r5"
+            },
+            {
+                "label": "Cortex-A7",
+                "flag": "-mcpu=cortex-a7"
+            },
+            {
+                "label": "Cortex-A9",
+                "flag": "-mcpu=cortex-a9"
+            }
+        ],
+        "label": "Target CPU"
+    }
+}

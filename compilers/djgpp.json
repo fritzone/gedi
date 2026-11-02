@@ -1,0 +1,18 @@
+{
+    "id": "djgpp",
+    "name": "DJGPP (32-bit DOS)",
+    "inherits": "gcc-cross",
+    "order": 130,
+    "description": "GCC for 32-bit protected-mode DOS programs (needs a DPMI host such as CWSDPMI).",
+    "match": {
+        "executables": [
+            "i586-pc-msdosdjgpp-g++",
+            "i386-pc-msdosdjgpp-g++",
+            "i686-pc-msdosdjgpp-g++"
+        ],
+        "priority": 5
+    },
+    "command": {
+        "exe_ext": ".exe"
+    }
+}

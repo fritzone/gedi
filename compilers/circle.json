@@ -1,0 +1,23 @@
+{
+    "id": "circle",
+    "name": "Circle",
+    "inherits": "clang",
+    "order": 27,
+    "platforms": [
+        "linux"
+    ],
+    "description": "Sean Baxter's Circle C++ compiler, with its metaprogramming extensions.",
+    "match": {
+        "executables": [
+            "circle"
+        ],
+        "version_regex": "",
+        "target": ""
+    },
+    "setup": "plain",
+    "capabilities": {
+        "parse_headers": "host",
+        "cmake": false,
+        "meson": false
+    }
+}

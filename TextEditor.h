@@ -28,6 +28,7 @@
 #include "ReplaceDialog.h"
 #include "GoToLineDialog.h"
 #include "CompileOptionsDialog.h"
+#include "CompilerDialog.h"
 #include "BuildOutputDialog.h"
 #include "HelpDialog.h"
 #include "KeyBindings.h"
@@ -217,6 +218,7 @@ private:
     void HandleAltKey(wint_t key);
     // ESC handling that keeps Alt+<key> (sent as ESC, <key>) working everywhere
     wint_t readAltFollower();   // key following an ESC within 50 ms, or ERR
+    wint_t readEscSequence(wint_t intro);   // rest of an ESC [ / ESC O sequence, decoded
     bool   handleEscOrAlt();    // panels: runs Alt+<key> and returns true; lone ESC → false
     void   requeueAltKey();     // popups: pushes Alt+<key> back for the main loop
     void handleSmartBlockClose(wint_t closing_char);
@@ -278,6 +280,7 @@ private:
     void OpenFileBrowser();
     void SaveFileBrowser();
     void EditorSettingsDialog();
+    void ChooseCompilerDialog();
     void NextWindow();
     void PreviousWindow();
     void CloseWindow();

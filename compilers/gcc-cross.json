@@ -1,0 +1,25 @@
+{
+    "id": "gcc-cross",
+    "name": "GCC cross compiler",
+    "inherits": "gcc",
+    "order": 30,
+    "description": "A GCC that builds for another platform (aarch64-linux-gnu-g++, m68k-elf-g++, ...): its programs are built here but run elsewhere.",
+    "match": {
+        "target": "cross"
+    },
+    "command": {
+        "host_libraries": false
+    },
+    "capabilities": {
+        "runs_on_host": false,
+        "debuggable": false
+    },
+    "remove_options": [
+        "march_native",
+        "mtune_native",
+        "fsanitize_address_ub",
+        "fsanitize_leak",
+        "fsanitize_pointer_compare",
+        "fsanitize_pointer_subtract"
+    ]
+}

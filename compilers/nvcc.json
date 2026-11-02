@@ -1,0 +1,193 @@
+{
+    "id": "nvcc",
+    "name": "NVIDIA CUDA (nvcc)",
+    "order": 60,
+    "description": "The CUDA compiler driver; the host code goes to the system C++ compiler.",
+    "setup": "plain",
+    "match": {
+        "executables": [
+            "nvcc"
+        ],
+        "version_regex": "Cuda compilation tools|NVIDIA"
+    },
+    "command": {
+        "standard_flag": "-std={std}",
+        "standards": [
+            "c++11",
+            "c++14",
+            "c++17",
+            "c++20"
+        ]
+    },
+    "diagnostics": {
+        "regex": "^(.+?)\\((\\d+)\\): (error|warning)[^:]*: (.*)",
+        "file": 1,
+        "line": 2,
+        "column": 0,
+        "severity": 3,
+        "message": 4
+    },
+    "capabilities": {
+        "parse_headers": "host",
+        "cmake": false,
+        "meson": false
+    },
+    "options": [
+        {
+            "tab": "Basic",
+            "groups": [
+                {
+                    "name": "Debugging",
+                    "items": [
+                        {
+                            "id": "debug_symbols",
+                            "label": "Host debug information",
+                            "flag": "-g",
+                            "default": true,
+                            "role": "debug"
+                        },
+                        {
+                            "id": "device_debug",
+                            "label": "Device debug information",
+                            "flag": "-G"
+                        },
+                        {
+                            "id": "lineinfo",
+                            "label": "Line numbers for device code",
+                            "flag": "-lineinfo"
+                        }
+                    ]
+                },
+                {
+                    "name": "Optimization",
+                    "items": [
+                        {
+                            "id": "optimization",
+                            "default": 0,
+                            "choices": [
+                                {
+                                    "label": "Disable optimisation",
+                                    "flag": "-O0"
+                                },
+                                {
+                                    "label": "-O1",
+                                    "flag": "-O1"
+                                },
+                                {
+                                    "label": "-O2",
+                                    "flag": "-O2"
+                                },
+                                {
+                                    "label": "-O3",
+                                    "flag": "-O3"
+                                }
+                            ],
+                            "role": "optimization"
+                        }
+                    ]
+                },
+                {
+                    "name": "Warnings",
+                    "items": [
+                        {
+                            "id": "host_wall",
+                            "label": "Common warnings in host code",
+                            "flag": "-Xcompiler -Wall"
+                        },
+                        {
+                            "id": "werror",
+                            "label": "Treat all warnings as errors",
+                            "flag": "-Werror all-warnings"
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "tab": "CUDA",
+            "groups": [
+                {
+                    "name": "GPU architecture",
+                    "items": [
+                        {
+                            "id": "arch",
+                            "default": 0,
+                            "choices": [
+                                {
+                                    "label": "Default",
+                                    "flag": ""
+                                },
+                                {
+                                    "label": "The GPU in this computer",
+                                    "flag": "-arch=native"
+                                },
+                                {
+                                    "label": "Maxwell (sm_52)",
+                                    "flag": "-arch=sm_52"
+                                },
+                                {
+                                    "label": "Pascal (sm_61)",
+                                    "flag": "-arch=sm_61"
+                                },
+                                {
+                                    "label": "Volta (sm_70)",
+                                    "flag": "-arch=sm_70"
+                                },
+                                {
+                                    "label": "Turing (sm_75)",
+                                    "flag": "-arch=sm_75"
+                                },
+                                {
+                                    "label": "Ampere (sm_80)",
+                                    "flag": "-arch=sm_80"
+                                },
+                                {
+                                    "label": "Ampere (sm_86)",
+                                    "flag": "-arch=sm_86"
+                                },
+                                {
+                                    "label": "Ada (sm_89)",
+                                    "flag": "-arch=sm_89"
+                                },
+                                {
+                                    "label": "Hopper (sm_90)",
+                                    "flag": "-arch=sm_90"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "name": "Language",
+                    "items": [
+                        {
+                            "id": "cuda_source",
+                            "label": "Compile .cpp files as CUDA",
+                            "flag": "-x cu"
+                        },
+                        {
+                            "id": "relaxed_constexpr",
+                            "label": "Relaxed constexpr",
+                            "flag": "--expt-relaxed-constexpr"
+                        },
+                        {
+                            "id": "extended_lambda",
+                            "label": "Extended device lambdas",
+                            "flag": "--extended-lambda"
+                        },
+                        {
+                            "id": "rdc",
+                            "label": "Relocatable device code",
+                            "flag": "-rdc=true"
+                        },
+                        {
+                            "id": "fast_math",
+                            "label": "Fast math",
+                            "flag": "--use_fast_math"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

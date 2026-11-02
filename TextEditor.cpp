@@ -302,6 +302,9 @@ void TextEditor::run(int argc, char* argv[]) {
     m_keyBindings = std::make_unique<KeyBindings>();
     m_keyBindings->loadFromConfig(m_config.keybindings);
 
+    // Compiler definitions (compilers/*.json and the user's own) before
+    // anything asks which compiler is configured.
+    compilers::Registry::instance().load(m_exe_dir);
     m_buildSystem = std::make_unique<BuildSystem>(m_config, m_exe_dir);
     m_completion  = std::make_unique<CompletionEngine>();
     m_helpProvider = std::make_unique<HelpProvider>();
@@ -1324,7 +1327,10 @@ void TextEditor::updateMenuLabels() {
         formatMenuItem("&Close Window", EditorAction::ACT_CLOSE_BUFFER)
     };
 
-    m_submenu_options = { formatMenuItem("Editor &Settings...", EditorAction::ACT_SETTINGS) };
+    m_submenu_options = {
+        formatMenuItem("Editor &Settings...",   EditorAction::ACT_SETTINGS),
+        formatMenuItem("&Compiler Options...",  EditorAction::ACT_COMPILER)
+    };
 
     m_submenu_help = {
         formatMenuItem("&View Help...", EditorAction::ACT_HELP),
@@ -1936,6 +1942,93 @@ wint_t TextEditor::readAltFollower() {
     return next;
 }
 
+// Modified function keys reach the editor in two more shapes than ESC + <key>:
+//
+//  - As one key code. ncurses numbers them F13..F63 by the xterm convention
+//    (Shift+Fn = F(n+12), Ctrl = F(n+24), Ctrl+Shift = F(n+36), Alt = F(n+48)),
+//    so Alt+F9 arrives as KEY_F(57). gedi binds Alt+Fn as KEY_ALT(KEY_F(n)) -
+//    the form the ESC + <key> path and the SDL build produce - so map it there.
+static wint_t normalizeFunctionKey(wint_t ch)
+{
+    if (ch >= (wint_t)KEY_F(49) && ch <= (wint_t)KEY_F(60))
+        return KEY_ALT(KEY_F(ch - KEY_F(48)));
+    return ch;
+}
+
+//  - As the raw escape sequence, when the terminal description does not list
+//    it (e.g. TERM=screen under tmux): ESC [ 2 0 ; 3 ~ for Alt+F9. The ESC has
+//    been read and `intro` is the '[' or 'O' after it; read the rest and decode
+//    it. Returns the key, 0 for a complete sequence gedi has no use for (so it
+//    is dropped instead of being typed into the file), or ERR when nothing
+//    followed `intro` - a real Alt+[ or Alt+O.
+wint_t TextEditor::readEscSequence(wint_t intro)
+{
+    std::string params;
+    wint_t final_ch = ERR;
+    for (int i = 0; i < 16; ++i) {
+        const wint_t c = readAltFollower();
+        if (c == (wint_t)ERR) break;
+        if ((c >= '0' && c <= '9') || c == ';') { params += (char)c; continue; }
+        final_ch = c;
+        break;
+    }
+    if (final_ch == (wint_t)ERR) {
+        // Nothing followed, or the sequence broke off: give the digits back.
+        if (params.empty()) return ERR;
+        return 0;
+    }
+
+    // "n;m": key number and xterm modifier (1 + Shift:1 + Alt:2 + Ctrl:4).
+    int n = 0, mod = 1;
+    {
+        const size_t semi = params.find(';');
+        try {
+            if (!params.empty() && semi != 0) n = std::stoi(params.substr(0, semi));
+            if (semi != std::string::npos)    mod = std::stoi(params.substr(semi + 1));
+        } catch (...) { return 0; }
+    }
+    const bool shift = (mod - 1) & 1, alt = (mod - 1) & 2, ctrl = (mod - 1) & 4;
+
+    // Function keys: ESC [ n ~ (F5..F12, and F1..F4 on some terminals), or
+    // ESC O P..S / ESC [ 1 ; m P..S (F1..F4).
+    int fkey = 0;
+    if (final_ch == '~') {
+        switch (n) {
+            case 11: fkey = 1;  break;  case 12: fkey = 2;  break;
+            case 13: fkey = 3;  break;  case 14: fkey = 4;  break;
+            case 15: fkey = 5;  break;  case 17: fkey = 6;  break;
+            case 18: fkey = 7;  break;  case 19: fkey = 8;  break;
+            case 20: fkey = 9;  break;  case 21: fkey = 10; break;
+            case 23: fkey = 11; break;  case 24: fkey = 12; break;
+            case 1:  return KEY_HOME;   case 4:  return KEY_END;
+            case 2:  return shift ? KEY_SIC : KEY_IC;
+            case 3:  return shift ? KEY_SDC : KEY_DC;
+            case 5:  return shift ? KEY_SPREVIOUS : KEY_PPAGE;
+            case 6:  return shift ? KEY_SNEXT     : KEY_NPAGE;
+            default: return 0;
+        }
+    } else if (final_ch >= 'P' && final_ch <= 'S') {
+        fkey = 1 + (int)(final_ch - 'P');
+    }
+    if (fkey) {
+        if (alt && !ctrl) return KEY_ALT(KEY_F(fkey + (shift ? 12 : 0)));
+        if (alt)          return 0;                               // Ctrl+Alt+Fn: unbound
+        return KEY_F(fkey + (shift ? 12 : 0) + (ctrl ? 24 : 0));
+    }
+
+    // Cursor keys with modifiers: ESC [ 1 ; m A..D, H, F.
+    (void)intro;
+    switch (final_ch) {
+        case 'A': return ctrl ? (shift ? KEY_SHIFT_CTRL_UP    : KEY_CTRL_UP)    : shift ? KEY_SR     : KEY_UP;
+        case 'B': return ctrl ? (shift ? KEY_SHIFT_CTRL_DOWN  : KEY_CTRL_DOWN)  : shift ? KEY_SF     : KEY_DOWN;
+        case 'C': return ctrl ? (shift ? KEY_SHIFT_CTRL_RIGHT : KEY_CTRL_RIGHT) : shift ? KEY_SRIGHT : KEY_RIGHT;
+        case 'D': return ctrl ? (shift ? KEY_SHIFT_CTRL_LEFT  : KEY_CTRL_LEFT)  : shift ? KEY_SLEFT  : KEY_LEFT;
+        case 'H': return shift ? KEY_SHOME : KEY_HOME;
+        case 'F': return shift ? KEY_SEND  : KEY_END;
+        default:  return 0;
+    }
+}
+
 // A popup with its own key loop got ESC and is closing: if it was Alt+<key>,
 // push the pair back so the editor's main loop handles it once the popup is gone.
 void TextEditor::requeueAltKey() {
@@ -1957,6 +2050,14 @@ bool TextEditor::handleEscOrAlt() {
 }
 
 void TextEditor::HandleAltKey(wint_t key) {
+    // ESC [ / ESC O followed by more: an escape sequence ncurses did not
+    // decode itself (see readEscSequence), not Alt+[ / Alt+O.
+    if (key == '[' || key == 'O') {
+        const wint_t decoded = readEscSequence(key);
+        if (decoded == 0) return;                       // known shape, nothing bound
+        if (decoded != (wint_t)ERR) { process_key(decoded); return; }
+    }
+
     wint_t lookup_key = key;
     if (key >= 'a' && key <= 'z') lookup_key = toupper(key);
     
@@ -3391,6 +3492,8 @@ void TextEditor::handleSmartBlockClose(wint_t closing_char) {
 
 
 void TextEditor::process_key(wint_t ch) {
+    ch = normalizeFunctionKey(ch);
+
     // When no buffer is open, only global (buffer-independent) actions fire.
     if (currentBufferIdx() == -1) {
         switch (m_keyBindings->getAction(ch)) {
@@ -3402,6 +3505,11 @@ void TextEditor::process_key(wint_t ch) {
             case EditorAction::ACT_TOGGLE_PROJECT_PANEL: ToggleProjectPanel(); return;
             case EditorAction::ACT_CLOSE_PROJECT:        CloseProject();       return;
             case EditorAction::ACT_SETTINGS:     EditorSettingsDialog(); return;
+            case EditorAction::ACT_COMPILER:     ChooseCompilerDialog(); return;
+            // A project builds without any of its files open.
+            case EditorAction::ACT_COMPILE:
+                if (!m_project.name.empty()) compileOnly();
+                return;
             case EditorAction::ACT_HELP:         showHelpDialog();     return;
             case EditorAction::ACT_ABOUT:        AboutBox();           return;
             default: break;
@@ -3452,6 +3560,7 @@ void TextEditor::process_key(wint_t ch) {
                 case EditorAction::ACT_PREV_BUFFER: PreviousWindow(); return;
                 case EditorAction::ACT_CLOSE_BUFFER: CloseWindow(); return;
                 case EditorAction::ACT_SETTINGS: EditorSettingsDialog(); return;
+                case EditorAction::ACT_COMPILER: ChooseCompilerDialog(); return;
                 case EditorAction::ACT_HELP: showHelpDialog(); return;
                 case EditorAction::ACT_ABOUT: AboutBox(); return;
                 case EditorAction::ACT_TOGGLE_COMMENT: if (currentBuffer().read_only) { msgwin("Buffer is Read-Only."); return; } handleToggleComment(); return;
@@ -3837,6 +3946,7 @@ void TextEditor::CreateNewProject()
         m_project.name         = temp.name;
         m_project.root         = root.string();
         m_project.build_system = bs_key;
+        m_project.watcom_platform = temp.watcom_platform;
         m_project.cpp_standard = temp.cpp_standard;
         m_project.compiler_settings.cpp_standard = temp.cpp_standard;
         if (temp.create_main) {
@@ -3863,6 +3973,8 @@ void TextEditor::CreateNewProject()
             std::ofstream gi(root / ".gitignore");
             if (watcom) {
                 gi << "*.obj\n*.exe\n*.lib\n*.map\n*.err\n";
+                if (!*m_project.watcomPlatform().exe_ext)       // Linux: no extension
+                    gi << temp.name << "\n";
             } else if (temp.build_system == 0) {
                 gi << "build/\n.cache/\nCMakeFiles/\nCMakeCache.txt\n"
                       "cmake_install.cmake\ncompile_commands.json\n*.cmake\n";
@@ -4028,8 +4140,8 @@ std::string TextEditor::unavailableReason(EditorAction action) const
             return "Compiler options for this project are set in its makefile (" +
                    m_project.build_file + "), which gedi builds with unchanged.";
         if (watcom)
-            return "These are GCC/Clang options. Open Watcom's compiler options are set "
-                   "in the project's makefile (CXXFLAGS, SYSTEM, MODEL).";
+            return "Open Watcom projects take their compiler options from their makefile "
+                   "(CXXFLAGS, SYSTEM, MODEL), which gedi generates from the project's platform.";
         break;
     case EditorAction::ACT_PROJECT_PROPERTIES:
         // gedi-generated Watcom projects keep Properties (targets, build system);
@@ -4047,13 +4159,32 @@ std::string TextEditor::unavailableReason(EditorAction action) const
     case EditorAction::ACT_DEBUG_TOGGLE_BREAKPOINT:
     case EditorAction::ACT_DEBUG_ADD_WATCH:
     case EditorAction::ACT_DEBUG_FOCUS_PANEL:
-        if (watcom) {
+        if (watcom && !m_project.watcomRunsOnHost()) {
             std::string compile_key = m_keyBindings->getLabel(EditorAction::ACT_COMPILE);
-            return "Running and debugging aren't available for Open Watcom projects: "
-                   "gedi's debugger (gdb) can't run or debug Watcom-built programs "
-                   "such as DOS executables.\n\n"
+            const std::string what = m_project.hasExternalBuildFile()
+                ? std::string("this imported Open Watcom makefile builds for a platform gedi can't tell")
+                : std::string("this project builds ") + m_project.watcomPlatform().label + " programs";
+            return "Running and debugging aren't available here: " + what +
+                   ", which gedi's debugger (gdb) can't run on this computer.\n\n"
                    "Use Build > Compile" + (compile_key.empty() ? "" : " (" + compile_key + ")") +
-                   " to build with wmake.";
+                   " to build with wmake" +
+                   (m_project.hasExternalBuildFile() ? std::string(".")
+                    : std::string(", or switch the platform to ") +
+                      kWatcomPlatforms[watcomPlatformIndex(kWatcomHostPlatform)].label +
+                      " in Project > Properties.");
+        }
+        if (!watcom && m_buildSystem) {
+            // What the configured compiler's definition says its programs can do.
+            const compilers::Definition& def = m_buildSystem->definition();
+            std::string compile_key = m_keyBindings->getLabel(EditorAction::ACT_COMPILE);
+            const std::string compile_hint = "Use Build > Compile" +
+                (compile_key.empty() ? "" : " (" + compile_key + ")") + " to build them.";
+            if (!def.runs_on_host)
+                return "Programs built by " + def.name + " run on another machine, so gedi "
+                       "can't run or debug them here.\n\n" + compile_hint;
+            if (!def.debuggable && action != EditorAction::ACT_RUN)
+                return "gedi's debugger can't debug programs built by " + def.name +
+                       ". Build > Run runs them without it.";
         }
         break;
     default:
@@ -4089,10 +4220,12 @@ void TextEditor::applyProjectCodeModel(EditorBuffer& buffer)
     if (!belongs) return;
 
     buffer.compiler_settings.cpp_standard = m_project.compiler_settings.cpp_standard;
-    if (!flags.empty() && buffer.compiler_settings.optional_flags.find(flags) == std::string::npos) {
-        std::string& of = buffer.compiler_settings.optional_flags;
+    // Into the configured compiler's optional flags, where getClangArguments
+    // picks up include directories and macros.
+    std::string& of =
+        buffer.compiler_settings.compilers[m_buildSystem->definition().settings_id].optional_flags;
+    if (!flags.empty() && of.find(flags) == std::string::npos)
         of += (of.empty() ? "" : " ") + flags;
-    }
 }
 
 
@@ -4633,7 +4766,9 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
                 }
                 break;
             case 8: // Options
-                EditorSettingsDialog(); break;
+                if (selection == 1) EditorSettingsDialog();
+                else if (selection == 2) ChooseCompilerDialog();
+                break;
             case 9: // Help
                 if (selection == 1) showHelpDialog();
                 else if (selection == 2) AboutBox();
@@ -4920,6 +5055,10 @@ void TextEditor::PerformSearch(bool next) {
 void TextEditor::EditorSettingsDialog() {
     SettingsDialog::show(*m_renderer, m_config, *m_configManager,
         [this]() { drawEditorState(); });
+}
+
+void TextEditor::ChooseCompilerDialog() {
+    CompilerDialog::show(*m_renderer, *m_buildSystem, m_config);
 }
 
 // Build command generation is now handled by BuildSystem
@@ -5953,14 +6092,14 @@ void TextEditor::CompileOptionsDialog() {
     if (refuseForProject(EditorAction::ACT_COMPILE_OPTIONS)) return;
     if (!m_project.name.empty()) {
         // Project mode: settings belong to the project, preview shows cmake/make/meson command
-        CompileOptionsDialog::show(*m_renderer, *m_buildSystem, m_config,
+        CompileOptionsDialog::show(*m_renderer, *m_buildSystem,
                                    m_project.compiler_settings, &m_project, "");
         m_project.cpp_standard = m_project.compiler_settings.cpp_standard;  // keep legacy field in sync
         m_project.save();
     } else {
         if (currentBufferIdx() == -1) return;
         // Per-file mode: settings belong to the current buffer
-        CompileOptionsDialog::show(*m_renderer, *m_buildSystem, m_config,
+        CompileOptionsDialog::show(*m_renderer, *m_buildSystem,
                                    currentBuffer().compiler_settings, nullptr,
                                    currentBuffer().filename);
     }
@@ -6459,7 +6598,7 @@ void TextEditor::regenerateBuildFile()
             for (const auto& other : m_project.targets)
                 if (other.name == lt && other.isStaticLibrary())
                     wat_libs.push_back(other.name + ".lib");
-        const std::string wat_file = tgt.name + (tgt.isExecutable() ? ".exe"
+        const std::string wat_file = tgt.name + (tgt.isExecutable() ? m_project.watcomPlatform().exe_ext
                                                : tgt.isStaticLibrary() ? ".lib" : ".dll");
 
         targets.push_back({
@@ -6507,7 +6646,29 @@ void TextEditor::regenerateBuildFile()
             }
         std::string includes;
         for (const auto& d : dirs) includes += " -i=" + d;
-        data["watcom"] = {{"includes", includes}};
+
+        // The platform's own headers, named here rather than left to the
+        // INCLUDE variable: that holds one platform's headers (the host's),
+        // and a DOS build picking up Linux's sys/types.h does not compile.
+        const WatcomPlatform& plat = m_project.watcomPlatform();
+        std::istringstream hdrs(plat.includes);
+        for (std::string h; hdrs >> h; ) includes += " -i=$(%WATCOM)/" + h;
+
+        const std::string extra = *plat.extra_flags ? std::string(" ") + plat.extra_flags : "";
+        data["watcom"] = {
+            {"includes",    includes},
+            {"platform",    plat.label},
+            {"system",      plat.system},
+            {"dll_system",  *plat.dll_system ? plat.dll_system : "$(SYSTEM)  # no DLLs on this platform"},
+            {"model",       plat.model},
+            {"cc",          plat.cc},
+            {"cxx",         plat.cxx},
+            {"target",      plat.target},
+            {"extra_flags", extra},
+            // DWARF where gdb is to debug the result, Watcom's format elsewhere
+            {"debug",       plat.dwarf ? "-d2 -hd" : "-d2"},
+            {"link_debug",  plat.dwarf ? "debug dwarf all" : "debug all"},
+        };
     }
 
     // ── Pick the template, render, and write the build file ──────────────────
@@ -6525,7 +6686,17 @@ void TextEditor::regenerateBuildFile()
     std::string rendered = tmpl::renderFile(tmpl_path, data, ok);
     if (!ok) return;
 
-    std::ofstream f(m_project.root + "/" + m_project.buildFile());
+    // Leave an unchanged file alone: its timestamp is what make tools rebuild
+    // by, and the Watcom makefile's objects depend on it.
+    const std::string out_path = m_project.root + "/" + m_project.buildFile();
+    {
+        std::ifstream in(out_path, std::ios::binary);
+        if (in) {
+            std::string current((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            if (current == rendered) return;
+        }
+    }
+    std::ofstream f(out_path);
     if (!f) return;
     f << rendered;
 }

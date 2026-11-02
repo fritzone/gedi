@@ -1,0 +1,56 @@
+{
+    "id": "aarch64-elf-gcc",
+    "name": "AArch64 bare-metal GCC",
+    "inherits": "gcc-cross",
+    "order": 110,
+    "description": "GCC for 64-bit Arm without an OS (aarch64-none-elf).",
+    "match": {
+        "executables": [
+            "aarch64-none-elf-g++",
+            "aarch64-elf-g++"
+        ],
+        "priority": 5
+    },
+    "command": {
+        "exe_ext": ".elf"
+    },
+    "extra_options": [
+        {
+            "tab": "Target",
+            "groups": [
+                {
+                    "name": "Runtime",
+                    "items": [
+                        {
+                            "id": "runtime",
+                            "default": 1,
+                            "choices": [
+                                {
+                                    "label": "Default C library start-up",
+                                    "flag": ""
+                                },
+                                {
+                                    "label": "No OS: newlib with stub system calls",
+                                    "flag": "--specs=nosys.specs"
+                                },
+                                {
+                                    "label": "Smaller: newlib-nano with stub system calls",
+                                    "flag": "--specs=nano.specs --specs=nosys.specs"
+                                },
+                                {
+                                    "label": "Semihosting: I/O through the debugger",
+                                    "flag": "--specs=rdimon.specs"
+                                }
+                            ]
+                        },
+                        {
+                            "id": "gc_sections",
+                            "label": "Remove unused functions and data",
+                            "flag": "-ffunction-sections -fdata-sections -Wl,--gc-sections"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

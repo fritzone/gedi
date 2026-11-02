@@ -1,0 +1,45 @@
+{
+    "id": "aocc",
+    "name": "AMD Optimizing C/C++ (AOCC)",
+    "inherits": "clang",
+    "order": 22,
+    "platforms": [
+        "linux"
+    ],
+    "description": "AMD's Clang-based compiler, tuned for Zen processors.",
+    "match": {
+        "executables": [
+            "clang++"
+        ],
+        "version_regex": "AOCC",
+        "target": "host",
+        "priority": 10
+    },
+    "top_option": {
+        "id": "znver",
+        "default": 0,
+        "choices": [
+            {
+                "label": "default",
+                "flag": ""
+            },
+            {
+                "label": "Zen (znver1)",
+                "flag": "-march=znver1"
+            },
+            {
+                "label": "Zen 2 (znver2)",
+                "flag": "-march=znver2"
+            },
+            {
+                "label": "Zen 3 (znver3)",
+                "flag": "-march=znver3"
+            },
+            {
+                "label": "Zen 4 (znver4)",
+                "flag": "-march=znver4"
+            }
+        ],
+        "label": "Zen generation"
+    }
+}

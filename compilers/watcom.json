@@ -1,0 +1,89 @@
+{
+    "id": "watcom",
+    "name": "Open Watcom",
+    "description": "Open Watcom C/C++, built with owcc, its gcc-style driver.",
+    "order": 50,
+    "setup": "watcom",
+    "match": {
+        "executables": ["owcc", "wcl386", "wpp386"],
+        "version_regex": "Open Watcom"
+    },
+
+    "command": {
+        "always": ["-fmessage-full-path"],
+        "output": "-o {out}",
+        "standard_flag": "",
+        "host_libraries": false,
+        "scratch_dir": true,
+        "keep_outputs": [".map"]
+    },
+    "diagnostics": "watcom",
+    "capabilities": {
+        "parse_headers": "host",
+        "meson": false,
+        "cmake": { "generator": "Watcom WMake", "compiler": "wcl386",
+                   "build_dir": "build-watcom", "optional_flags": false }
+    },
+
+    "top_option": { "id": "cpu", "label": "Target CPU", "default": 0, "choices": [
+        { "label": "default",     "flag": "" },
+        { "label": "386",         "flag": "-mtune=i386", "cmake_flag": "-3r" },
+        { "label": "486",         "flag": "-mtune=i486", "cmake_flag": "-4r" },
+        { "label": "Pentium",     "flag": "-mtune=i586", "cmake_flag": "-5r" },
+        { "label": "Pentium Pro", "flag": "-mtune=i686", "cmake_flag": "-6r" } ] },
+
+    "options": [
+        { "tab": "Basic", "groups": [
+            { "name": "Debugging", "items": [
+                { "id": "debug_symbols", "label": "Generate debug information", "flag": "-g2", "cmake_flag": "-d2", "default": true, "role": "debug" },
+                { "id": "debug_format", "default": 0, "choices": [
+                    { "label": "DWARF format, read by gdb",  "flag": "-gdwarf",    "cmake_flag": "-hd" },
+                    { "label": "Watcom format, read by wd",  "flag": "-gwatcom",   "cmake_flag": "-hw" },
+                    { "label": "CodeView format",            "flag": "-gcodeview", "cmake_flag": "-hc" } ] }
+            ] },
+            { "name": "Optimization", "items": [
+                { "id": "optimization", "role": "optimization", "default": 0, "choices": [
+                    { "label": "Disable optimisation", "flag": "-O0", "cmake_flag": "-od" },
+                    { "label": "Optimise for size",    "flag": "-Os", "cmake_flag": "-os" },
+                    { "label": "Optimise for speed",   "flag": "-Ot", "cmake_flag": "-ot" },
+                    { "label": "Maximum optimisation", "flag": "-O3", "cmake_flag": "-onatxl+" } ] }
+            ] },
+            { "name": "Linker", "items": [
+                { "id": "map_file", "label": "Generate a linker map file", "flag": "-fm", "cmake_flag": "" }
+            ] }
+        ] },
+        { "tab": "Language", "groups": [
+            { "name": "Warnings", "items": [
+                { "id": "warning_level", "default": 4, "choices": [
+                    { "label": "No warnings",                 "flag": "-Wlevel=0", "cmake_flag": "-w0" },
+                    { "label": "Warning level 1",             "flag": "-Wlevel=1", "cmake_flag": "-w1" },
+                    { "label": "Warning level 2",             "flag": "-Wlevel=2", "cmake_flag": "-w2" },
+                    { "label": "Warning level 3",             "flag": "-Wlevel=3", "cmake_flag": "-w3" },
+                    { "label": "All common warnings, level 4", "flag": "-Wall",    "cmake_flag": "-w4" } ] },
+                { "id": "wextra", "label": "Enable maximal warnings",  "flag": "-Wextra", "cmake_flag": "-wx", "default": true },
+                { "id": "werror", "label": "Treat warnings as errors", "flag": "-Werror", "cmake_flag": "-we" }
+            ] },
+            { "name": "C++", "items": [
+                { "id": "exceptions",  "label": "Enable exceptions",               "flag": "-feh",          "cmake_flag": "-xs", "default": true },
+                { "id": "rtti",        "label": "Enable RTTI, typeid/dynamic_cast", "flag": "-Wc,-xr",       "cmake_flag": "-xr" },
+                { "id": "strict_iso",  "label": "Strict ISO C++, no extensions",   "flag": "-Wc,-za",       "cmake_flag": "-za" },
+                { "id": "cpp0x",       "label": "Enable C++0x features",           "flag": "-Wc,-za0x",     "cmake_flag": "-za0x" },
+                { "id": "signed_char", "label": "Signed char by default",          "flag": "-fsigned-char", "cmake_flag": "-j" }
+            ] }
+        ] },
+        { "tab": "Code Gen", "groups": [
+            { "name": "Code generation", "items": [
+                { "id": "soft_float",     "label": "Software floating point",      "flag": "-msoft-float",            "cmake_flag": "-fpc" },
+                { "id": "frame_pointer",  "label": "Keep frame pointer",           "flag": "-fno-omit-frame-pointer", "cmake_flag": "-of" },
+                { "id": "no_stack_check", "label": "Remove stack overflow checks", "flag": "-fno-stack-check",        "cmake_flag": "-s" }
+            ] },
+            { "name": "Optimizer", "items": [
+                { "id": "inline_functions",  "label": "Inline functions",     "flag": "-finline-functions",   "cmake_flag": "-oe" },
+                { "id": "inline_intrinsics", "label": "Inline intrinsics",    "flag": "-finline-intrinsics",  "cmake_flag": "-oi" },
+                { "id": "loop_optimize",     "label": "Loop optimisations",   "flag": "-floop-optimize",      "cmake_flag": "-ol" },
+                { "id": "unroll_loops",      "label": "Unroll loops",         "flag": "-funroll-loops",       "cmake_flag": "-ol+" },
+                { "id": "relax_aliasing",    "label": "Relax alias checking", "flag": "-fno-strict-aliasing", "cmake_flag": "-oa" }
+            ] }
+        ] }
+    ]
+}

@@ -1,0 +1,99 @@
+{
+    "id": "avr-gcc",
+    "name": "AVR GCC (avr-g++, Arduino)",
+    "inherits": "gcc-cross",
+    "order": 106,
+    "description": "GCC for 8-bit AVR microcontrollers (Arduino Uno, Mega, ATtiny...). No C++ standard library.",
+    "match": {
+        "executables": [
+            "avr-g++"
+        ],
+        "priority": 5
+    },
+    "command": {
+        "exe_ext": ".elf"
+    },
+    "top_option": {
+        "id": "mmcu",
+        "default": 0,
+        "choices": [
+            {
+                "label": "ATmega328P (Uno, Nano)",
+                "flag": "-mmcu=atmega328p"
+            },
+            {
+                "label": "ATmega2560 (Mega)",
+                "flag": "-mmcu=atmega2560"
+            },
+            {
+                "label": "ATmega32U4 (Leonardo)",
+                "flag": "-mmcu=atmega32u4"
+            },
+            {
+                "label": "ATmega1284P",
+                "flag": "-mmcu=atmega1284p"
+            },
+            {
+                "label": "ATmega4809 (Nano Every)",
+                "flag": "-mmcu=atmega4809"
+            },
+            {
+                "label": "ATtiny85",
+                "flag": "-mmcu=attiny85"
+            },
+            {
+                "label": "ATtiny13A",
+                "flag": "-mmcu=attiny13a"
+            }
+        ],
+        "label": "Microcontroller"
+    },
+    "extra_options": [
+        {
+            "tab": "Target",
+            "groups": [
+                {
+                    "name": "Clock",
+                    "items": [
+                        {
+                            "id": "f_cpu",
+                            "default": 3,
+                            "choices": [
+                                {
+                                    "label": "F_CPU not defined",
+                                    "flag": ""
+                                },
+                                {
+                                    "label": "1 MHz",
+                                    "flag": "-DF_CPU=1000000UL"
+                                },
+                                {
+                                    "label": "8 MHz",
+                                    "flag": "-DF_CPU=8000000UL"
+                                },
+                                {
+                                    "label": "16 MHz",
+                                    "flag": "-DF_CPU=16000000UL"
+                                },
+                                {
+                                    "label": "20 MHz",
+                                    "flag": "-DF_CPU=20000000UL"
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "name": "Runtime",
+                    "items": [
+                        {
+                            "id": "gc_sections",
+                            "label": "Remove unused functions and data",
+                            "flag": "-ffunction-sections -fdata-sections -Wl,--gc-sections"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

@@ -53,6 +53,7 @@ enum class EditorAction {
 
     //  Options menu 
     ACT_SETTINGS,          // Options > Editor Settings...  - opens the settings dialog
+    ACT_COMPILER,          // Options > Compiler Options... - chooses and identifies the compiler
 
     //  Help menu 
     ACT_HELP,              // Help > View Help / F1         - opens the help viewer
@@ -117,6 +118,7 @@ class KeyBindings {
         ActionMapping{EditorAction::ACT_PREV_BUFFER,        "prev_buffer"},
         ActionMapping{EditorAction::ACT_CLOSE_BUFFER,       "close_buffer"},
         ActionMapping{EditorAction::ACT_SETTINGS,           "settings"},
+        ActionMapping{EditorAction::ACT_COMPILER,           "compiler"},
         ActionMapping{EditorAction::ACT_HELP,               "help"},
         ActionMapping{EditorAction::ACT_ABOUT,              "about"},
         ActionMapping{EditorAction::ACT_TOGGLE_COMMENT,     "toggle_comment"},

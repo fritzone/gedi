@@ -3,16 +3,16 @@
 #include <string>
 #include <vector>
 
-// Finding and recording a C++ toolchain: Visual Studio, a system Clang, MinGW
-// or Open Watcom.
+// Finding and recording a C++ toolchain: Clang, GCC or Open Watcom anywhere,
+// and Visual Studio on Windows.
 //
 // Shared by setup and the editor. Setup uses it when the user declines the
 // bundled Clang, so a machine that already has one of these can skip the
 // toolchain component and still build; the editor uses it from Build Options,
 // so the compiler can be identified and changed without reinstalling.
 //
-// gedi learns which compiler to run from one file - %USERPROFILE%\.config\gedi\
-// toolchain.json - which is what write() below produces.
+// gedi learns which compiler to run from one file - ~/.config/gedi/toolchain.json
+// (%USERPROFILE% on Windows) - which is what write() below produces.
 //
 // A compiler path on its own is not enough on Windows. cl.exe with no INCLUDE
 // and LIB finds neither <iostream> nor kernel32.lib, and it shells out to a
@@ -37,6 +37,7 @@ struct Setup {
     std::vector<std::string>           bin_dirs;    // prepended to PATH
     std::map<std::string, std::string> env;         // INCLUDE, LIB, WATCOM, ...
     std::vector<std::string>           notes;       // what was found, for the UI
+    std::string definition;   // the editor's compiler definition id (CompilerDefs.h), if known
 
     bool ok() const { return !cxx.empty(); }
 };
@@ -72,7 +73,7 @@ std::string suggestedDir(Kind k, const std::string& current = "");
 // to being located on its own.
 bool needsPath(Kind k);
 
-// Every kind the wizard offers, in display order.
+// Every kind this platform can use, in display order (MSVC only on Windows).
 const std::vector<Kind>& kinds();
 
 // Visual Studio, found without help: vswhere when it is present, the standard
@@ -81,11 +82,23 @@ const std::vector<Kind>& kinds();
 // why.
 Setup detectMsvc(std::string& error);
 
+// The kind's compiler as found on PATH, or "" when it is not there (and always
+// for MSVC, which is not configured from a path).
+std::string findOnPath(Kind k);
+
 // The other kinds, built from a path the user gave: either the compiler
 // executable itself or a directory containing it.
 Setup fromPath(Kind k, const std::string& path, std::string& error);
 
-// python.exe, which gedi insists on at startup. Empty when it is not on PATH.
+// Any other compiler: the executable itself, its directory on PATH and nothing
+// else. For compilers described only by a definition file.
+Setup fromPathPlain(const std::string& path, std::string& error);
+
+// Everything a program writes to stdout/stderr when run with `args`, without a
+// console window and with stdin closed.
+std::string runOutput(const std::string& exe, const std::string& args);
+
+// The python interpreter gedi insists on at startup. Empty when it is not on PATH.
 std::string findPython();
 
 // Where gedi reads the toolchain from, and writing it there.
