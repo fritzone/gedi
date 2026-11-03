@@ -439,6 +439,10 @@ HandleResult ProjectPropertiesDialog::onKey(wint_t ch)
     //  Configuration 
     if (grp == GRP_CFG) {
         auto& g = groups()[GRP_CFG];
+        // The C++ Standard / Platform combo: Up/Down pick its items, Ctrl+Space
+        // opens it (the shared ComboBox behaviour).
+        if (g.inner_focus == 1 && rowCombo().handleKey(ch))
+            return HandleResult::CONTINUE;
         if (ch == KEY_UP || ch == KEY_DOWN) {
             if (ch == KEY_DOWN) g.inner_focus = (g.inner_focus + 1) % 2;
             else                g.inner_focus = (g.inner_focus == 0) ? 1 : 0;
@@ -608,8 +612,14 @@ bool ProjectPropertiesDialog::onMouseClick(const MEVENT& ev, int startx, int sta
 
 //  onTab
 
-bool ProjectPropertiesDialog::onTab(bool /*forward*/)
+bool ProjectPropertiesDialog::onTab(bool forward)
 {
-    // Let the default DialogBase Tab cycle handle navigation between groups
+    // Within Configuration, Tab steps from the build system to the combo (whose
+    // Up/Down belong to it); everything else is the default group cycle.
+    if (getFocusedGroup() == GRP_CFG) {
+        auto& g = groups()[GRP_CFG];
+        if (forward && g.inner_focus == 0)  { g.inner_focus = 1; return true; }
+        if (!forward && g.inner_focus == 1) { g.inner_focus = 0; return true; }
+    }
     return false;
 }

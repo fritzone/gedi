@@ -90,6 +90,17 @@ static int colorForToken(CXTokenKind tokKind, CXCursor cursor, const std::string
     return kindToColor(ck);
 }
 
+//  cache lifetime 
+
+// The last owner of a buffer's cache - the buffer, or a highlight thread still
+// running after the buffer closed - frees the translation unit kept for
+// reparsing. Only the highlighter ever touches it, so no lock is needed.
+SemanticCache::~SemanticCache()
+{
+    if (clang_tu)    clang_disposeTranslationUnit(static_cast<CXTranslationUnit>(clang_tu));
+    if (clang_index) clang_disposeIndex(static_cast<CXIndex>(clang_index));
+}
+
 //  background thread 
 
 void ClangHighlighter::requestHighlight(EditorBuffer& buffer, BuildSystem* build)
@@ -146,13 +157,40 @@ void ClangHighlighter::requestHighlight(EditorBuffer& buffer, BuildSystem* build
         uf.Contents = content.c_str();
         uf.Length   = content.size();
 
-        CXIndex index = clang_createIndex(0, 0);
-        CXTranslationUnit tu = clang_parseTranslationUnit(
-            index, abs_path.c_str(),
-            args.data(), static_cast<int>(args.size()),
-            &uf, 1,
-            CXTranslationUnit_DetailedPreprocessingRecord |
-            CXTranslationUnit_KeepGoing);
+        // Reparse the translation unit kept from the last run when it was
+        // parsed with the same arguments: its precompiled preamble - every
+        // header the file includes - is reused, so only the file itself is
+        // processed again. That is what makes a re-highlight after an edit
+        // quick. Otherwise (first run, changed settings, a failed reparse)
+        // parse from scratch, building the preamble straight away.
+        std::string args_key;
+        for (const auto& a : args_str) { args_key += a; args_key += '\n'; }
+
+        CXIndex index = static_cast<CXIndex>(cache->clang_index);
+        CXTranslationUnit tu = static_cast<CXTranslationUnit>(cache->clang_tu);
+        if (tu && cache->clang_args == args_key) {
+            if (clang_reparseTranslationUnit(tu, 1, &uf, clang_defaultReparseOptions(tu)) != 0) {
+                clang_disposeTranslationUnit(tu);   // unusable after a failed reparse
+                tu = nullptr;
+            }
+        } else if (tu) {
+            clang_disposeTranslationUnit(tu);
+            tu = nullptr;
+        }
+        if (!tu) {
+            if (!index) index = clang_createIndex(0, 0);
+            tu = clang_parseTranslationUnit(
+                index, abs_path.c_str(),
+                args.data(), static_cast<int>(args.size()),
+                &uf, 1,
+                clang_defaultEditingTranslationUnitOptions() |
+                CXTranslationUnit_CreatePreambleOnFirstParse |
+                CXTranslationUnit_DetailedPreprocessingRecord |
+                CXTranslationUnit_KeepGoing);
+        }
+        cache->clang_index = index;
+        cache->clang_tu    = tu;
+        cache->clang_args  = tu ? args_key : std::string();
 
         auto result = std::make_shared<std::vector<std::vector<uint8_t>>>();
 
@@ -305,12 +343,15 @@ void ClangHighlighter::requestHighlight(EditorBuffer& buffer, BuildSystem* build
                 clang_disposeDiagnostic(d);
             }
 
-            clang_disposeTranslationUnit(tu);
+            // The TU stays alive in the cache for the next reparse.
 
-            // Commit colors + definition map + diagnostics when still current.
+            // Commit colors + definition map + diagnostics when still current,
+            // with the line texts they were computed for.
             if (cache->version.load() == my_version) {
+                auto texts = std::make_shared<std::vector<std::string>>(std::move(doc_lines));
                 std::lock_guard<std::mutex> lk(cache->mutex);
                 cache->colors = std::move(result);
+                cache->texts  = std::move(texts);
                 cache->definition_map.clear();
                 for (auto& [name, defs] : *def_map)
                     cache->definition_map[name] = std::move(defs);
@@ -318,8 +359,6 @@ void ClangHighlighter::requestHighlight(EditorBuffer& buffer, BuildSystem* build
                 cache->diagnostics = std::move(diags);
             }
         }
-        clang_disposeIndex(index);
-
         cache->in_progress.store(false);
     }).detach();
 }

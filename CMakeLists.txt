@@ -67,6 +67,7 @@ set(GEDI_COMMON_SOURCES
     FileBrowser.cpp
     ConfigManager.cpp
     BuildSystem.cpp
+    ProcessRunner.cpp
     SearchEngine.cpp
     HelpProvider.cpp
     BufferManager.cpp
@@ -172,6 +173,16 @@ if(SDL2_FOUND)
         target_link_libraries(gedi-gui ${CLANG_LIBRARY} ${SDL2_LIBRARIES})
     else()
         target_link_libraries(gedi-gui ${CLANG_LIBRARY} ${SDL2_LIBRARIES} util)
+    endif()
+    # X11 (optional): asks the active keyboard layout which key types '/', so
+    # Ctrl+/ works where '/' is a shifted key (Norwegian, German, Hungarian...).
+    if(UNIX AND NOT APPLE)
+        find_package(X11)
+        if(X11_FOUND)
+            target_compile_definitions(gedi-gui PRIVATE GEDI_HAVE_X11)
+            target_include_directories(gedi-gui PRIVATE ${X11_INCLUDE_DIR})
+            target_link_libraries(gedi-gui ${X11_LIBRARIES})
+        endif()
     endif()
 
     # Optional SDL2_image: enables loading the About-box logo (a PNG). When it is

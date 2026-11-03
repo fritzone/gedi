@@ -203,7 +203,13 @@ void Renderer::drawShadow(int x, int y, int w, int h) {
     }
 }
 
-wint_t Renderer::getChar() { wint_t ch; int result = wget_wch(stdscr, &ch); return (result == ERR) ? ERR : ch; }
+wint_t Renderer::getChar() {
+    wint_t ch;
+    int result = wget_wch(stdscr, &ch);
+    if (result == ERR) return ERR;
+    if (result == OK && ch == 0) return KEY_CTRL_SPACE;   // terminals send Ctrl+Space as NUL
+    return ch;
+}
 
 void Renderer::hideCursor() { curs_set(0); }
 

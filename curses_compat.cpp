@@ -13,6 +13,17 @@
 #include "graphics_engine/Constants.h"
 
 #include <SDL2/SDL.h>
+#if defined(GEDI_HAVE_X11)
+#include <SDL2/SDL_syswm.h>
+#include <X11/Xlib.h>
+#include <X11/XKBlib.h>
+#include <X11/keysym.h>
+#elif defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+#include <cctype>
 #include <deque>
 #include <cstdarg>
 #include <cstdio>
@@ -71,6 +82,8 @@ static unsigned char uni_to_cp437(wchar_t c) {
         case 0x2566: return 0xCB; case 0x2569: return 0xCA;
         case 0x2550: return 0xCD; case 0x2551: return 0xBA;
         case 0x256C: return 0xCE;
+        // double vertical / single horizontal tees (debug panel section rules)
+        case 0x255F: return 0xC7; case 0x2562: return 0xB6;
         // single/double tee mixes used by the editor frame
         case 0x2564: return 0xD1; case 0x2567: return 0xCF;
         case 0x2565: return 0xD2; case 0x2568: return 0xD0;
@@ -151,6 +164,9 @@ static unsigned char uni_to_cp437(wchar_t c) {
         case 0x2194: return 0x1D; // left-right arrow
         case 0x25B2: return 0x1E; // up-pointing triangle
         case 0x25BC: return 0x1F; // down-pointing triangle (combo dropdown marker)
+        case 0x25B6: case 0x25BA: return 0x10; // right-pointing triangle (debugger running)
+        case 0x25C0: case 0x25C4: return 0x11; // left-pointing triangle (scrollbar)
+        case 0x25A0: return 0x16; // black square (debugger stopped); 0xFE now holds the euro
         case 0x2026: return 0xFA; // ellipsis -> dot
         case 0x1FB98: return 0xB1;// hatched block (whitespace tab marker)
     }
@@ -236,7 +252,46 @@ static void resize_to_engine() {
     LINES = g_eng.SCREEN_ROWS;
 }
 
+// The key that types '/' together with Shift in the keyboard layout active
+// right now - '7' on Norwegian or German, '6' on Hungarian - as an SDL keycode,
+// or SDLK_UNKNOWN when '/' is not a shifted key (US, UK: it has a key of its
+// own). SDL reports such a key by its unshifted character, so Ctrl+/ there
+// arrives as Ctrl+Shift+7 and only the layout can say it means Ctrl+/. Asked
+// on every such key press, since the user can switch layouts at any time.
+static SDL_Keycode shifted_slash_key() {
+#if defined(GEDI_HAVE_X11)
+    SDL_SysWMinfo info;
+    SDL_VERSION(&info.version);
+    if (!g_eng.window || !SDL_GetWindowWMInfo(g_eng.window, &info) || info.subsystem != SDL_SYSWM_X11)
+        return SDLK_UNKNOWN;
+    Display* dpy = info.info.x11.display;
+    XkbStateRec state;
+    const int group = (XkbGetState(dpy, XkbUseCoreKbd, &state) == Success) ? state.group : 0;
+    int min_kc = 8, max_kc = 255;
+    XDisplayKeycodes(dpy, &min_kc, &max_kc);
+    for (int kc = min_kc; kc <= max_kc; ++kc) {
+        if (XkbKeycodeToKeysym(dpy, (KeyCode)kc, group, 1) != XK_slash) continue;
+        const KeySym base = XkbKeycodeToKeysym(dpy, (KeyCode)kc, group, 0);
+        if (base >= 0x20 && base < 0x7f) return (SDL_Keycode)std::tolower((int)base);
+    }
+#elif defined(_WIN32)
+    HKL layout = GetKeyboardLayout(0);
+    const SHORT r = VkKeyScanExW(L'/', layout);
+    if (r != -1 && (HIBYTE(r) & 1) && !(HIBYTE(r) & 6)) {            // Shift only, no Ctrl/Alt
+        const UINT ch = MapVirtualKeyExW(LOBYTE(r), MAPVK_VK_TO_CHAR, layout) & 0x7FFF;
+        if (ch >= 0x20 && ch < 0x7f) return (SDL_Keycode)std::tolower((int)ch);
+    }
+#endif
+    return SDLK_UNKNOWN;
+}
+
+// Set when a key press has been turned into a key of its own (Ctrl+/), so the
+// text SDL may still deliver for that same press - the keypad's "/" comes
+// through even with Ctrl held - is not typed as well.
+static bool g_swallow_text = false;
+
 static void translate_keydown(SDL_Keycode key, Uint16 mod) {
+    g_swallow_text = false;
     const bool ctrl  = (mod & KMOD_CTRL)  != 0;
     const bool shift = (mod & KMOD_SHIFT) != 0;
     const bool alt   = (mod & KMOD_ALT)   != 0 && (mod & KMOD_RALT) == 0;
@@ -278,7 +333,7 @@ static void translate_keydown(SDL_Keycode key, Uint16 mod) {
         case SDLK_END:      push_key(shift ? KEY_SEND  : KEY_END);  return;
         case SDLK_PAGEUP:   push_key(shift ? KEY_SPREVIOUS : KEY_PPAGE); return;
         case SDLK_PAGEDOWN: push_key(shift ? KEY_SNEXT     : KEY_NPAGE); return;
-        case SDLK_INSERT:   push_key(shift ? KEY_SIC : KEY_IC); return;
+        case SDLK_INSERT:   push_key(ctrl ? KEY_CTRL_INSERT : shift ? KEY_SIC : KEY_IC); return;
         case SDLK_DELETE:   push_key(shift ? KEY_SDC : KEY_DC); return;
         case SDLK_BACKSPACE:
             if (alt) push_alt(127);
@@ -304,6 +359,17 @@ static void translate_keydown(SDL_Keycode key, Uint16 mod) {
         return;
     }
 
+    if (ctrl && !alt && key == SDLK_SPACE) { push_key(KEY_CTRL_SPACE); return; }   // opens a combo
+
+    // Ctrl+/ (toggle comment) sends 0x1F, as terminals do: from the '/' key,
+    // the keypad '/', or - on layouts where '/' needs Shift - Ctrl+Shift+<the
+    // key that types it>.
+    if (ctrl && !alt) {
+        const bool slash = (key == SDLK_SLASH && !shift) || key == SDLK_KP_DIVIDE ||
+                           (shift && key >= 0x20 && key < 0x7f && key == shifted_slash_key());
+        if (slash) { push_key(31); g_swallow_text = true; return; }
+    }
+
     // Alt + printable letter / digit -> ESC prefixed sequence (terminal style)
     if (alt && key >= 0x20 && key < 0x7f) {
         push_alt((wint_t)key);
@@ -317,7 +383,6 @@ static void translate_keydown(SDL_Keycode key, Uint16 mod) {
     if (ctrl) {
         switch (key) {
             case SDLK_LEFTBRACKET:  push_key(27); return; // Ctrl+[
-            case SDLK_SLASH:        push_key(31); return; // Ctrl+/ (gedi toggle comment)
             case SDLK_BACKSLASH:    push_key(28); return;
             case SDLK_RIGHTBRACKET: push_key(29); return;
             default: break;
@@ -369,7 +434,10 @@ static void translate_event(const SDL_Event& e) {
                 int gx, gy;
                 g_eng.pixelToGrid(e.button.x, e.button.y, &gx, &gy);
                 g_btn_down = true;
-                push_mouse(gx, gy, e.button.clicks >= 2 ? BUTTON1_DOUBLE_CLICKED
+                // Every press is a press: a quick second click (on a scroll
+                // arrow, a spinner, a checkbox) must count like the first. It
+                // also carries DOUBLE_CLICKED for code that wants double clicks.
+                push_mouse(gx, gy, e.button.clicks >= 2 ? BUTTON1_PRESSED | BUTTON1_DOUBLE_CLICKED
                                                         : BUTTON1_PRESSED);
             }
             return;
@@ -397,6 +465,7 @@ static void translate_event(const SDL_Event& e) {
             bool altgr = (mods & KMOD_RALT) != 0;
             bool ctrl  = (mods & KMOD_CTRL) != 0;
             if ((alt && !altgr) || ctrl) return;     // handled in KEYDOWN
+            if (g_swallow_text) { g_swallow_text = false; return; }
             // decode UTF-8 -> code points
             const unsigned char* s = (const unsigned char*)e.text.text;
             while (*s) {

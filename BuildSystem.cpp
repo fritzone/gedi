@@ -1,5 +1,6 @@
 #include "BuildSystem.h"
 #include "platform_compat.h"
+#include "ProcessRunner.h"
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
@@ -215,22 +216,27 @@ static std::string defaultCompileCommand(const compilers::Definition& def,
            outputSwitch(def, stem + def.exeExtension());
 }
 
-CompilationResult BuildSystem::runCompilationProcess(EditorBuffer& buffer) {
+CompilationResult BuildSystem::runCompilationProcess(EditorBuffer& buffer, const BuildMonitor* monitor) {
     CompilationResult result;
     result.success = false;
     const compilers::Definition& def = definition();
+    // A line of the build's output: kept, and shown at once in a build window.
+    auto say = [&](const std::string& ln) {
+        result.output_lines.push_back(ln);
+        if (monitor && monitor->on_line) monitor->on_line(ln);
+    };
 
     std::string base_compile_cmd = guessCompileCommand(buffer.filename);
     if (base_compile_cmd.empty()) {
-        result.output_lines.push_back("Failed to find build command for " + buffer.filename);
+        say("Failed to find build command for " + buffer.filename);
         return result;
     }
 
-    result.output_lines.push_back("Build command: " + base_compile_cmd);
+    say("Build command: " + base_compile_cmd);
     result.full_command = get_full_compile_command(base_compile_cmd, buffer.compiler_settings);
-    result.output_lines.push_back("");
-    result.output_lines.push_back("Compiling...");
-    result.output_lines.push_back("> " + result.full_command);
+    say("");
+    say("Compiling...");
+    say("> " + result.full_command);
 
     // The executable is whatever follows the definition's output switch.
     // The output switch follows the sources, so its last occurrence as a word
@@ -265,15 +271,13 @@ CompilationResult BuildSystem::runCompilationProcess(EditorBuffer& buffer) {
         }
     }
 
-    std::string full_compiler_output_str;
-    char buffer_arr[512];
-    FILE* compile_pipe = popen((run_cmd + " 2>&1").c_str(), "r");
-    if (compile_pipe) {
-        while (fgets(buffer_arr, sizeof(buffer_arr), compile_pipe) != NULL)
-            full_compiler_output_str += buffer_arr;
-    }
-    int compile_status = compile_pipe ? pclose(compile_pipe) : -1;
-    result.success = (compile_status == 0);
+    const proc::RunResult run = proc::runShell(run_cmd + " 2>&1",
+        [&](const std::string& ln) { say(asciifyForGui(ln)); },
+        monitor ? monitor->cancel : nullptr);
+    if (!run.started) say("[failed to start the compiler]");
+    result.cancelled = run.cancelled;
+    result.success   = run.started && !run.cancelled && run.exit_code == 0;
+    if (run.cancelled) say("=== Compilation cancelled ===");
 
     if (!scratch.empty()) {
         std::error_code ec;
@@ -296,12 +300,6 @@ CompilationResult BuildSystem::runCompilationProcess(EditorBuffer& buffer) {
         }
         std::filesystem::remove_all(scratch, ec);
     }
-
-    // Add compiler output to output_lines for display (ASCII-only in the GUI build)
-    std::istringstream ss(asciifyForGui(full_compiler_output_str));
-    std::string line;
-    while (std::getline(ss, line))
-        result.output_lines.push_back(line);
 
     return result;
 }
@@ -498,42 +496,63 @@ static std::string findBuiltExecutable(const std::string& search_root, const std
     return "";
 }
 
-CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
+// The header directories of an Open Watcom platform, as an INCLUDE value.
+// The toolchain's INCLUDE holds the host's headers (lh/ on Linux); a project
+// for another platform must not see them - a 16-bit DOS compile that finds
+// Linux's sys/types.h stops at "unknown platform".
+static std::string watcomPlatformInclude(const WatcomPlatform& plat, const std::string& watcom_root)
+{
+#ifdef _WIN32
+    const char sep = ';';
+#else
+    const char sep = ':';
+#endif
+    std::string list;
+    std::istringstream dirs(plat.includes);
+    for (std::string d; dirs >> d; ) {
+        std::filesystem::path p = std::filesystem::path(watcom_root) / d;
+        if (!list.empty()) list += sep;
+        list += p.make_preferred().string();
+    }
+    return list;
+}
+
+CompilationResult BuildSystem::runProjectBuild(const GediProject& project, const BuildMonitor* monitor) {
     CompilationResult result;
     result.success = false;
 
     const std::string& root = project.root;
     std::string build_dir;
     std::string build_cmd;
+    std::map<std::string, std::string> build_env;   // for the build command only
 
-    // Helper: run a shell command, append output to result.output_lines, return success
-    auto run_cmd = [&](const std::string& cmd) -> bool {
-        result.output_lines.push_back("> " + cmd);
-        char buf[512];
-        std::string out;
-        FILE* p = popen((kLocalePrefix + cmd).c_str(), "r");
-        if (!p) {
-            result.output_lines.push_back("  [failed to start process]");
-            return false;
-        }
-        while (fgets(buf, sizeof(buf), p))
-            out += buf;
-        int status = pclose(p);
-        std::istringstream ss(asciifyForGui(out));
-        std::string ln;
-        while (std::getline(ss, ln))
-            result.output_lines.push_back(ln);
-        return (status == 0);
+    // A line of the build's output: kept, and shown at once in a build window.
+    auto say = [&](const std::string& ln) {
+        result.output_lines.push_back(ln);
+        if (monitor && monitor->on_line) monitor->on_line(ln);
+    };
+    // Helper: run a shell command, its output said as it comes; true on success.
+    // After a cancel nothing else runs.
+    auto run_cmd = [&](const std::string& cmd,
+                       const std::map<std::string, std::string>& env = {}) -> bool {
+        if (result.cancelled) return false;
+        say("> " + cmd);
+        const proc::RunResult run = proc::runShell(kLocalePrefix + cmd,
+            [&](const std::string& ln) { say(asciifyForGui(ln)); },
+            monitor ? monitor->cancel : nullptr, env);
+        if (!run.started) { say("  [failed to start process]"); return false; }
+        if (run.cancelled) { result.cancelled = true; return false; }
+        return run.exit_code == 0;
     };
     auto refuse = [&](const std::string& system, const compilers::Definition& def) {
-        result.output_lines.push_back(system + " cannot build with " + def.name + ".");
-        result.output_lines.push_back("Switch the project's build system in Project > Properties, "
-                                      "or pick another compiler in Options > Compiler Options.");
-        result.output_lines.push_back("=== Build failed ===");
+        say(system + " cannot build with " + def.name + ".");
+        say("Switch the project's build system in Project > Properties, "
+            "or pick another compiler in Options > Compiler Options.");
+        say("=== Build failed ===");
         return result;
     };
 
-    result.output_lines.push_back("=== Building project: " + project.name + " ===");
+    say("=== Building project: " + project.name + " ===");
 
     const CompilerSettings& cs = project.compiler_settings;
     const compilers::Definition& def = definition();
@@ -550,6 +569,17 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
         build_dir = root;
         build_cmd = externalMakeCommand(project) + " 2>&1";
         result.executable_name = externalExecutable(project);
+        // A makefile gedi generated for an Open Watcom platform compiles with
+        // that platform's headers - older ones of those makefiles do not name
+        // them, so they come from INCLUDE.
+        if (project.build_system == "watcom" && !project.hasExternalBuildFile()) {
+            auto it = m_config.toolchain.env.find("WATCOM");
+            const char* env_root = std::getenv("WATCOM");
+            const std::string wroot = it != m_config.toolchain.env.end() ? it->second
+                                    : env_root ? std::string(env_root) : std::string();
+            if (!wroot.empty())
+                build_env["INCLUDE"] = watcomPlatformInclude(project.watcomPlatform(), wroot);
+        }
 
     } else if (project.build_system == "cmake") {
         if (!def.cmake.supported) return refuse("CMake", def);
@@ -565,7 +595,7 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
         }
         if (build_dir.empty() || !std::filesystem::exists(build_dir + "/CMakeCache.txt")) {
             if (build_dir.empty()) build_dir = root + "/build";
-            result.output_lines.push_back("No CMake build directory found - configuring...");
+            say("No CMake build directory found - configuring...");
         }
         // Always (re)configure so setting changes are picked up
         const std::string cmake_flags = compilers::flagsFor(cs, def, true);
@@ -576,10 +606,10 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
         if (!cmake_flags.empty())
             cmake_args += " \"-DCMAKE_CXX_FLAGS=" + cmake_flags + "\"";
         if (!run_cmd("cmake -S \"" + root + "\" -B \"" + build_dir + "\"" + cmake_args + " 2>&1")) {
-            result.output_lines.push_back("=== CMake configure failed ===");
+            say(result.cancelled ? "=== Build cancelled ===" : "=== CMake configure failed ===");
             return result;
         }
-        result.output_lines.push_back("");
+        say("");
         build_cmd = "cmake --build \"" + build_dir + "\" 2>&1";
         result.executable_name = build_dir + "/" + project.name;
 
@@ -595,17 +625,17 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
         build_dir = root + "/builddir";
         std::string buildtype = (bt == "Release") ? "release" : "debug";
         if (!std::filesystem::exists(build_dir + "/build.ninja")) {
-            result.output_lines.push_back("No Meson build directory found - setting up...");
+            say("No Meson build directory found - setting up...");
             // Meson takes its compiler from CXX at setup time; without this it
             // would run its own detection and could pick a different one than
             // the cmake and make paths above use.
             const std::string setup = withEnv("CXX", m_config.toolchain.cxx + def.argsString(),
                 "meson setup \"" + build_dir + "\" \"" + root + "\" --buildtype=" + buildtype);
             if (!run_cmd(setup + " 2>&1")) {
-                result.output_lines.push_back("=== Meson setup failed ===");
+                say(result.cancelled ? "=== Build cancelled ===" : "=== Meson setup failed ===");
                 return result;
             }
-            result.output_lines.push_back("");
+            say("");
         } else {
             // Update build type if project already configured
             run_cmd("meson configure \"" + build_dir + "\" --buildtype=" + buildtype + " 2>&1");
@@ -615,13 +645,15 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project) {
         result.executable_name = build_dir + "/" + project.name;
 
     } else {
-        result.output_lines.push_back("Unknown build system: " + project.build_system);
+        say("Unknown build system: " + project.build_system);
         return result;
     }
 
-    result.success = run_cmd(build_cmd);
-    result.output_lines.push_back("");
-    result.output_lines.push_back(result.success ? "=== Build successful ===" : "=== Build failed ===");
+    result.success = run_cmd(build_cmd, build_env);
+    say("");
+    say(result.success   ? "=== Build successful ==="
+      : result.cancelled ? "=== Build cancelled ==="
+                         : "=== Build failed ===");
 
     if (result.success && !project.hasExternalBuildFile() && !project.usesWmake()) {
         // Replace the pre-build guess with the actual binary location - the

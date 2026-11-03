@@ -164,7 +164,7 @@ void SettingsDialog::onInit()
         g.box_x = 2; g.box_y = CONTENT_Y; g.box_w = INNER_W; g.box_h = CONTENT_H;
         g.draw_widgets_manually = true;
         g.radiolists.push_back({ themes_, temp_theme_selected_, temp_theme_cursor_,
-                                 4, CL_LIST_Y, CL_LIST_ROWS });
+                                 4, CL_LIST_Y, CL_LIST_ROWS, INNER_W - 4 });
         addGroup(std::move(g));
     }
 
@@ -305,7 +305,6 @@ void SettingsDialog::onDraw(Renderer& renderer, int sx, int sy)
         renderer.drawText(sx + DI_FONT_X, sy + DI_FONT_LY, "Editor Font:",
                           Renderer::CP_DIALOG);
         {
-            bool focused = (getFocusedGroup() == GRP_DISPLAY_FONT);
             auto& rl = groups()[GRP_DISPLAY_FONT].radiolists[0];
             int total   = (int)font_names_.size();
             int rows    = DI_FONT_ROWS;
@@ -325,21 +324,10 @@ void SettingsDialog::onDraw(Renderer& renderer, int sx, int sy)
                 // (index 0) renders in the standard font.
                 renderer.drawText(sx + DI_FONT_X + 1, yy, name, bg, A_FONT(font_indices_[idx]));
             }
-            // Scrollbar
-            int sbx = sx + DI_FONT_X + DI_FONT_W - 1;
-            if (total > rows) {
-                renderer.drawText(sbx, sy + DI_FONT_Y, "\xe2\x86\x91",
-                                  focused ? Renderer::CP_HIGHLIGHT : Renderer::CP_LIST_BOX);   // ↑
-                renderer.drawText(sbx, sy + DI_FONT_Y + rows - 1, "\xe2\x86\x93",
-                                  focused ? Renderer::CP_HIGHLIGHT : Renderer::CP_LIST_BOX);   // ↓
-                int track = rows - 2;
-                if (track > 0) {
-                    float frac = (total > 1) ? (float)rl.cursor_idx / (total - 1) : 0.f;
-                    int thumb = (int)(frac * (track - 1) + 0.5f);
-                    renderer.drawText(sbx, sy + DI_FONT_Y + 1 + thumb, "\xe2\x96\x88",
-                                      Renderer::CP_HIGHLIGHT);   // █
-                }
-            }
+            // Scrollbar, in the list's last column
+            rl.bar.layout(sx + DI_FONT_X + DI_FONT_W - 1, sy + DI_FONT_Y, rows, true, total, rows, top);
+            rl.has_bar = rl.bar.needed() && rows >= 3;
+            if (rl.has_bar) rl.bar.draw(renderer, Renderer::CP_LIST_BOX);
         }
 #endif
         break;

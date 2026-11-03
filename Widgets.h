@@ -1,6 +1,7 @@
 #pragma once
 #include "curses_compat.h"
 #include "Renderer.h"
+#include "ScrollBar.h"
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -129,6 +130,17 @@ struct RadioList {
     int&  cursor_idx;
     int   x, y;
     int   visible_rows;
+    // Columns of the list; with one, a list longer than its rows draws a
+    // scrollbar in the column after them.
+    int   width = 0;
+    // The first row shown: it follows the cursor when that moves, and moves
+    // alone when the list is scrolled (scrollTo: the wheel, a scrollbar).
+    mutable int top_row      = 0;
+    mutable int seen_cursor_ = -1;
+    // A list drawn with a scrollbar lays it out here and sets has_bar for the
+    // frame; DialogBase then gives it clicks, drags and the wheel.
+    mutable ScrollBar bar;
+    mutable bool      has_bar = false;
 
     void draw(Renderer& renderer, int startx, int starty, bool group_focused) const {
         int top = scrollOffset();
@@ -141,6 +153,12 @@ struct RadioList {
                               item_focused ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
             renderer.drawText(startx + x + 4, starty + y + i, items[idx], Renderer::CP_DIALOG);
         }
+        if (width > 0 && visible_rows >= 3 && (int)items.size() > visible_rows) {
+            bar.layout(startx + x + width, starty + y, visible_rows, true,
+                       (int)items.size(), visible_rows, top);
+            has_bar = true;
+            bar.draw(renderer, Renderer::CP_DIALOG);
+        }
     }
 
     bool handleKey(wint_t ch) {
@@ -151,31 +169,55 @@ struct RadioList {
     }
 
     int scrollOffset() const {
-        return (cursor_idx >= visible_rows) ? cursor_idx - visible_rows + 1 : 0;
+        if (cursor_idx != seen_cursor_) {
+            seen_cursor_ = cursor_idx;
+            if (cursor_idx < top_row) top_row = cursor_idx;
+            if (cursor_idx >= top_row + visible_rows) top_row = cursor_idx - visible_rows + 1;
+        }
+        top_row = std::clamp(top_row, 0, std::max(0, (int)items.size() - visible_rows));
+        return top_row;
+    }
+    void scrollTo(int top) {
+        scrollOffset();
+        top_row = std::clamp(top, 0, std::max(0, (int)items.size() - visible_rows));
     }
 };
 
-//  ComboBox 
-// Displays the selected item between [ ] brackets.
-// Left/Right - cycle items.   Ctrl+Down - open dropdown list.
-// In dropdown: Up/Down navigate; Enter confirms; Esc cancels.
+//  ComboBox
+// The one combo box of the program: every dialog's combo is this widget, so
+// they all look and behave alike.
+//
+// Closed:  [ Selected item            ▼ ]
+//   Up / Down        select the previous / next item at once (its action, the
+//                    owner's on_change, runs immediately)
+//   Ctrl+Space       open the list (Ctrl+Down too)
+//   mouse on  ▼      open the list
+// Open (the list drops below, or above with open_up):
+//   Up / Down / PgUp / PgDn / Home / End    move through the list
+//   Enter or a click on an item             select it and close
+//   mouse wheel, the scrollbar              scroll the list (see ScrollBar.h)
+//   Esc, Ctrl+Space, Tab, a click elsewhere close without changing
+//
+// While a list is open, DialogBase sends it every key and click first (see
+// s_open), so dialogs need no special code for that state; a dialog that draws
+// its combo itself only has to hand it keys and clicks while it has focus.
 struct ComboBox {
     std::vector<std::string> items;
     int  selected_idx    = 0;
-    int  x, y, w;               // position and total width (including brackets)
+    int  x = 0, y = 0, w = 12;  // position (dialog-relative) and total width, brackets included
     bool dropdown_open   = false;
-    int  dropdown_cursor = 0;
-    // Open the list ABOVE the header instead of below it. Set this for a combo
-    // that sits low in its dialog, so the popup stays inside the dialog (a
-    // downward list would spill past the frame and leave uncleared artifacts).
+    int  dropdown_cursor = 0;   // highlighted row of the open list
+    int  dropdown_top    = 0;   // first visible row of the open list
+    // Open the list ABOVE the field instead of below it - for a combo that sits
+    // low in its window, so the list stays inside it.
     bool open_up         = false;
+    // Runs whenever the selection changes: Up/Down, Enter in the list, a click.
+    std::function<void(int)> on_change;
 
     static constexpr int MAX_DD_ROWS = 8;
 
-    // The one combo whose dropdown is currently open (only one can be at a time).
-    // The dialog framework draws THIS last - after every other component - so
-    // nothing paints over the open list. Callers must NOT draw the dropdown from
-    // onDraw(); open()/close() keep this pointer in sync.
+    // The one combo whose list is open (only one can be). The dialog framework
+    // routes input to it and draws its list last, over everything else.
     static inline ComboBox* s_open = nullptr;
 
     ComboBox() = default;
@@ -186,114 +228,38 @@ struct ComboBox {
         if (!items.empty() && selected_idx >= (int)items.size())
             selected_idx = (int)items.size() - 1;
     }
+    ComboBox(const ComboBox&)            = default;
+    ComboBox& operator=(const ComboBox& o) {
+        if (this != &o) {
+            if (s_open == this) s_open = nullptr;    // the list being replaced closes
+            items = o.items; selected_idx = o.selected_idx; x = o.x; y = o.y; w = o.w;
+            dropdown_open = false; dropdown_cursor = o.dropdown_cursor; dropdown_top = o.dropdown_top;
+            open_up = o.open_up; on_change = o.on_change;
+        }
+        return *this;
+    }
     ~ComboBox() { if (s_open == this) s_open = nullptr; }
 
-    void open()  { dropdown_open = true;  dropdown_cursor = selected_idx; s_open = this; }
-    void close() { dropdown_open = false; if (s_open == this) s_open = nullptr; }
+    int  visibleRows() const { return std::min((int)items.size(), MAX_DD_ROWS); }
 
-    void draw(Renderer& renderer, int startx, int starty, bool focused) const {
+    void open() {
         if (items.empty()) return;
-        std::string text = items[selected_idx];
-        // Suffix: " ▼ ]" (4 display cols) when multiple items, "   ]" otherwise.
-        // ▼ is U+25BC encoded as \xe2\x96\xbc (3 bytes, 1 display col).
-        const std::string suffix = (items.size() > 1) ? " \xe2\x96\xbc ]" : "   ]";
-        int inner_w = w - 6;   // "[ "(2) + content + suffix(4 display cols)
-        if (inner_w < 1) inner_w = 1;
-        if ((int)text.length() > inner_w) text = text.substr(0, inner_w);
-        int color = focused ? Renderer::CP_MENU_SELECTED : Renderer::CP_LIST_BOX;
-        renderer.drawText(startx + x,         starty + y, "[ ", Renderer::CP_DIALOG);
-        renderer.drawText(startx + x + 2,     starty + y,
-                          text + std::string(inner_w - (int)text.length(), ' '), color);
-        renderer.drawText(startx + x + w - 4, starty + y, suffix, Renderer::CP_DIALOG);
+        if (s_open && s_open != this) s_open->close();
+        dropdown_open   = true;
+        dropdown_cursor = selected_idx;
+        dropdown_top    = 0;
+        keepCursorVisible();
+        s_open = this;
     }
+    void close() { dropdown_open = false; bar_.cancelDrag(); if (s_open == this) s_open = nullptr; }
 
-    // Draws the open dropdown list floating below the combo.
-    // Call this AFTER all other dialog content so the popup renders on top.
-    void drawDropdown(Renderer& renderer, int startx, int starty) const {
-        if (!dropdown_open || items.empty()) return;
-
-        int sx = startx + x;
-        int dw = w;
-        int visible = std::min((int)items.size(), MAX_DD_ROWS);
-        int dh      = visible + 2;
-        // Below the header by default; above it when open_up (list bottom border
-        // ends on the row just above the header).
-        int sy = open_up ? (starty + y - dh) : (starty + y + 1);
-
-        // Scroll window to keep dropdown_cursor visible
-        int top = std::max(0, dropdown_cursor - visible + 1);
-        top = std::min(top, std::max(0, (int)items.size() - visible));
-        if (dropdown_cursor < top) top = dropdown_cursor;
-
-        // The drop-down shadow's bottom row would fall on the header when opening
-        // upward, so only cast a shadow for the downward case.
-        if (!open_up)
-            renderer.drawShadow(sx, sy, dw, dh);
-        renderer.drawBox(sx, sy, dw, dh, Renderer::CP_DIALOG, Renderer::SINGLE);
-
-        // Fill interior with list background
-        wattron(stdscr, COLOR_PAIR(Renderer::CP_LIST_BOX));
-        for (int i = 0; i < visible; ++i)
-            mvwaddstr(stdscr, sy + 1 + i, sx + 1,
-                      std::string(dw - 2, ' ').c_str());
-        wattroff(stdscr, COLOR_PAIR(Renderer::CP_LIST_BOX));
-
-        int inner_w = dw - 2;
-        for (int i = 0; i < visible; ++i) {
-            int idx = top + i;
-            if (idx >= (int)items.size()) break;
-            std::string text = " " + items[idx];
-            if ((int)text.size() > inner_w)      text = text.substr(0, inner_w);
-            else                                   text += std::string(inner_w - (int)text.size(), ' ');
-            bool is_cursor = (idx == dropdown_cursor);
-            renderer.drawText(sx + 1, sy + 1 + i, text,
-                              is_cursor ? Renderer::CP_LIST_SELECTED : Renderer::CP_LIST_BOX,
-                              (idx == selected_idx) ? A_BOLD : A_NORMAL);
-        }
-    }
-
-    bool handleKey(wint_t ch) {
-        if (items.empty()) return false;
-
-        if (dropdown_open) {
-            if (ch == KEY_UP) {
-                if (dropdown_cursor > 0) --dropdown_cursor;
-                return true;
-            }
-            if (ch == KEY_DOWN) {
-                if (dropdown_cursor < (int)items.size() - 1) ++dropdown_cursor;
-                return true;
-            }
-            if (ch == KEY_ENTER || ch == 10 || ch == 13) {
-                selected_idx = dropdown_cursor;
-                close();
-                return true;
-            }
-            if (ch == 27) {           // Esc - cancel
-                close();
-                return true;
-            }
-            // Any other key: close without change, let it propagate
-            close();
-            return false;
-        }
-
-        if (ch == KEY_CTRL_DOWN) {    // open dropdown
-            open();
-            return true;
-        }
-
-        // Left/Right/Space cycle (existing behaviour)
-        if (ch == KEY_LEFT || ch == KEY_UP) {
-            if (selected_idx > 0) { --selected_idx; return true; }
-        } else if (ch == KEY_RIGHT || ch == KEY_DOWN) {
-            if (selected_idx < (int)items.size() - 1) { ++selected_idx; return true; }
-        } else if (ch == ' ') {
-            selected_idx = (items.size() > 1)
-                ? (selected_idx + 1) % (int)items.size() : 0;
-            return true;
-        }
-        return false;
+    // Make `idx` the selection and run the owner's action when it changed.
+    void select(int idx) {
+        if (items.empty()) return;
+        idx = std::clamp(idx, 0, (int)items.size() - 1);
+        if (idx == selected_idx) return;
+        selected_idx = idx;
+        if (on_change) on_change(idx);
     }
 
     const std::string& selectedText() const {
@@ -301,46 +267,190 @@ struct ComboBox {
         return items.empty() ? empty : items[selected_idx];
     }
 
-    // Handle a left-button click at (ev_x, ev_y) with the dialog origin
-    // startx/starty. Mirrors draw()/drawDropdown() geometry:
-    //   - closed, click on the header row  -> open the dropdown
-    //   - open,   click on a list item     -> select it and close
-    //   - open,   click on the header      -> close
-    //   - open,   click anywhere else      -> close (not consumed)
-    // Returns true when the click was consumed.
-    bool handleMouse(int startx, int starty, int ev_x, int ev_y) {
-        if (items.empty()) return false;
+    //  Drawing
+    // "[ " + text + " ▼ ]": the text in the list colours (highlighted when the
+    // combo has focus), the arrow marking where a click opens the list.
+    void draw(Renderer& renderer, int startx, int starty, bool focused) const {
+        if (items.empty()) return;
+        int inner_w = w - 6;                      // "[ " (2) + text + " ▼ ]" (4)
+        if (inner_w < 1) inner_w = 1;
+        std::string text = items[selected_idx];
+        if ((int)text.size() > inner_w)
+            text = inner_w > 3 ? text.substr(0, inner_w - 3) + "..." : text.substr(0, inner_w);
+        text += std::string(inner_w - (int)text.size(), ' ');
+        const int field = focused ? Renderer::CP_MENU_SELECTED : Renderer::CP_LIST_BOX;
+        renderer.drawText(startx + x,         starty + y, "[ ", Renderer::CP_DIALOG);
+        renderer.drawText(startx + x + 2,     starty + y, text, field);
+        renderer.drawText(startx + x + w - 4, starty + y, " ", field);
+        renderer.drawText(startx + x + w - 3, starty + y,
+                          dropdown_open ? "\xe2\x96\xb2" : "\xe2\x96\xbc",   // ▲ / ▼
+                          field, A_BOLD);
+        renderer.drawText(startx + x + w - 2, starty + y, " ]", Renderer::CP_DIALOG);
+    }
 
-        const int hx = startx + x, hy = starty + y;      // header cell
-        const bool on_header = (ev_y == hy && ev_x >= hx && ev_x < hx + w);
+    // The open list, framed, floating below (or above) the field; ▲ / ▼ on its
+    // right edge when there is more above / below. Drawn by the framework after
+    // everything else.
+    void drawDropdown(Renderer& renderer, int startx, int starty) const {
+        if (!dropdown_open || items.empty()) return;
+        int sx, sy;
+        listOrigin(startx, starty, sx, sy);
+        const int visible = visibleRows();
+        const int dh = visible + 2;
+
+        if (!open_up) renderer.drawShadow(sx, sy, w, dh);
+        renderer.drawBox(sx, sy, w, dh, Renderer::CP_DIALOG, Renderer::SINGLE);
+
+        const int inner_w = w - 2;
+        for (int i = 0; i < visible; ++i) {
+            const int idx = dropdown_top + i;
+            if (idx >= (int)items.size()) break;
+            std::string text = " " + items[idx];
+            if ((int)text.size() > inner_w) text = text.substr(0, inner_w);
+            else                            text += std::string(inner_w - (int)text.size(), ' ');
+            renderer.drawText(sx + 1, sy + 1 + i, text,
+                              idx == dropdown_cursor ? Renderer::CP_LIST_SELECTED : Renderer::CP_LIST_BOX,
+                              idx == selected_idx ? A_BOLD : A_NORMAL);
+        }
+        // A list longer than its window gets the scrollbar on the frame's
+        // right edge.
+        layoutBar(startx, starty);
+        if (scrollable()) bar_.draw(renderer, Renderer::CP_DIALOG);
+    }
+
+    //  Scrolling
+    // A mouse event for the open list's scrollbar: press, motion with the
+    // button held, release (the dialog framework passes the last two while a
+    // thumb is being dragged). True when it was the bar's.
+    bool scrollMouse(int startx, int starty, int ev_x, int ev_y,
+                     bool press, bool motion, bool release) {
+        if (!dropdown_open || !scrollable()) { bar_.cancelDrag(); return false; }
+        layoutBar(startx, starty);
+        int top;
+        if (!bar_.mouse(ev_x, ev_y, press, motion, release, top)) return false;
+        scrollBy(top - dropdown_top);
+        return true;
+    }
+    bool scrollDragging() const { return bar_.dragging(); }
+
+    // Moves the open list's window by `rows` (negative: up) without changing
+    // the selection; the highlight is kept inside the window, so Enter picks
+    // something visible.
+    void scrollBy(int rows) {
+        if (!dropdown_open || items.empty()) return;
+        const int visible = visibleRows();
+        dropdown_top = std::clamp(dropdown_top + rows, 0, std::max(0, (int)items.size() - visible));
+        dropdown_cursor = std::clamp(dropdown_cursor, dropdown_top, dropdown_top + visible - 1);
+    }
+
+    // A mouse wheel turn while the list is open: scrolls it, wherever the
+    // pointer is (the open list is where the user is working). Returns true
+    // when it was the list's.
+    bool handleWheel(bool up) {
+        if (!dropdown_open || items.empty()) return false;
+        scrollBy(up ? -WHEEL_ROWS : WHEEL_ROWS);
+        return true;
+    }
+
+    static constexpr int WHEEL_ROWS = 3;
+
+    //  Keys
+    // Returns true when the key was the combo's. While open, a key it has no
+    // use for closes the list and is left for the dialog.
+    bool handleKey(wint_t ch) {
+        if (items.empty()) return false;
+        const int last = (int)items.size() - 1;
 
         if (dropdown_open) {
-            const int sx = startx + x;
-            const int visible = std::min((int)items.size(), MAX_DD_ROWS);
-            const int sy = open_up ? (starty + y - (visible + 2)) : (starty + y + 1);
-            int top = std::max(0, dropdown_cursor - visible + 1);
-            top = std::min(top, std::max(0, (int)items.size() - visible));
-            if (dropdown_cursor < top) top = dropdown_cursor;
-
-            if (ev_x >= sx + 1 && ev_x < sx + w - 1 &&
-                ev_y >= sy + 1 && ev_y <= sy + visible) {
-                int idx = top + (ev_y - (sy + 1));
-                if (idx >= 0 && idx < (int)items.size()) {
-                    selected_idx    = idx;
-                    dropdown_cursor = idx;
-                }
+            switch (ch) {
+            case KEY_UP:    moveCursor(dropdown_cursor - 1);              return true;
+            case KEY_DOWN:  moveCursor(dropdown_cursor + 1);              return true;
+            case KEY_PPAGE: moveCursor(dropdown_cursor - visibleRows());  return true;
+            case KEY_NPAGE: moveCursor(dropdown_cursor + visibleRows());  return true;
+            case KEY_HOME:  moveCursor(0);                                return true;
+            case KEY_END:   moveCursor(last);                             return true;
+            case KEY_ENTER: case 10: case 13:
+                close();
+                select(dropdown_cursor);
+                return true;
+            case 27: case KEY_CTRL_SPACE: case KEY_CTRL_DOWN: case 9: case KEY_BTAB:
                 close();
                 return true;
+            default:
+                close();
+                return false;
             }
-            close();                     // click off the list closes it
-            return on_header;            // consume only if it was on the header
         }
 
-        if (on_header) {
+        switch (ch) {
+        case KEY_UP:   select(selected_idx - 1); return true;   // at an end: nothing, but stay here
+        case KEY_DOWN: select(selected_idx + 1); return true;
+        case KEY_CTRL_SPACE:
+        case KEY_CTRL_DOWN:
             open();
             return true;
+        default:
+            return false;
         }
-        return false;
+    }
+
+    //  Mouse
+    // A left-button press at (ev_x, ev_y), dialog origin startx/starty.
+    //   closed: on the arrow -> open; elsewhere on the field -> consumed (the
+    //           owner focuses the combo); off the field -> not consumed
+    //   open:   on an item -> select it and close; on the field -> close;
+    //           anywhere else -> close, not consumed
+    bool handleMouse(int startx, int starty, int ev_x, int ev_y) {
+        if (items.empty()) return false;
+        const bool on_field = ev_y == starty + y && ev_x >= startx + x && ev_x < startx + x + w;
+        const bool on_arrow = on_field && ev_x >= startx + x + w - 4;
+
+        if (dropdown_open) {
+            int sx, sy;
+            listOrigin(startx, starty, sx, sy);
+            const int visible = visibleRows();
+            // The scrollbar scrolls; it never closes the list.
+            if (scrollable() && scrollMouse(startx, starty, ev_x, ev_y, true, false, false))
+                return true;
+            if (ev_x >= sx + 1 && ev_x < sx + w - 1 && ev_y >= sy + 1 && ev_y <= sy + visible) {
+                const int idx = dropdown_top + (ev_y - (sy + 1));
+                close();
+                if (idx < (int)items.size()) select(idx);
+                return true;
+            }
+            close();
+            return on_field;
+        }
+        if (on_arrow) { open(); return true; }
+        return on_field;
+    }
+
+private:
+    mutable ScrollBar bar_;     // the open list's scrollbar, on its frame's right edge
+
+    // A scrollbar needs the ▲, the ▼ and at least one track cell.
+    bool scrollable() const {
+        return (int)items.size() > visibleRows() && visibleRows() >= 3;
+    }
+    void layoutBar(int startx, int starty) const {
+        int sx, sy;
+        listOrigin(startx, starty, sx, sy);
+        bar_.layout(sx + w - 1, sy + 1, visibleRows(), true,
+                    (int)items.size(), visibleRows(), dropdown_top);
+    }
+    void listOrigin(int startx, int starty, int& sx, int& sy) const {
+        sx = startx + x;
+        sy = open_up ? starty + y - (visibleRows() + 2) : starty + y + 1;
+    }
+    void keepCursorVisible() {
+        const int visible = visibleRows();
+        if (dropdown_cursor < dropdown_top) dropdown_top = dropdown_cursor;
+        if (dropdown_cursor >= dropdown_top + visible) dropdown_top = dropdown_cursor - visible + 1;
+        dropdown_top = std::clamp(dropdown_top, 0, std::max(0, (int)items.size() - visible));
+    }
+    void moveCursor(int idx) {
+        dropdown_cursor = std::clamp(idx, 0, (int)items.size() - 1);
+        keepCursorVisible();
     }
 };
 
@@ -429,6 +539,9 @@ struct OptionList {
     int x, y;                     // position relative to dialog top-left
     int visible_rows;
     int width = 0;                // columns available; 0 = unlimited
+    // A list longer than its rows gets a scrollbar in the column just right
+    // of them (needs a width).
+    mutable ScrollBar bar;
 
     //  Flat row view (group headers interspersed) 
     struct Row { bool is_group; std::string text; int opt_idx; };
@@ -486,6 +599,51 @@ struct OptionList {
                                   off ? A_DIM : A_NORMAL);
             }
         }
+        layoutBar(startx, starty, (int)rows.size());
+        if (hasBar((int)rows.size())) bar.draw(renderer, Renderer::CP_DIALOG);
+    }
+
+    //  Scrolling
+    // Shows rows from `top` on. The highlighted option stays in view: when it
+    // would scroll out, the nearest option still shown takes the highlight.
+    void scrollTo(int top) {
+        const auto rows = buildRows();
+        const int n = (int)rows.size();
+        top_row = std::clamp(top, 0, std::max(0, n - visible_rows));
+        int sel_row = -1;
+        for (int i = 0; i < n; ++i)
+            if (!rows[i].is_group && rows[i].opt_idx == cursor) { sel_row = i; break; }
+        const int last = std::min(n, top_row + visible_rows) - 1;
+        if (sel_row >= top_row && sel_row <= last) return;
+        if (sel_row < top_row) {
+            for (int i = top_row; i <= last; ++i)
+                if (!rows[i].is_group) { cursor = rows[i].opt_idx; return; }
+        } else {
+            for (int i = last; i >= top_row; --i)
+                if (!rows[i].is_group) { cursor = rows[i].opt_idx; return; }
+        }
+    }
+
+    // The wheel scrolls the list three rows at a time.
+    void scrollWheel(bool up) { scrollTo(top_row + (up ? -3 : 3)); }
+
+    // A mouse event for the scrollbar (press; motion and release while its
+    // thumb is dragged). True when it was the bar's.
+    bool scrollMouse(int startx, int starty, int mx, int my,
+                     bool press, bool motion, bool release) {
+        const int n = (int)buildRows().size();
+        if (!hasBar(n)) { bar.cancelDrag(); return false; }
+        layoutBar(startx, starty, n);
+        int top;
+        if (!bar.mouse(mx, my, press, motion, release, top)) return false;
+        scrollTo(top);
+        return true;
+    }
+    bool scrollDragging() const { return bar.dragging(); }
+
+    bool hasBar(int nrows) const { return width > 0 && visible_rows >= 3 && nrows > visible_rows; }
+    void layoutBar(int startx, int starty, int nrows) const {
+        bar.layout(startx + x + width, starty + y, visible_rows, true, nrows, visible_rows, top_row);
     }
 
     bool handleKey(wint_t ch) {
@@ -506,7 +664,7 @@ struct OptionList {
     }
 
     // Reset cursor and scroll when the tab changes
-    void reset() { cursor = 0; top_row = 0; }
+    void reset() { cursor = 0; top_row = 0; bar.cancelDrag(); }
 };
 
 //  FocusGroup 
@@ -587,9 +745,13 @@ struct FocusGroup {
 
         int count = innerCount();
         // Up/Down move inner focus only when there are multiple focusable items
-        // and no OptionList (OptionList absorbs Up/Down internally)
+        // and no OptionList (OptionList absorbs Up/Down internally) - and not
+        // off a combo box, whose items they step through.
         bool has_optionlist = !optionlists.empty();
-        if (!has_optionlist && count > 1) {
+        const int first_combo = (int)(checkboxes.size() + spinners.size());
+        const bool on_combo = inner_focus >= first_combo &&
+                              inner_focus <  first_combo + (int)comboboxes.size();
+        if (!has_optionlist && count > 1 && !on_combo) {
             if (ch == KEY_UP   && inner_focus > 0)        { --inner_focus; return true; }
             if (ch == KEY_DOWN && inner_focus < count - 1) { ++inner_focus; return true; }
         }

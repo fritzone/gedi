@@ -492,8 +492,31 @@ void TextEditor::clearSemanticColors(EditorBuffer& buffer) {
     if (buffer.semantic_cache) {
         std::lock_guard<std::mutex> lk(buffer.semantic_cache->mutex);
         buffer.semantic_cache->colors = nullptr;
+        buffer.semantic_cache->texts  = nullptr;
         ++buffer.semantic_cache->version;  // discard any in-flight analysis
     }
+}
+
+// The parsed line texts (SemanticCache::texts) shifted the way the colour table
+// is: `delta` > 0 inserts that many rows after `at`, < 0 removes -delta rows
+// after it. Row `at` itself was edited, so it is blanked - and with it, any
+// row that does not match its line any more falls back to lexical colours.
+static std::shared_ptr<std::vector<std::string>>
+shiftTexts(const std::shared_ptr<std::vector<std::string>>& old, int at, int delta)
+{
+    if (!old) return nullptr;
+    auto out = std::make_shared<std::vector<std::string>>(*old);
+    auto& v = *out;
+    if (at < 0 || at >= (int)v.size()) return out;
+    v[at].clear();
+    if (delta > 0) {
+        v.insert(v.begin() + at + 1, (size_t)delta, std::string());
+    } else if (delta < 0) {
+        const int first = at + 1;
+        const int count = std::min(-delta, (int)v.size() - first);
+        if (count > 0) v.erase(v.begin() + first, v.begin() + first + count);
+    }
+    return out;
 }
 
 void TextEditor::insertSemanticLine(EditorBuffer& buffer, int split_line_0based) {
@@ -503,15 +526,18 @@ void TextEditor::insertSemanticLine(EditorBuffer& buffer, int split_line_0based)
     if (!buffer.semantic_cache) return;
 
     std::shared_ptr<std::vector<std::vector<uint8_t>>> old_ptr;
+    std::shared_ptr<std::vector<std::string>>          old_texts;
     {
         std::lock_guard<std::mutex> lk(buffer.semantic_cache->mutex);
-        old_ptr = buffer.semantic_cache->colors;
+        old_ptr   = buffer.semantic_cache->colors;
+        old_texts = buffer.semantic_cache->texts;
     }
     if (!old_ptr || old_ptr->empty()) return;
 
     const auto& old = *old_ptr;
     int n = (int)old.size();
     split_line_0based = std::min(split_line_0based, n);
+    auto new_texts = shiftTexts(old_texts, split_line_0based, +1);
 
     // New layout (size n+1):
     //   [0 .. split-1]      = old (unchanged)
@@ -527,6 +553,7 @@ void TextEditor::insertSemanticLine(EditorBuffer& buffer, int split_line_0based)
 
     std::lock_guard<std::mutex> lk(buffer.semantic_cache->mutex);
     buffer.semantic_cache->colors = new_ptr;
+    buffer.semantic_cache->texts  = new_texts;
     ++buffer.semantic_cache->version;
 }
 
@@ -537,15 +564,18 @@ void TextEditor::removeSemanticLines(EditorBuffer& buffer, int merge_target_0bas
     if (!buffer.semantic_cache || merge_target_0based < 0 || lines_removed <= 0) return;
 
     std::shared_ptr<std::vector<std::vector<uint8_t>>> old_ptr;
+    std::shared_ptr<std::vector<std::string>>          old_texts;
     {
         std::lock_guard<std::mutex> lk(buffer.semantic_cache->mutex);
-        old_ptr = buffer.semantic_cache->colors;
+        old_ptr   = buffer.semantic_cache->colors;
+        old_texts = buffer.semantic_cache->texts;
     }
     if (!old_ptr || old_ptr->empty()) return;
 
     const auto& old = *old_ptr;
     int n = (int)old.size();
     int new_size = std::max(0, n - lines_removed);
+    auto new_texts = shiftTexts(old_texts, merge_target_0based, -lines_removed);
 
     // New layout (size n - lines_removed):
     //   [0 .. merge_target-1]            = old (unchanged)
@@ -564,6 +594,7 @@ void TextEditor::removeSemanticLines(EditorBuffer& buffer, int merge_target_0bas
 
     std::lock_guard<std::mutex> lk(buffer.semantic_cache->mutex);
     buffer.semantic_cache->colors = new_ptr;
+    buffer.semantic_cache->texts  = new_texts;
     ++buffer.semantic_cache->version;
 }
 
@@ -684,11 +715,13 @@ void TextEditor::drawTextArea() {
     // Use it even on a dirty buffer - stale-by-a-few-chars colours are far better
     // than no semantic highlighting. A debounced re-request will refresh them.
     std::shared_ptr<std::vector<std::vector<uint8_t>>> sem_snap;
+    std::shared_ptr<std::vector<std::string>>          sem_texts;
     std::shared_ptr<std::vector<Diagnostic>>           diag_snap;
     if (m_config.syntax_highlight >= 2 && buffer.semantic_cache) {
         std::unique_lock<std::mutex> lk(buffer.semantic_cache->mutex, std::try_to_lock);
         if (lk.owns_lock()) {
             sem_snap  = buffer.semantic_cache->colors;
+            sem_texts = buffer.semantic_cache->texts;
             diag_snap = buffer.semantic_cache->diagnostics;
         }
     }
@@ -758,6 +791,12 @@ void TextEditor::drawTextArea() {
             if (m_config.syntax_highlight >= 1 && buffer.syntax_type != EditorBuffer::ST_NONE) {
                 tokens = SyntaxHighlighter::parseLine(buffer, p->text, *m_renderer);
             }
+            // libclang's colours only for a line that still reads as it did when
+            // they were computed; an edited line keeps its lexical colours until
+            // the next parse rather than show old colours on new text.
+            const unsigned sem_li = static_cast<unsigned>(current_doc_line + i);
+            const bool sem_fresh = sem_snap &&
+                (!sem_texts || (sem_li < sem_texts->size() && (*sem_texts)[sem_li] == p->text));
 
             const int tab_w     = std::max(1, m_config.indentation_width);
             const int text_left = m_text_area_start_x + m_gutter_width;
@@ -807,7 +846,7 @@ void TextEditor::drawTextArea() {
                         }
                         // Semantic override: if libclang assigned a color for this
                         // character, it takes precedence over the regex token color.
-                        if (sem_snap) {
+                        if (sem_fresh) {
                             unsigned li = static_cast<unsigned>(current_doc_line + i);
                             unsigned ci = static_cast<unsigned>(char_idx);
                             if (li < sem_snap->size() && ci < (*sem_snap)[li].size()) {
@@ -1000,6 +1039,61 @@ void TextEditor::drawStatusBar() {
         return;
     }
 
+    // A debug session: the debugging commands with their keys on the left, the
+    // latest debugger message, then the session state and the cursor position.
+    if (m_debugging) {
+        int right = w - 1;
+        if (currentBufferIdx() != -1 && w > 60) {
+            char pos[48];
+            snprintf(pos, sizeof pos, "Ln %d, Col %d",
+                     currentBuffer().current_line_num, currentBuffer().cursor_col);
+            right -= (int)strlen(pos) + 1;
+            m_renderer->drawText(right + 1, h - 1, pos, Renderer::CP_STATUS_BAR);
+        }
+        const std::string badge = m_debug_running ? " RUNNING " : m_debug_cur_line > 0 ? " STOPPED " : " STARTING ";
+        right -= (int)badge.size() + 1;
+        m_renderer->drawText(right + 1, h - 1, badge, Renderer::CP_HIGHLIGHT, A_BOLD);
+
+        struct DebugKey { EditorAction action; const char* label; };
+        std::vector<DebugKey> keys;
+        if (m_debug_running) {
+            keys = { { EditorAction::ACT_DEBUG_STOP, "Stop" },
+                     { EditorAction::ACT_DEBUG_FOCUS_PANEL, "Panel" } };
+        } else {
+            // Most used first: what does not fit on a narrow screen is the rest.
+            keys = { { EditorAction::ACT_DEBUG_START, m_debug_cur_line > 0 ? "Continue" : "Run" },
+                     { EditorAction::ACT_DEBUG_STEP_OVER, "Step" },
+                     { EditorAction::ACT_DEBUG_STEP_INTO, "Into" },
+                     { EditorAction::ACT_DEBUG_RUN_TO_CURSOR, "Cursor" },
+                     { EditorAction::ACT_DEBUG_STOP, "Stop" },
+                     { EditorAction::ACT_DEBUG_STEP_OUT, "Out" },
+                     { EditorAction::ACT_DEBUG_TOGGLE_BREAKPOINT, "Break" },
+                     { EditorAction::ACT_DEBUG_ADD_WATCH, "Watch" },
+                     { EditorAction::ACT_DEBUG_FOCUS_PANEL, "Panel" } };
+        }
+        int x = 1;
+        for (const DebugKey& k : keys) {
+            const std::string key = m_keyBindings->getLabel(k.action);
+            if (key.empty()) continue;                      // unbound: menu only
+            const int need = (int)key.size() + 1 + (int)strlen(k.label) + 2;
+            if (x + need > right) break;
+            m_renderer->drawText(x, h - 1, key, Renderer::CP_STATUS_BAR_HIGHLIGHT);
+            x += (int)key.size() + 1;
+            m_renderer->drawText(x, h - 1, k.label, Renderer::CP_STATUS_BAR);
+            x += (int)strlen(k.label) + 2;
+        }
+        // The latest message ("Watching: x", "Breakpoint in main()") in what is left.
+        if (!m_debug_status.empty()) {
+            const int avail = right - x;
+            if (avail > 10) {
+                std::string msg = m_debug_status;
+                if ((int)msg.size() > avail - 1) msg = msg.substr(0, avail - 4) + "...";
+                m_renderer->drawText(x, h - 1, msg, Renderer::CP_STATUS_BAR_HIGHLIGHT);
+            }
+        }
+        return;
+    }
+
     if (w > 50) {
         m_renderer->drawText(1, h - 1, "F1", Renderer::CP_STATUS_BAR_HIGHLIGHT);
         m_renderer->drawText(4, h - 1, "Help", Renderer::CP_STATUS_BAR);
@@ -1069,49 +1163,67 @@ void TextEditor::drawScrollbars() {
     if (m_renderer->getWidth() < 5 || m_renderer->getHeight() < 5 || currentBufferIdx() == -1) return;
     EditorBuffer& buffer = currentBuffer();
 
-    int page_height = m_text_area_end_y - m_text_area_start_y + 1;
-    int bar_x = m_text_area_end_x + 2;
-    int bar_y = m_text_area_end_y + 2;
+    const int page_height = m_text_area_end_y - m_text_area_start_y + 1;
+    const int page_width  = m_text_area_end_x - m_text_area_start_x + 1;
 
-    int first_visible_linenum = 1;
-    Line* p = buffer.document_head;
-    while(p && p != buffer.first_visible_line) { first_visible_linenum++; p = p->next; }
+    int first_visible = 0;
+    for (const Line* p = buffer.document_head; p && p != buffer.first_visible_line; p = p->next)
+        ++first_visible;
 
-    attron(COLOR_PAIR(Renderer::CP_HIGHLIGHT));
-    mvaddch(m_text_area_start_y - 1, bar_x, ACS_UARROW);
-    mvaddch(m_text_area_end_y + 1, bar_x, ACS_DARROW);
+    // Vertical: right of the frame, its arrows level with the frame's top and
+    // bottom rows. The view can scroll until the last line is at the top.
+    m_vbar.layout(m_text_area_end_x + 2, m_text_area_start_y - 1, page_height + 2, true,
+                  buffer.total_lines + page_height - 1, page_height, first_visible);
+    m_vbar.draw(*m_renderer, Renderer::CP_DIALOG_TITLE);
 
-    int track_height = page_height;
-    if (track_height > 0) {
-        for(int i = 0; i < track_height; ++i) { mvaddch(m_text_area_start_y + i, bar_x, ACS_CKBOARD); }
-        if (buffer.total_lines > page_height) {
-            float proportion_scrolled = (buffer.total_lines > 1) ? (float)(first_visible_linenum - 1) / (buffer.total_lines - page_height) : 0.0f;
-            if (proportion_scrolled > 1.0) proportion_scrolled = 1.0;
-            int thumb_y = m_text_area_start_y + (int)((track_height - 1) * proportion_scrolled);
-            mvaddch(thumb_y, bar_x, ACS_BLOCK);
-        } else { mvaddch(m_text_area_start_y, bar_x, ACS_BLOCK); }
+    // Horizontal: below the frame, over the text columns (the gutter excluded
+    // from what is shown, not from the bar).
+    const int text_width = std::max(1, page_width - m_gutter_width);
+    m_hbar.layout(m_text_area_start_x - 1, m_text_area_end_y + 2, page_width + 2, false,
+                  std::max(longestLineLength() + 1, text_width), text_width,
+                  buffer.horizontal_scroll_offset - 1);
+    m_hbar.draw(*m_renderer, Renderer::CP_DIALOG_TITLE);
+}
+
+int TextEditor::longestLineLength() {
+    if (currentBufferIdx() == -1) return 0;
+    int longest = 0;
+    for (const Line* p = currentBuffer().document_head; p; p = p->next)
+        longest = std::max(longest, (int)p->text.length());
+    return longest;
+}
+
+void TextEditor::detachView() {
+    if (currentBufferIdx() == -1) return;
+    m_view_detached = true;
+    m_detach_line   = currentBuffer().current_line;
+    m_detach_col    = currentBuffer().cursor_col;
+    m_detach_buf    = currentBufferIdx();
+}
+
+void TextEditor::scrollToLine(int first_line) {
+    EditorBuffer& buf = currentBuffer();
+    buf.first_visible_line = buf.document_head;
+    for (int i = 0; i < first_line && buf.first_visible_line->next; ++i)
+        buf.first_visible_line = buf.first_visible_line->next;
+}
+
+// A click on either scrollbar, or the moves and release of a thumb drag.
+bool TextEditor::scrollbarMouse(int mx, int my, bool press, bool motion, bool release) {
+    if (currentBufferIdx() == -1) { m_vbar.cancelDrag(); m_hbar.cancelDrag(); return false; }
+    int pos;
+    if ((press || m_vbar.dragging()) && m_vbar.mouse(mx, my, press, motion, release, pos)) {
+        if (pos != m_vbar.pos) { scrollToLine(pos); m_vbar.pos = pos; }
+        detachView();
+        return true;
     }
-    attroff(COLOR_PAIR(Renderer::CP_HIGHLIGHT));
-
-    int page_width = m_text_area_end_x - m_text_area_start_x + 1;
-    int line_width = buffer.current_line ? buffer.current_line->text.length() : 0;
-
-    attron(COLOR_PAIR(Renderer::CP_HIGHLIGHT));
-    mvaddch(bar_y, m_text_area_start_x - 1, ACS_LARROW);
-    mvaddch(bar_y, m_text_area_end_x + 1, ACS_RARROW);
-    int track_width = page_width;
-
-    if (track_width > 0) {
-        for(int i = 0; i < track_width; ++i) { mvaddch(bar_y, m_text_area_start_x + i, ACS_CKBOARD); }
-        if (line_width > page_width) {
-            float scrollable_width = line_width - page_width; if (scrollable_width == 0) scrollable_width = 1;
-            float proportion_scrolled_h = (float)(buffer.horizontal_scroll_offset - 1) / scrollable_width;
-            if (proportion_scrolled_h > 1.0) proportion_scrolled_h = 1.0;
-            int thumb_x = m_text_area_start_x + (int)((track_width - 1) * proportion_scrolled_h);
-            mvaddch(bar_y, thumb_x, ACS_BLOCK);
-        } else { mvaddch(bar_y, m_text_area_start_x, ACS_BLOCK); }
+    if ((press || m_hbar.dragging()) && m_hbar.mouse(mx, my, press, motion, release, pos)) {
+        currentBuffer().horizontal_scroll_offset = pos + 1;
+        detachView();
+        m_hbar.pos = pos;
+        return true;
     }
-    attroff(COLOR_PAIR(Renderer::CP_HIGHLIGHT));
+    return false;
 }
 
 void TextEditor::drawEditorState(int active_menu_id) {
@@ -1227,7 +1339,8 @@ void TextEditor::handleResize() {
     clearok(stdscr, TRUE); clear();
     m_renderer->updateDimensions();
     m_text_area_start_x = m_project_panel_open ? PANEL_W : 1;
-    m_text_area_end_x = m_renderer->getWidth() - 3;
+    // The debug panel docks on the right during a debug session.
+    m_text_area_end_x = m_renderer->getWidth() - 3 - debugPanelWidth();
     m_text_area_end_y = m_renderer->getHeight() - 4;
     if (m_text_area_end_x <= m_text_area_start_x) { m_text_area_end_x = m_text_area_start_x + 1; }
     if (m_text_area_end_y <= m_text_area_start_y) { m_text_area_end_y = m_text_area_start_y + 1; }
@@ -1360,6 +1473,36 @@ void TextEditor::handleMouseEvent() {
 
     int mx = ev.x, my = ev.y;
 
+    // A scrollbar thumb being dragged follows the pointer until the release.
+    if (m_vbar.dragging() || m_hbar.dragging()) {
+        scrollbarMouse(mx, my, false, !is_release, is_release);
+        return;
+    }
+    if (m_panel_bar.dragging()) {
+        int top;
+        if (m_panel_bar.mouse(mx, my, false, !is_release, is_release, top)) projectPanelScrollTo(top);
+        if (is_release) m_mouse_btn_down = false;
+        return;
+    }
+    for (int k = 0; k < 3; ++k) {
+        if (!m_dbg_bar[k].dragging()) continue;
+        int top;
+        if (m_dbg_bar[k].mouse(mx, my, false, !is_release, is_release, top)) debugPanelScrollTo(k, top);
+        if (is_release) m_mouse_btn_down = false;
+        return;
+    }
+    // The references and output windows lie over the editor (references on
+    // top): each takes what lands on it.
+    if (listPaneMouse(m_refs_pane, m_refs_visible, m_refs_scroll_pos, m_refs_cursor_pos,
+                      (int)m_refs_lines.size(), mx, my, is_press, is_motion, is_release,
+                      is_scroll_up, is_scroll_dn) ||
+        listPaneMouse(m_out_pane, m_compile_output_visible, m_compile_output_scroll_pos,
+                      m_compile_output_cursor_pos, (int)m_compile_output_lines.size(),
+                      mx, my, is_press, is_motion, is_release, is_scroll_up, is_scroll_dn)) {
+        if (is_release) m_mouse_btn_down = false;
+        return;
+    }
+
     // Track whether the button was down *before* this event clears it.
     // Used so release events can finalise the selection at the release position.
     bool btn_was_down = m_mouse_btn_down;
@@ -1376,6 +1519,16 @@ void TextEditor::handleMouseEvent() {
         updateDiagnosticHover(mx, my);
     else if (is_press || is_scroll_up || is_scroll_dn)
         m_diag_hover_line = -1;
+
+    // The docked debug panel: clicks and the wheel over it are its own.
+    if (m_debugging && (is_press || is_dbl || is_scroll_up || is_scroll_dn) &&
+        handleDebugPanelMouse(mx, my, is_press, is_dbl, is_scroll_up, is_scroll_dn))
+        return;
+    if (is_press && m_debug_panel_focused) {             // a click elsewhere leaves it
+        if (m_dbg_editing) finishWatchEdit(true);
+        m_debug_panel_focused = false;
+        m_renderer->showCursor();
+    }
 
     // Scroll wheel
     if (is_scroll_up || is_scroll_dn) {
@@ -1402,6 +1555,7 @@ void TextEditor::handleMouseEvent() {
                 else if (is_scroll_dn && buf.first_visible_line->next)
                     buf.first_visible_line = buf.first_visible_line->next;
             }
+            detachView();
         }
         return;
     }
@@ -1424,6 +1578,12 @@ void TextEditor::handleMouseEvent() {
     // Project panel
     if ((is_press || is_dbl) && m_project_panel_open && mx < PANEL_W) {
         m_project_panel_focused = true;
+        int top;
+        if (m_panel_bar.needed() && m_panel_bar.length >= 3 &&
+            m_panel_bar.mouse(mx, my, true, false, false, top)) {
+            projectPanelScrollTo(top);
+            return;
+        }
         int panel_y = m_text_area_start_y - 1;
         int panel_h = m_text_area_end_y - m_text_area_start_y + 3;
         if (my >= panel_y + 1 && my < panel_y + panel_h - 1) {
@@ -1453,54 +1613,9 @@ void TextEditor::handleMouseEvent() {
 
     if (currentBufferIdx() == -1) return;
 
-    // Vertical scrollbar (column bar_x)
-    int bar_x = m_text_area_end_x + 2;
-    if (is_press && mx == bar_x) {
-        EditorBuffer& buf = currentBuffer();
-        if (my == m_text_area_start_y - 1) {
-            if (buf.first_visible_line->prev)
-                buf.first_visible_line = buf.first_visible_line->prev;
-        } else if (my == m_text_area_end_y + 1) {
-            if (buf.first_visible_line->next)
-                buf.first_visible_line = buf.first_visible_line->next;
-        } else if (my >= m_text_area_start_y && my <= m_text_area_end_y) {
-            int track = m_text_area_end_y - m_text_area_start_y + 1;
-            if (track > 1 && buf.total_lines > track) {
-                float prop = float(my - m_text_area_start_y) / float(track - 1);
-                int target = 1 + int(prop * float(buf.total_lines - track));
-                if (target < 1) target = 1;
-                buf.first_visible_line = buf.document_head;
-                for (int i = 1; i < target && buf.first_visible_line->next; ++i)
-                    buf.first_visible_line = buf.first_visible_line->next;
-            }
-        }
+    // The scrollbars: arrows, track, the thumb (a drag continues above).
+    if (is_press && scrollbarMouse(mx, my, true, false, false))
         return;
-    }
-
-    // Horizontal scrollbar (row bar_y)
-    int bar_y = m_text_area_end_y + 2;
-    if (is_press && my == bar_y) {
-        EditorBuffer& buf = currentBuffer();
-        if (mx == m_text_area_start_x - 1) {
-            if (buf.horizontal_scroll_offset > 1) --buf.horizontal_scroll_offset;
-        } else if (mx == m_text_area_end_x + 1) {
-            ++buf.horizontal_scroll_offset;
-        } else if (mx >= m_text_area_start_x && mx <= m_text_area_end_x) {
-            int track = m_text_area_end_x - m_text_area_start_x + 1;
-            if (track > 1) {
-                int max_len = 0;
-                for (const Line* p = buf.document_head; p; p = p->next)
-                    max_len = std::max(max_len, (int)p->text.length());
-                if (max_len > track) {
-                    float prop = float(mx - m_text_area_start_x) / float(track - 1);
-                    int target = 1 + int(prop * float(max_len - track));
-                    if (target < 1) target = 1;
-                    buf.horizontal_scroll_offset = target;
-                }
-            }
-        }
-        return;
-    }
 
     // Text area click / drag
     if (my >= m_text_area_start_y && my <= m_text_area_end_y &&
@@ -1541,7 +1656,7 @@ void TextEditor::handleMouseEvent() {
 
             // Manual double-click detection (mouseinterval(0) suppresses BUTTON1_DOUBLE_CLICKED)
             auto now = std::chrono::steady_clock::now();
-            bool is_double = (mx == m_text_last_click_x && my == m_text_last_click_y &&
+            bool is_double = is_dbl || (mx == m_text_last_click_x && my == m_text_last_click_y &&
                 std::chrono::duration_cast<std::chrono::milliseconds>(
                     now - m_text_last_click_time).count() < 400);
             m_text_last_click_time = now;
@@ -1706,7 +1821,21 @@ void TextEditor::main_loop() {
         if (m_debugger) pollDebugEvents();
         update_cursor_and_scroll();
         drawEditorState();
-        if (m_project_panel_focused || currentBufferIdx() == -1) {
+        if (m_debug_panel_focused) {
+            // The debug panel has the keyboard: a cursor only in the watch
+            // expression being typed there.
+            int x0, y0, Wp, Hp, tr[3], cy[3], chh[3];
+            if (m_dbg_editing && debugPanelLayout(x0, y0, Wp, Hp, tr, cy, chh)) {
+                const int idx = m_dbg_edit_index < 0 ? (int)m_debug_watches.size() : m_dbg_edit_index;
+                const int row = idx - m_dbg_scroll[1];
+                if (row >= 0 && row < chh[1])
+                    m_renderer->setCursor(std::min(x0 + 2 + m_dbg_edit_cursor, x0 + Wp - 2), cy[1] + row);
+                else
+                    m_renderer->hideCursor();
+            } else {
+                m_renderer->hideCursor();
+            }
+        } else if (m_project_panel_focused || currentBufferIdx() == -1) {
             m_renderer->hideCursor();
         } else {
             if (m_search_mode) {
@@ -1721,7 +1850,12 @@ void TextEditor::main_loop() {
                 } else {
                     cur_x += buffer.cursor_col - buffer.horizontal_scroll_offset;
                 }
-                m_renderer->setCursor(cur_x, buffer.cursor_screen_y);
+                // Scrolled away from with the mouse: no cursor until it is back.
+                if (buffer.cursor_screen_y < m_text_area_start_y || buffer.cursor_screen_y > m_text_area_end_y ||
+                    cur_x < m_text_area_start_x + m_gutter_width || cur_x > m_text_area_end_x)
+                    m_renderer->hideCursor();
+                else
+                    m_renderer->setCursor(cur_x, buffer.cursor_screen_y);
             }
         }
         m_renderer->refresh();
@@ -1730,6 +1864,10 @@ void TextEditor::main_loop() {
 
         if (ch == KEY_RESIZE) { handleResize(); continue; }
         if (ch == KEY_MOUSE) { handleMouseEvent(); continue; }
+        if (ch != (wint_t)ERR && m_view_detached) {         // a key brings the cursor back into view
+            m_view_detached = false;
+            update_cursor_and_scroll();
+        }
 
         // Any keypress (Escape included) dismisses the gutter diagnostic popup
         // and clears a transient debug status message.
@@ -1848,7 +1986,18 @@ void TextEditor::main_loop() {
                 // A burst of characters is a paste (or an escape sequence), not
                 // interactive typing - don't pop autocomplete for every '.' in it.
                 m_batch_input = input_buffer.size() > 1;
-                for (wint_t key_press : input_buffer) { process_key(key_press); }
+                for (size_t k = 0; k < input_buffer.size(); ++k) {
+                    // An ESC inside the burst starts Alt+<key> or an escape
+                    // sequence the terminal description did not decode (Shift+
+                    // arrows on some terminals): give back what follows, so the
+                    // ESC handling reads it as one key instead of it being typed.
+                    if (input_buffer[k] == 27 && k + 1 < input_buffer.size()) {
+                        for (size_t r = input_buffer.size(); r-- > k + 1; ) unget_wch(input_buffer[r]);
+                        process_key(27);
+                        break;
+                    }
+                    process_key(input_buffer[k]);
+                }
                 m_batch_input = false;
             }
         } else {
@@ -1861,7 +2010,9 @@ void TextEditor::main_loop() {
                     m_last_keystroke_time != std::chrono::steady_clock::time_point{}) {
                     auto idle_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::steady_clock::now() - m_last_keystroke_time).count();
-                    if (idle_ms >= 800) {
+                    // Short: a re-parse reuses the precompiled preamble (see
+                    // ClangHighlighter), so it only costs the file itself.
+                    if (idle_ms >= 300) {
                         m_last_keystroke_time = {};
                         ClangHighlighter::requestHighlight(buf, m_buildSystem.get());
                     }
@@ -1894,6 +2045,17 @@ void TextEditor::update_cursor_and_scroll() {
 
     int page_height = m_text_area_end_y - m_text_area_start_y + 1;
     if (page_height <= 0) return;
+
+    // A view scrolled with the mouse stays put while the cursor does; the
+    // cursor may then be off screen (the main loop hides it).
+    if (m_view_detached) {
+        if (currentBufferIdx() == m_detach_buf && buffer.current_line == m_detach_line &&
+            buffer.cursor_col == m_detach_col) {
+            buffer.cursor_screen_y = m_text_area_start_y + (buffer.current_line_num - first_visible_linenum);
+            return;
+        }
+        m_view_detached = false;
+    }
 
     if (buffer.current_line_num < first_visible_linenum) {
         buffer.first_visible_line = buffer.current_line;
@@ -1952,6 +2114,18 @@ static wint_t normalizeFunctionKey(wint_t ch)
 {
     if (ch >= (wint_t)KEY_F(49) && ch <= (wint_t)KEY_F(60))
         return KEY_ALT(KEY_F(ch - KEY_F(48)));
+#ifndef GEDI_GUI
+    // Ctrl+Insert arrives as whatever extended key number this terminal's
+    // terminfo gives "kIC5" (ESC [2;5~ on xterm-likes); gedi's own code for it
+    // is KEY_CTRL_INSERT.
+    static const int ctrl_insert = []() {
+        const char* seq = tigetstr(const_cast<char*>("kIC5"));
+        if (!seq || seq == reinterpret_cast<char*>(-1)) return -1;
+        const int code = key_defined(seq);
+        return code > 0 ? code : -1;
+    }();
+    if (ctrl_insert > 0 && ch == (wint_t)ctrl_insert) return KEY_CTRL_INSERT;
+#endif
     return ch;
 }
 
@@ -2001,7 +2175,7 @@ wint_t TextEditor::readEscSequence(wint_t intro)
             case 20: fkey = 9;  break;  case 21: fkey = 10; break;
             case 23: fkey = 11; break;  case 24: fkey = 12; break;
             case 1:  return KEY_HOME;   case 4:  return KEY_END;
-            case 2:  return shift ? KEY_SIC : KEY_IC;
+            case 2:  return ctrl ? KEY_CTRL_INSERT : shift ? KEY_SIC : KEY_IC;
             case 3:  return shift ? KEY_SDC : KEY_DC;
             case 5:  return shift ? KEY_SPREVIOUS : KEY_PPAGE;
             case 6:  return shift ? KEY_SNEXT     : KEY_NPAGE;
@@ -2796,6 +2970,7 @@ void TextEditor::TriggerCompletion() {
 
     nodelay(stdscr, FALSE); timeout(-1);
     bool accept = false;
+    ScrollBar bar;           // in the popup's last column, when the list is longer
     while (true) {
         drawEditorState();   // repaint editor (+ any chars typed while filtering)
 
@@ -2822,14 +2997,43 @@ void TextEditor::TriggerCompletion() {
             int cp = (idx == sel) ? Renderer::CP_MENU_SELECTED : Renderer::CP_LIST_BOX;
             m_renderer->drawText(anchor_x, anchor_y + i, " " + disp + " ", cp);
         }
-        // "more items" markers
-        if (top > 0)
-            m_renderer->drawText(anchor_x + width - 1, anchor_y, "\xe2\x86\x91", Renderer::CP_LIST_BOX);
-        if (top + rows < (int)filtered.size())
-            m_renderer->drawText(anchor_x + width - 1, anchor_y + rows - 1, "\xe2\x86\x93", Renderer::CP_LIST_BOX);
+        bar.layout(anchor_x + width - 1, anchor_y, rows, true, (int)filtered.size(), rows, top);
+        const bool has_bar = bar.needed() && rows >= 3;
+        if (has_bar) bar.draw(*m_renderer, Renderer::CP_LIST_BOX);
         m_renderer->refresh();
 
+        // Shows the list from `t` on, the selection kept in view.
+        auto scrollTo = [&](int t) {
+            top = std::clamp(t, 0, std::max(0, (int)filtered.size() - rows));
+            sel = std::clamp(sel, top, top + rows - 1);
+        };
+
         wint_t ch = m_renderer->getChar();
+        if (ch == KEY_MOUSE) {
+            // The scrollbar and the wheel scroll; a click on an item takes it,
+            // a click anywhere else closes the list.
+            MEVENT ev;
+            if (getmouse(&ev) != OK) continue;
+            const bool pos_rpt = (ev.bstate & REPORT_MOUSE_POSITION) != 0;
+            const bool press   = (ev.bstate & (BUTTON1_PRESSED | BUTTON1_CLICKED)) != 0 && !pos_rpt;
+            const bool release = (ev.bstate & BUTTON1_RELEASED) != 0;
+            const bool motion  = (ev.bstate & (BUTTON1_MOTION | REPORT_MOUSE_POSITION)) != 0;
+            int t;
+            if ((press || bar.dragging()) && has_bar && bar.mouse(ev.x, ev.y, press, motion, release, t)) {
+                scrollTo(t);
+                continue;
+            }
+            if (ev.bstate & (BUTTON4_PRESSED | BUTTON5_PRESSED)) {
+                scrollTo(top + ((ev.bstate & BUTTON4_PRESSED) ? -3 : 3));
+                continue;
+            }
+            if (!press) continue;
+            if (ev.y >= anchor_y && ev.y < anchor_y + rows && ev.x >= anchor_x && ev.x < anchor_x + width) {
+                sel = top + (ev.y - anchor_y);
+                accept = true;
+            }
+            break;
+        }
         if (ch == 27) { requeueAltKey(); break; }
         else if (ch == KEY_UP)    { if (sel > 0) { --sel; if (sel < top) top = sel; } }
         else if (ch == KEY_DOWN)  { if (sel < (int)filtered.size() - 1) { ++sel; if (sel >= top + MAX_ROWS) top = sel - MAX_ROWS + 1; } }
@@ -2943,9 +3147,8 @@ bool TextEditor::startDebugSession() {
     if (currentBufferIdx() == -1) { msgwin("Nothing to debug."); return false; }
 
     // Build first, so we debug a fresh binary.
-    CompilationResult result = runCompilationProcess();
+    CompilationResult result = runCompilationProcess(BuildView::OpenOnFailure);
     if (!result.success) {
-        showScrollableOutputDialog(result.output_lines);
         m_compile_output_visible = true;
         m_renderer->hideCursor();
         return false;
@@ -3008,6 +3211,7 @@ void TextEditor::DebugStop() {
     if (m_debugger) { m_debugger->terminate(); m_debugger.reset(); }
     m_debugging      = false;
     m_debug_running  = false;
+    m_dbg_editing    = false;
     m_debug_cur_file.clear();
     m_debug_cur_line = 0;
     m_debug_status   = "Debugging stopped.";
@@ -3064,6 +3268,10 @@ void TextEditor::pollDebugEvents() {
 void TextEditor::refreshDebugData() {
     if (!m_debugger || !m_debugging) return;
     m_debug_locals = m_debugger->locals();
+    // gdb's quick listing leaves out the value of aggregates (structs, arrays,
+    // classes); ask for those in full so the panel does not show "p =".
+    for (auto& v : m_debug_locals)
+        if (v.value.empty()) v.value = m_debugger->evaluate(v.name);
     m_debug_stack  = m_debugger->backtrace();
     for (auto& w : m_debug_watches) w.second = m_debugger->evaluate(w.first);
 }
@@ -3074,13 +3282,24 @@ void TextEditor::AddWatch() {
     const std::string& t = currentBuffer().current_line->text;
     int c0 = currentBuffer().cursor_col - 1;
     std::string expr;
-    if (c0 >= 0 && c0 < (int)t.size() && (std::isalnum((unsigned char)t[c0]) || t[c0] == '_')) {
+    // A selection on one line is taken as it is - "p->next", "a[i]", "obj.member";
+    // otherwise the identifier under the cursor.
+    const Line* cl = currentBuffer().current_line;
+    if (currentBuffer().selecting && cl->selected && cl->selection_end_col > cl->selection_start_col &&
+        (!cl->prev || !cl->prev->selected) && (!cl->next || !cl->next->selected)) {
+        const int a = std::max(0, cl->selection_start_col - 1);
+        const int b = std::min((int)t.size(), cl->selection_end_col - 1);
+        if (b > a) expr = t.substr(a, b - a);
+        expr.erase(0, expr.find_first_not_of(" \t"));
+        expr.erase(expr.find_last_not_of(" \t") + 1);
+    }
+    if (expr.empty() && c0 >= 0 && c0 < (int)t.size() && (std::isalnum((unsigned char)t[c0]) || t[c0] == '_')) {
         int s = c0, e = c0;
         while (s > 0 && (std::isalnum((unsigned char)t[s - 1]) || t[s - 1] == '_')) --s;
         while (e < (int)t.size() && (std::isalnum((unsigned char)t[e]) || t[e] == '_')) ++e;
         expr = t.substr(s, e - s);
     }
-    if (expr.empty()) { msgwin("Place the cursor on a variable to watch it."); return; }
+    if (expr.empty()) { msgwin("Place the cursor on a variable, or select an expression, to watch it."); return; }
 
     for (size_t i = 0; i < m_debug_watches.size(); ++i)
         if (m_debug_watches[i].first == expr) {
@@ -3096,34 +3315,41 @@ void TextEditor::AddWatch() {
 int TextEditor::debugSectionCount(int section) const {
     switch (section) {
         case 0: return (int)m_debug_locals.size();
-        case 1: return (int)m_debug_watches.size();
+        case 1: return (int)m_debug_watches.size() + 1;    // + the "Add watch" row
         case 2: return (int)m_debug_stack.size();
     }
     return 0;
 }
 
+// The panel docks on the right for the whole debug session, a third of the
+// screen or so. Too narrow a screen gets no panel rather than an unusable one.
+int TextEditor::debugPanelWidth() const {
+    if (!m_debugging) return 0;
+    const int w = m_renderer->getWidth();
+    if (w < 70) return 0;
+    return std::clamp(w * 3 / 8, 30, 50);
+}
+
 bool TextEditor::debugPanelLayout(int& x0, int& y0, int& Wp, int& Hp,
                                   int titleRow[3], int contentY[3], int contentH[3]) const {
-    if (!m_debugging || m_debug_running || m_debug_cur_line <= 0) return false;
-    if (currentBufferIdx() == -1) return false;
+    Wp = debugPanelWidth();
+    if (Wp <= 0 || currentBufferIdx() == -1) return false;
+    x0 = m_renderer->getWidth() - Wp;
+    y0 = m_text_area_start_y - 1;                        // level with the editor's frame
+    Hp = m_text_area_end_y - m_text_area_start_y + 3;
+    if (Hp < 11) return false;                           // status + 3 usable sections
 
-    int areaW = m_text_area_end_x - m_text_area_start_x + 1;
-    Wp = std::min(42, areaW / 2);
-    if (Wp < 22) return false;
-    x0 = m_text_area_end_x - Wp + 1;
-    y0 = m_text_area_start_y;
-    Hp = m_text_area_end_y - y0 + 1;
-    if (Hp < 9) return false;                    // room for 3 usable sections
-
-    int interior = Hp - 2;                        // between top/bottom border
+    // Inside the frame: the status line, then three sections of (nearly) equal
+    // height, each starting with its title rule.
+    int interior = Hp - 2 - 1;
     int base = interior / 3;
     int h[3] = { base, base, interior - 2 * base };
-    int ry = y0 + 1;
-    for (int i = 0; i < 3; ++i) {
-        titleRow[i] = ry;
-        contentY[i] = ry + 1;
-        contentH[i] = h[i] - 1;                    // one row is the section title
-        ry += h[i];
+    int ry = y0 + 2;
+    for (int k = 0; k < 3; ++k) {
+        titleRow[k] = ry;
+        contentY[k] = ry + 1;
+        contentH[k] = h[k] - 1;
+        ry += h[k];
     }
     return true;
 }
@@ -3133,87 +3359,180 @@ void TextEditor::drawDebugPanel() {
     if (!debugPanelLayout(x0, y0, Wp, Hp, tr, cy, chh)) return;
 
     // Clamp cursors to current data (it changes on every stop).
-    for (int s = 0; s < 3; ++s) {
-        int cnt = debugSectionCount(s);
-        if (m_dbg_cursor[s] >= cnt) m_dbg_cursor[s] = cnt - 1;
-        if (m_dbg_cursor[s] < 0)    m_dbg_cursor[s] = 0;
-        if (m_dbg_scroll[s] > m_dbg_cursor[s]) m_dbg_scroll[s] = m_dbg_cursor[s];
-        if (m_dbg_scroll[s] < 0) m_dbg_scroll[s] = 0;
+    for (int sct = 0; sct < 3; ++sct) {
+        int cnt = debugSectionCount(sct);
+        if (m_dbg_cursor[sct] >= cnt) m_dbg_cursor[sct] = cnt - 1;
+        if (m_dbg_cursor[sct] < 0)    m_dbg_cursor[sct] = 0;
+        if (m_dbg_scroll[sct] > m_dbg_cursor[sct]) m_dbg_scroll[sct] = m_dbg_cursor[sct];
+        if (m_dbg_cursor[sct] >= m_dbg_scroll[sct] + chh[sct])
+            m_dbg_scroll[sct] = m_dbg_cursor[sct] - chh[sct] + 1;
+        if (m_dbg_scroll[sct] < 0) m_dbg_scroll[sct] = 0;
     }
 
-    m_renderer->drawShadow(x0, y0, Wp, Hp);
-    m_renderer->drawBoxWithTitle(x0, y0, Wp, Hp, Renderer::CP_DIALOG, Renderer::SINGLE,
-                                 m_debug_panel_focused ? " Variables* " : " Variables ",
-                                 Renderer::CP_DIALOG_TITLE, m_debug_panel_focused ? A_BOLD : 0);
-    for (int i = 1; i < Hp - 1; ++i)
-        m_renderer->drawText(x0 + 1, y0 + i, std::string(Wp - 2, ' '), Renderer::CP_DIALOG);
+    // The frame, in the editor window's style: part of the layout, not a popup.
+    m_renderer->drawBoxWithTitle(x0, y0, Wp, Hp, Renderer::CP_DIALOG_TITLE, Renderer::BoxStyle::DOUBLE,
+                                 " Debug ", Renderer::CP_DIALOG_TITLE,
+                                 m_debug_panel_focused ? A_BOLD : A_NORMAL);
+    const int inner_w = Wp - 2;
+    for (int r = 1; r < Hp - 1; ++r)
+        m_renderer->drawText(x0 + 1, y0 + r, std::string(inner_w, ' '), Renderer::CP_DEFAULT_TEXT);
+
+    // Status line: where the program is, or that it is running.
+    {
+        std::string st;
+        if (m_debug_running) {
+            st = " \xe2\x96\xb6 Running...";                                   // ▶
+        } else if (m_debug_cur_line > 0) {
+            std::string fn = m_debug_stack.empty() ? std::string() : m_debug_stack.front().func;
+            st = " \xe2\x96\xa0 Stopped" + (fn.empty() ? std::string() : " in " + fn + "()") +
+                 ", line " + std::to_string(m_debug_cur_line);                // ■
+        } else {
+            st = " \xe2\x96\xa0 Starting...";
+        }
+        if ((int)st.size() > inner_w) st = st.substr(0, inner_w - 3) + "...";
+        m_renderer->drawText(x0 + 1, y0 + 1, st,
+                             m_debug_running ? Renderer::CP_HIGHLIGHT : Renderer::CP_DIALOG_TITLE, A_BOLD);
+    }
 
     const char* titles[3] = { "Locals", "Watch", "Call Stack" };
-    const int inner_w = Wp - 2;
+    // Values are shown dimmed while the program runs: they are from the last stop.
+    const int item_attr = m_debug_running ? A_DIM : A_NORMAL;
 
-    auto itemText = [&](int s, int i) -> std::string {
-        if (s == 0) return m_debug_locals[i].name + " = " + m_debug_locals[i].value;
-        if (s == 1) return m_debug_watches[i].first + " = " +
-                           (m_debug_watches[i].second.empty() ? "<n/a>" : m_debug_watches[i].second);
-        std::string loc = m_debug_stack[i].func.empty() ? "??" : m_debug_stack[i].func;
-        if (m_debug_stack[i].line > 0) loc += " :" + std::to_string(m_debug_stack[i].line);
+    auto itemText = [&](int sct, int k) -> std::string {
+        if (sct == 0) return m_debug_locals[k].name + " = " + m_debug_locals[k].value;
+        if (sct == 1) {
+            if (k == (int)m_debug_watches.size()) return "+ Add watch...";
+            const auto& wv = m_debug_watches[k];
+            return wv.first + " = " + (wv.second.empty() ? (m_debug_running ? "..." : "<n/a>") : wv.second);
+        }
+        std::string loc = m_debug_stack[k].func.empty() ? "??" : m_debug_stack[k].func;
+        if (m_debug_stack[k].line > 0) loc += " :" + std::to_string(m_debug_stack[k].line);
         return loc;
     };
 
-    for (int s = 0; s < 3; ++s) {
-        bool secFocused = m_debug_panel_focused && m_dbg_section == s;
+    for (int sct = 0; sct < 3; ++sct) {
+        const bool secFocused = m_debug_panel_focused && m_dbg_section == sct;
 
-        // Section title row: "─ Name ────" (highlighted when focused).
-        std::string label = std::string("\xe2\x94\x80 ") + titles[s] + " ";  // ─ Name
-        int used = 2 + (int)std::string(titles[s]).size() + 1;               // ─,space,name,space
-        for (int k = used; k < inner_w; ++k) label += "\xe2\x94\x80";        // pad with ─
-        m_renderer->drawText(x0 + 1, tr[s], label,
-                             secFocused ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG_TITLE,
-                             A_BOLD);
+        // Section rule "╟─ Locals ─────╢", joined to the frame.
+        std::string rule = std::string("\xe2\x95\x9f\xe2\x94\x80 ") + titles[sct] + " ";
+        int used = 3 + (int)std::string(titles[sct]).size() + 1;
+        for (int k = used; k < Wp - 1; ++k) rule += "\xe2\x94\x80";
+        rule += "\xe2\x95\xa2";
+        m_renderer->drawText(x0, tr[sct], rule, Renderer::CP_DIALOG_TITLE);
+        m_renderer->drawText(x0 + 3, tr[sct], titles[sct],
+                             secFocused ? Renderer::CP_HIGHLIGHT : Renderer::CP_DIALOG_TITLE, A_BOLD);
 
-        int cnt = debugSectionCount(s);
-        int rows = chh[s];
+        const int cnt  = debugSectionCount(sct);
+        const int rows = chh[sct];
         if (cnt == 0) {
-            m_renderer->drawText(x0 + 1, cy[s], " (none)", Renderer::CP_DIALOG);
+            m_renderer->drawText(x0 + 2, cy[sct], m_debug_cur_line > 0 ? "(none)" : "",
+                                 Renderer::CP_DEFAULT_TEXT, A_DIM);
             continue;
         }
-        int top = m_dbg_scroll[s];
+        const int top = m_dbg_scroll[sct];
         for (int r = 0; r < rows; ++r) {
-            int idx = top + r;
+            const int idx = top + r;
             if (idx >= cnt) break;
-            std::string txt = itemText(s, idx);
+            const bool sel = secFocused && idx == m_dbg_cursor[sct];
+
+            // The watch being typed: an input field in its row.
+            if (sct == 1 && m_dbg_editing &&
+                idx == (m_dbg_edit_index < 0 ? (int)m_debug_watches.size() : m_dbg_edit_index)) {
+                std::string field = " " + m_dbg_edit_text;
+                field.resize(inner_w, ' ');
+                m_renderer->drawText(x0 + 1, cy[sct] + r, field.substr(0, inner_w), Renderer::CP_LIST_BOX);
+                continue;
+            }
+
+            std::string txt = itemText(sct, idx);
             for (char& c : txt) if (c == '\n' || c == '\t' || c == '\r') c = ' ';
-            bool sel = secFocused && idx == m_dbg_cursor[s];
             std::string cell = " " + txt;
             if ((int)cell.size() > inner_w) cell = cell.substr(0, inner_w - 1) + "\xe2\x80\xa6";
-            else cell.resize(inner_w, ' ');   // fill the row so the selection bar spans it
-            m_renderer->drawText(x0 + 1, cy[s] + r, cell,
-                                 sel ? Renderer::CP_MENU_SELECTED : Renderer::CP_DIALOG);
+            else cell.resize(inner_w, ' ');
+            const bool add_row = (sct == 1 && idx == (int)m_debug_watches.size());
+            const int  pair = sel ? Renderer::CP_HIGHLIGHT
+                                  : add_row ? Renderer::CP_DIALOG_TITLE : Renderer::CP_DEFAULT_TEXT;
+            m_renderer->drawText(x0 + 1, cy[sct] + r, cell, pair,
+                                 sel ? A_BOLD : (add_row ? A_DIM : item_attr));
         }
-        // Scroll markers.
-        if (top > 0)
-            m_renderer->drawText(x0 + Wp - 2, cy[s], "\xe2\x86\x91", Renderer::CP_DIALOG_TITLE);
-        if (top + rows < cnt)
-            m_renderer->drawText(x0 + Wp - 2, cy[s] + rows - 1, "\xe2\x86\x93", Renderer::CP_DIALOG_TITLE);
+        // A section longer than its rows: the scrollbar on the frame's edge
+        // (just its arrows when the section is too short for a track).
+        m_dbg_bar[sct].layout(x0 + Wp - 1, cy[sct], rows, true, cnt, rows, top);
+        if (m_dbg_bar[sct].needed()) {
+            if (rows >= 3) {
+                m_dbg_bar[sct].draw(*m_renderer, Renderer::CP_DIALOG_TITLE);
+            } else {
+                m_renderer->drawText(x0 + Wp - 1, cy[sct], "\xe2\x96\xb2", Renderer::CP_DIALOG_TITLE, A_BOLD);
+                m_renderer->drawText(x0 + Wp - 1, cy[sct] + rows - 1, "\xe2\x96\xbc", Renderer::CP_DIALOG_TITLE, A_BOLD);
+            }
+        }
     }
 
-    // Footer hint on the bottom border while focused.
+    // What the keys do in the focused section, on the bottom border.
     if (m_debug_panel_focused) {
-        const std::string hint = " Tab \xe2\x86\x94  Enter  Ins/Del ";
-        int hx = x0 + (Wp - 18) / 2;
-        if (hx > x0) m_renderer->drawText(hx, y0 + Hp - 1, hint, Renderer::CP_STATUS_BAR);
+        std::string hint;
+        if (m_dbg_editing)            hint = " Enter=OK  Esc=Cancel ";
+        else if (m_dbg_section == 0)  hint = " Ins=Watch  Enter=View ";
+        else if (m_dbg_section == 1)  hint = " Enter=Edit  Del=Remove ";
+        else                          hint = " Enter=Go to ";
+        if ((int)hint.size() < Wp - 2)
+            m_renderer->drawText(x0 + (Wp - (int)hint.size()) / 2, y0 + Hp - 1, hint, Renderer::CP_STATUS_BAR);
     }
 }
 
 void TextEditor::FocusDebugPanel() {
     if (!m_debugging && refuseForProject(EditorAction::ACT_DEBUG_FOCUS_PANEL)) return;
-    if (!m_debugging || m_debug_running || m_debug_cur_line <= 0) {
-        msgwin("The Variables window is available while the program is stopped.");
+    if (!m_debugging) {
+        msgwin("The debug panel is there during a debug session.");
         return;
     }
+    if (m_dbg_editing) finishWatchEdit(false);
     m_debug_panel_focused = !m_debug_panel_focused;
     if (m_debug_panel_focused) m_renderer->hideCursor();
     else                       m_renderer->showCursor();
+}
+
+// Start typing a watch expression in the panel: a new one (index -1, on the
+// "+ Add watch" row) or an existing one to change.
+void TextEditor::startWatchEdit(int index) {
+    m_debug_panel_focused = true;
+    m_dbg_section     = 1;
+    m_dbg_editing     = true;
+    m_dbg_edit_index  = (index >= 0 && index < (int)m_debug_watches.size()) ? index : -1;
+    m_dbg_edit_text   = m_dbg_edit_index >= 0 ? m_debug_watches[m_dbg_edit_index].first : std::string();
+    m_dbg_edit_cursor = (int)m_dbg_edit_text.size();
+    m_dbg_cursor[1]   = m_dbg_edit_index >= 0 ? m_dbg_edit_index : (int)m_debug_watches.size();
+}
+
+void TextEditor::finishWatchEdit(bool commit) {
+    if (!m_dbg_editing) return;
+    m_dbg_editing = false;
+    if (!commit) return;
+
+    std::string expr = m_dbg_edit_text;
+    expr.erase(0, expr.find_first_not_of(" \t"));
+    expr.erase(expr.find_last_not_of(" \t") + 1);
+    // An edited watch emptied out is removed; an empty new one is nothing.
+    if (expr.empty()) {
+        if (m_dbg_edit_index >= 0 && m_dbg_edit_index < (int)m_debug_watches.size())
+            m_debug_watches.erase(m_debug_watches.begin() + m_dbg_edit_index);
+        return;
+    }
+    const std::string val = (m_debugger && !m_debug_running) ? m_debugger->evaluate(expr) : "";
+    if (m_dbg_edit_index >= 0 && m_dbg_edit_index < (int)m_debug_watches.size()) {
+        m_debug_watches[m_dbg_edit_index] = { expr, val };
+    } else {
+        m_debug_watches.push_back({ expr, val });
+        m_dbg_cursor[1] = (int)m_debug_watches.size() - 1;
+    }
+}
+
+void TextEditor::watchLocal(int index) {
+    if (index < 0 || index >= (int)m_debug_locals.size()) return;
+    const std::string& name = m_debug_locals[index].name;
+    for (const auto& wv : m_debug_watches) if (wv.first == name) return;   // already watched
+    m_debug_watches.push_back({ name, m_debug_locals[index].value });
+    m_debug_status = "Watching: " + name;
 }
 
 bool TextEditor::promptLine(const std::string& label, std::string& out) {
@@ -3240,8 +3559,25 @@ bool TextEditor::promptLine(const std::string& label, std::string& out) {
 
 void TextEditor::handleDebugPanelKey(wint_t ch) {
     if (ch == KEY_RESIZE) { handleResize(); return; }
-    if (!m_debugging) { m_debug_panel_focused = false; m_renderer->showCursor(); return; }
-    if (m_debug_running || m_debug_cur_line <= 0) return;   // ignore keys while running
+    if (!m_debugging) { m_debug_panel_focused = false; m_dbg_editing = false; m_renderer->showCursor(); return; }
+
+    // Typing a watch expression: the field has every key.
+    if (m_dbg_editing) {
+        std::string& t = m_dbg_edit_text;
+        int& c = m_dbg_edit_cursor;
+        if (ch == 27) {
+            if (handleEscOrAlt()) return;
+            finishWatchEdit(false);
+        } else if (ch == KEY_ENTER || ch == 10 || ch == 13) finishWatchEdit(true);
+        else if (ch == KEY_LEFT)  { if (c > 0) --c; }
+        else if (ch == KEY_RIGHT) { if (c < (int)t.size()) ++c; }
+        else if (ch == KEY_HOME)  c = 0;
+        else if (ch == KEY_END)   c = (int)t.size();
+        else if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) { if (c > 0) t.erase(--c, 1); }
+        else if (ch == KEY_DC)    { if (c < (int)t.size()) t.erase(c, 1); }
+        else if (ch >= 32 && ch < 127) t.insert(t.begin() + c++, (char)ch);
+        return;
+    }
 
     // Debugger controls keep working while the panel has focus.
     switch (m_keyBindings->getAction(ch)) {
@@ -3292,9 +3628,8 @@ void TextEditor::handleDebugPanelKey(wint_t ch) {
                     m_debug_panel_focused = false; m_renderer->showCursor();
                     openFileAtLine(f.file, f.line, 1);
                 }
-            } else if (sec == 1 && cur >= 0 && cur < (int)m_debug_watches.size()) {
-                msgwin(m_debug_watches[cur].first + " =\n" +
-                       (m_debug_watches[cur].second.empty() ? "<n/a>" : m_debug_watches[cur].second));
+            } else if (sec == 1) {
+                startWatchEdit(cur);                 // the "+ Add" row starts a new one
             } else if (sec == 0 && cur >= 0 && cur < (int)m_debug_locals.size()) {
                 msgwin(m_debug_locals[cur].name + " =\n" + m_debug_locals[cur].value);
             }
@@ -3302,27 +3637,98 @@ void TextEditor::handleDebugPanelKey(wint_t ch) {
         default: break;
     }
 
-    // Watch section editing (add / remove expressions).
+    // Locals: put the selected one on the watch list.
+    if (sec == 0 && (ch == KEY_IC || ch == 'w' || ch == 'W')) { watchLocal(cur); return; }
+
+    // Watch: add, remove - or just start typing on the "+ Add watch" row.
     if (sec == 1) {
-        if (ch == KEY_IC || ch == 'a' || ch == 'A' || ch == '+') {
-            std::string expr;
-            if (promptLine("Watch expression", expr)) {
-                std::string val = m_debugger ? m_debugger->evaluate(expr) : "";
-                m_debug_watches.push_back({ expr, val });
-                cur = (int)m_debug_watches.size() - 1; cnt = (int)m_debug_watches.size(); clamp();
-            }
+        if (ch == KEY_IC || ch == '+') { startWatchEdit(-1); return; }
+        if (ch == KEY_DC && cur < (int)m_debug_watches.size()) {
+            m_debug_watches.erase(m_debug_watches.begin() + cur);
+            cnt = debugSectionCount(1);
+            clamp();
             return;
         }
-        if (ch == KEY_DC || ch == 'd' || ch == 'D') {
-            if (cur >= 0 && cur < (int)m_debug_watches.size()) {
-                m_debug_watches.erase(m_debug_watches.begin() + cur);
-                cnt = (int)m_debug_watches.size();
-                if (cur > 0) cur--;
-                clamp();
-            }
+        if (cur == (int)m_debug_watches.size() && ch > 32 && ch < 127) {
+            startWatchEdit(-1);
+            m_dbg_edit_text.assign(1, (char)ch);
+            m_dbg_edit_cursor = 1;
             return;
         }
     }
+}
+
+// Mouse on the docked panel. A click focuses it and selects what is under the
+// pointer; the "+ Add watch" row starts a new watch; a double click views a
+// local / edits a watch / goes to a stack frame. The wheel scrolls a section.
+// Shows a debug panel section from row `top` on; its highlight stays in view.
+void TextEditor::debugPanelScrollTo(int sec, int top) {
+    int x0, y0, Wp, Hp, tr[3], cy[3], chh[3];
+    if (!debugPanelLayout(x0, y0, Wp, Hp, tr, cy, chh)) return;
+    const int cnt = debugSectionCount(sec);
+    int& t = m_dbg_scroll[sec];
+    t = std::clamp(top, 0, std::max(0, cnt - chh[sec]));
+    m_dbg_cursor[sec] = std::clamp(m_dbg_cursor[sec], t, std::max(t, t + chh[sec] - 1));
+}
+
+bool TextEditor::handleDebugPanelMouse(int mx, int my, bool is_press, bool is_dbl,
+                                       bool scroll_up, bool scroll_dn) {
+    int x0, y0, Wp, Hp, tr[3], cy[3], chh[3];
+    if (!debugPanelLayout(x0, y0, Wp, Hp, tr, cy, chh)) return false;
+    if (mx < x0 || my < y0 || my >= y0 + Hp) return false;
+
+    // Which section, and which of its rows, is under the pointer.
+    int sec = -1, row = -1;
+    for (int k = 0; k < 3; ++k) {
+        if (my == tr[k]) { sec = k; break; }
+        if (my >= cy[k] && my < cy[k] + chh[k]) { sec = k; row = my - cy[k]; break; }
+    }
+
+    if (scroll_up || scroll_dn) {
+        if (sec >= 0) debugPanelScrollTo(sec, m_dbg_scroll[sec] + (scroll_up ? -3 : 3));
+        return true;
+    }
+    if (!(is_press || is_dbl)) return true;
+
+    // A section's scrollbar (a thumb drag continues in handleMouseEvent).
+    if (sec >= 0 && row >= 0 && m_dbg_bar[sec].needed() && m_dbg_bar[sec].length >= 3) {
+        int top;
+        if (m_dbg_bar[sec].mouse(mx, my, true, false, false, top)) {
+            debugPanelScrollTo(sec, top);
+            return true;
+        }
+    }
+
+    if (m_dbg_editing) finishWatchEdit(true);
+    m_debug_panel_focused = true;
+    m_renderer->hideCursor();
+    if (sec < 0) return true;
+    m_dbg_section = sec;
+    if (row < 0) return true;
+
+    const int idx = m_dbg_scroll[sec] + row;
+    if (idx >= debugSectionCount(sec)) return true;
+    m_dbg_cursor[sec] = idx;
+
+    const auto now = std::chrono::steady_clock::now();
+    const bool dbl = is_dbl || (mx == m_dbg_last_click_x && my == m_dbg_last_click_y &&
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - m_dbg_last_click_time).count() < 400);
+    m_dbg_last_click_time = now;
+    m_dbg_last_click_x = mx;
+    m_dbg_last_click_y = my;
+
+    if (sec == 1 && idx == (int)m_debug_watches.size()) { startWatchEdit(-1); return true; }
+    if (!dbl) return true;
+    if (sec == 0)      msgwin(m_debug_locals[idx].name + " =\n" + m_debug_locals[idx].value);
+    else if (sec == 1) startWatchEdit(idx);
+    else {
+        const dbg::Frame& f = m_debug_stack[idx];
+        if (!f.file.empty() && f.line > 0 && std::filesystem::exists(f.file)) {
+            m_debug_panel_focused = false; m_renderer->showCursor();
+            openFileAtLine(f.file, f.line, 1);
+        }
+    }
+    return true;
 }
 
 
@@ -3642,12 +4048,13 @@ void TextEditor::process_key(wint_t ch) {
 
     if (ch == KEY_F(10)) { ActivateMenuBar(1); return; }
     if (ch == 27) { // ESC key
-        if (currentBufferIdx() != -1 && currentBuffer().selecting) {
-            ClearSelection();
-        } else {
-            wint_t next_ch = readAltFollower();
-            if (next_ch != (wint_t)ERR) HandleAltKey(next_ch);
-        }
+        // A lone Escape clears the selection; ESC with something right behind
+        // it is Alt+<key> or an escape sequence ncurses did not decode (Ctrl+
+        // Insert on some terminals) and is handled as one, selection or not -
+        // otherwise its remaining bytes would be typed into the buffer.
+        wint_t next_ch = readAltFollower();
+        if (next_ch != (wint_t)ERR) HandleAltKey(next_ch);
+        else if (currentBufferIdx() != -1 && currentBuffer().selecting) ClearSelection();
         return;
     }
     // NOTE: we deliberately do NOT treat bytes 128-255 as 8-bit "Meta+key" here.
@@ -5411,7 +5818,7 @@ void TextEditor::finishRunProgram() {}
 void TextEditor::killRunProgram() {}
 #endif
 
-CompilationResult TextEditor::runCompilationProcess() {
+CompilationResult TextEditor::runCompilationProcess(BuildView view) {
     CompilationResult result;
     result.success = false;
 
@@ -5435,9 +5842,24 @@ CompilationResult TextEditor::runCompilationProcess() {
         m_pre_compile_view_state.first_visible_line_num = 0;
     }
 
+    // Runs the build in the build window, on a thread of its own: the window
+    // shows the output as it comes and can cancel it. `build` returns what the
+    // window shows once the build is done.
+    auto runInWindow = [&](const std::function<CompilationResult(const BuildMonitor&)>& build) {
+        BuildOutputDialog::runLive(*m_renderer,
+            [&](const BuildMonitor& monitor) {
+                result = build(monitor);
+                return result.output_lines;
+            },
+            [&] { return view == BuildView::KeepOpen || !result.success; });
+        m_renderer->hideCursor();
+    };
+
     std::string base_dir;
     if (!m_project.name.empty()) {
-        result   = m_buildSystem->runProjectBuild(m_project);
+        runInWindow([&](const BuildMonitor& monitor) {
+            return m_buildSystem->runProjectBuild(m_project, &monitor);
+        });
         base_dir = m_project.root;
     } else {
         EditorBuffer& buffer = currentBuffer();
@@ -5473,16 +5895,20 @@ CompilationResult TextEditor::runCompilationProcess() {
         std::string saved_name = buffer.filename;
         if (!temp_src.empty()) buffer.filename = temp_src;
 
-        result = m_buildSystem->runCompilationProcess(buffer);
+        runInWindow([&](const BuildMonitor& monitor) {
+            CompilationResult r = m_buildSystem->runCompilationProcess(buffer, &monitor);
+            // Rewrite output lines so the user sees the virtual filename, not /tmp/…
+            if (!temp_src.empty())
+                for (auto& ln : r.output_lines) {
+                    size_t pos;
+                    while ((pos = ln.find(temp_src)) != std::string::npos)
+                        ln.replace(pos, temp_src.size(), saved_name);
+                }
+            return r;
+        });
 
         if (!temp_src.empty()) {
             buffer.filename = saved_name;
-            // Rewrite output lines so the user sees the virtual filename, not /tmp/…
-            for (auto& ln : result.output_lines) {
-                size_t pos;
-                while ((pos = ln.find(temp_src)) != std::string::npos)
-                    ln.replace(pos, temp_src.size(), saved_name);
-            }
             std::remove(temp_src.c_str());
             // Record the compiled executable so compileAndRun can delete it after use.
             // Strip shell quotes that may wrap the path (e.g. ""/tmp/foo"" → /tmp/foo).
@@ -5520,29 +5946,11 @@ CompilationResult TextEditor::runCompilationProcess() {
 // --- Modified to show an immediate "Compiling..." message ---
 void TextEditor::compileAndRun() {
     if (refuseForProject(EditorAction::ACT_RUN)) return;
-    // 1. Immediately show a temporary "Compiling..." dialog
-    int h = 5, w = 40;
-    int starty = (m_renderer->getHeight() - h) / 2;
-    int startx = (m_renderer->getWidth() - w) / 2;
-    WINDOW* busy_win = newwin(h, w, starty, startx);
-    wbkgd(busy_win, COLOR_PAIR(Renderer::CP_DIALOG));
-    box(busy_win, 0, 0);
-    mvwprintw(busy_win, 2, (w - 12) / 2, "Compiling...");
-    wrefresh(busy_win);
-
-    // 2. Run the compilation process in the background
-    CompilationResult result = runCompilationProcess();
-
-    // 3. Clean up the temporary dialog
-    delwin(busy_win);
-    touchwin(stdscr);
-    refresh();
-
-    // 4. On failure, show the scrollable build log so the user can see what
-    //    went wrong. On success, skip straight to running the program - no
-    //    intermediate dialogs to dismiss first.
+    // The build window shows the build as it runs. On failure (or a cancel) it
+    // stays on the log so the user can see what went wrong; on success it
+    // closes and the program runs - no intermediate dialogs to dismiss first.
+    CompilationResult result = runCompilationProcess(BuildView::OpenOnFailure);
     if (!result.success) {
-        showScrollableOutputDialog(result.output_lines);
         m_compile_output_visible = true;
         m_renderer->hideCursor();
         return;
@@ -5636,24 +6044,8 @@ void TextEditor::compileAndRun() {
 }
 
 void TextEditor::compileOnly() {
-    // 1. Immediately show a temporary "Compiling..." dialog
-    int h = 5, w = 40;
-    int starty = (m_renderer->getHeight() - h) / 2;
-    int startx = (m_renderer->getWidth() - w) / 2;
-    WINDOW* busy_win = newwin(h, w, starty, startx);
-    wbkgd(busy_win, COLOR_PAIR(Renderer::CP_DIALOG));
-    box(busy_win, 0, 0);
-    mvwprintw(busy_win, 2, (w - 12) / 2, "Compiling...");
-    wrefresh(busy_win);
-
-    // 2. Run compilation and clean up the busy dialog
-    CompilationResult result = runCompilationProcess();
-    delwin(busy_win);
-    touchwin(stdscr);
-    refresh();
-
-    // 3. Show final results
-    showScrollableOutputDialog(result.output_lines);
+    // The build window shows the build as it runs, and then its result.
+    runCompilationProcess(BuildView::KeepOpen);
     m_compile_output_visible = true;
     m_renderer->hideCursor();
 }
@@ -5784,11 +6176,8 @@ void TextEditor::drawRefsWindow() {
         mvwaddstr(stdscr, starty + i, startx + 1, std::string(w - 2, ' ').c_str());
     wattroff(stdscr, COLOR_PAIR(Renderer::CP_DIALOG));
 
-    // Scroll to keep cursor visible
-    if (m_refs_cursor_pos < m_refs_scroll_pos)
-        m_refs_scroll_pos = m_refs_cursor_pos;
-    if (m_refs_cursor_pos >= m_refs_scroll_pos + text_height)
-        m_refs_scroll_pos = m_refs_cursor_pos - text_height + 1;
+    listPaneFollow(m_refs_pane, startx, starty, w, h, m_refs_scroll_pos,
+                   m_refs_cursor_pos, (int)m_refs_lines.size());
 
     for (int i = 0; i < text_height; ++i) {
         int idx = m_refs_scroll_pos + i;
@@ -5808,13 +6197,7 @@ void TextEditor::drawRefsWindow() {
                              selected ? Renderer::CP_HIGHLIGHT : Renderer::CP_DIALOG);
     }
 
-    // Scroll arrows
-    if ((int)m_refs_lines.size() > text_height) {
-        if (m_refs_scroll_pos > 0)
-            m_renderer->drawText(startx + w - 2, starty, "↑", Renderer::CP_HIGHLIGHT);
-        if (m_refs_scroll_pos + text_height < (int)m_refs_lines.size())
-            m_renderer->drawText(startx + w - 2, starty + h - 1, "↓", Renderer::CP_HIGHLIGHT);
-    }
+    listPaneBar(m_refs_pane, m_refs_scroll_pos, (int)m_refs_lines.size());
 
     // Key hint on bottom border
     const std::string hint = " ↑↓ Navigate  Enter=Jump  Esc=Close ";
@@ -5848,13 +6231,8 @@ void TextEditor::drawCompileOutputWindow() {
     int text_height = h - 2;
     const int avail = std::max(0, w - 4);   // columns available for one line of text
 
-    // Adjust scroll position to keep the cursor in view
-    if (m_compile_output_cursor_pos < m_compile_output_scroll_pos) {
-        m_compile_output_scroll_pos = m_compile_output_cursor_pos;
-    }
-    if (m_compile_output_cursor_pos >= m_compile_output_scroll_pos + text_height) {
-        m_compile_output_scroll_pos = m_compile_output_cursor_pos - text_height + 1;
-    }
+    listPaneFollow(m_out_pane, startx, starty, w, h, m_compile_output_scroll_pos,
+                   m_compile_output_cursor_pos, (int)m_compile_output_lines.size());
 
     // Draw the scrollable text content
     for (int i = 0; i < text_height; ++i) {
@@ -5891,15 +6269,53 @@ void TextEditor::drawCompileOutputWindow() {
         }
     }
 
-    // Draw scrollbar indicators if needed
-    if (m_compile_output_lines.size() > (size_t)text_height) {
-        if (m_compile_output_scroll_pos > 0) {
-            m_renderer->drawText(startx + w - 2, starty, "↑", Renderer::CP_HIGHLIGHT);
-        }
-        if (m_compile_output_scroll_pos + text_height < (int)m_compile_output_lines.size()) {
-            m_renderer->drawText(startx + w - 2, starty + h - 1, "↓", Renderer::CP_HIGHLIGHT);
-        }
+    listPaneBar(m_out_pane, m_compile_output_scroll_pos, (int)m_compile_output_lines.size());
+}
+
+void TextEditor::listPaneFollow(ListPane& p, int x, int y, int w, int h,
+                                int& scroll, int cursor, int count) {
+    p.x = x; p.y = y; p.w = w; p.h = h;
+    const int rows = h - 2;
+    if (cursor != p.seen_cursor) {           // moved: bring it into view
+        p.seen_cursor = cursor;
+        if (cursor < scroll) scroll = cursor;
+        if (cursor >= scroll + rows) scroll = cursor - rows + 1;
     }
+    scroll = std::clamp(scroll, 0, std::max(0, count - rows));
+}
+
+void TextEditor::listPaneBar(ListPane& p, int scroll, int count) {
+    const int rows = p.h - 2;
+    p.bar.layout(p.x + p.w - 1, p.y + 1, rows, true, count, rows, scroll);
+    if (p.bar.needed() && rows >= 3) p.bar.draw(*m_renderer, Renderer::CP_DIALOG);
+}
+
+bool TextEditor::listPaneMouse(ListPane& p, bool visible, int& scroll, int& cursor, int count,
+                               int mx, int my, bool press, bool motion, bool release,
+                               bool scroll_up, bool scroll_dn) {
+    const int rows = p.h - 2;
+    int top;
+    if (p.bar.dragging()) {
+        if (p.bar.mouse(mx, my, press, motion, release, top)) scroll = top;
+        return true;
+    }
+    if (!visible || p.w <= 0) return false;
+    if (mx < p.x || mx >= p.x + p.w || my < p.y || my >= p.y + p.h) return false;
+    if (scroll_up || scroll_dn) {
+        scroll = std::clamp(scroll + (scroll_up ? -3 : 3), 0, std::max(0, count - rows));
+        return true;
+    }
+    if (!press) return true;            // moves and releases over it: nothing to do
+    if (p.bar.needed() && rows >= 3 && p.bar.mouse(mx, my, true, false, false, top)) {
+        scroll = top;
+        return true;
+    }
+    const int line = scroll + (my - (p.y + 1));
+    if (my > p.y && my < p.y + p.h - 1 && line < count) {
+        cursor = line;                  // a click selects the line (Enter goes to it)
+        p.seen_cursor = line;           // already in view
+    }
+    return true;
 }
 
 
@@ -6202,6 +6618,15 @@ std::vector<PanelEntry> TextEditor::buildPanelEntries() const
     return entries;
 }
 
+// Shows the project panel's entries from `top` on; the cursor stays in view.
+void TextEditor::projectPanelScrollTo(int top) {
+    const int count   = (int)buildPanelEntries().size();
+    const int visible = m_text_area_end_y - m_text_area_start_y + 1;
+    m_project_panel_scroll = std::clamp(top, 0, std::max(0, count - visible));
+    m_project_panel_cursor = std::clamp(m_project_panel_cursor, m_project_panel_scroll,
+                                        std::max(m_project_panel_scroll, m_project_panel_scroll + visible - 1));
+}
+
 void TextEditor::drawProjectPanel() {
     namespace fs = std::filesystem;
 
@@ -6226,6 +6651,12 @@ void TextEditor::drawProjectPanel() {
         m_renderer->drawText(mx, panel_y + 1, msg, Renderer::CP_DEFAULT_TEXT);
         return;
     }
+
+    // A list longer than the panel: the scrollbar in its last column.
+    m_panel_bar.layout(PANEL_W - 2, panel_y + 1, visible_count, true,
+                       (int)entries.size(), visible_count, m_project_panel_scroll);
+    const bool has_bar = m_panel_bar.needed() && visible_count >= 3;
+    const int  text_w  = has_bar ? inner_w - 1 : inner_w;
 
     for (int i = 0; i < visible_count; ++i) {
         int idx = m_project_panel_scroll + i;
@@ -6255,12 +6686,13 @@ void TextEditor::drawProjectPanel() {
             if (is_cursor) attr = A_BOLD;
         }
 
-        if ((int)display.length() > inner_w)
-            display = display.substr(0, inner_w);
-        display += std::string(inner_w - (int)display.length(), ' ');
+        if ((int)display.length() > text_w)
+            display = display.substr(0, text_w);
+        display += std::string(text_w - (int)display.length(), ' ');
 
         m_renderer->drawText(1, row_y, display, pair, attr);
     }
+    if (has_bar) m_panel_bar.draw(*m_renderer, Renderer::CP_DIALOG_TITLE);
 
     // Scroll indicator
     if ((int)entries.size() > visible_count) {

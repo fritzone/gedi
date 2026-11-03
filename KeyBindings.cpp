@@ -4,6 +4,9 @@
 #include <vector>
 
 #define CTRL(c) ((c) & 0x1f)
+// Ctrl+/ is sent as 0x1F (Unit Separator) by terminals and by the graphical
+// build. CTRL('/') would be 0x0F - Ctrl+O, which is Open.
+#define KEY_CTRL_SLASH 0x1f
 // Ctrl+Fn / Shift+Fn use the ncurses F-key numbering (see curses_compat.cpp),
 // which avoids the Ctrl+letter collisions that (KEY_F(n) & 0x1f) produced.
 #define CTRLF(n)  KEY_F((n) + 24)
@@ -60,11 +63,11 @@ void KeyBindings::loadDefaults() {
     addBinding(EditorAction::ACT_COMPILER, -1, "");
     addBinding(EditorAction::ACT_HELP, KEY_F(1), "F1");
     addBinding(EditorAction::ACT_ABOUT, -1, "");
-    addBinding(EditorAction::ACT_TOGGLE_COMMENT, CTRL('/'), "Ctrl+/");
+    addBinding(EditorAction::ACT_TOGGLE_COMMENT, KEY_CTRL_SLASH, "Ctrl+/");
     addBinding(EditorAction::ACT_TOGGLE_PROJECT_PANEL, KEY_ALT('0'), "Alt+0");
     addBinding(EditorAction::ACT_CLOSE_PROJECT, -1, "");
     addBinding(EditorAction::ACT_PROJECT_PROPERTIES, -1, "");
-    addBinding(EditorAction::ACT_AUTOCOMPLETE, CTRL(' '), "Ctrl+Space");
+    addBinding(EditorAction::ACT_AUTOCOMPLETE, KEY_CTRL_SPACE, "Ctrl+Space");
     // Diagnostics nav (moved off F8 to make room for the Turbo debugger keys).
     addBinding(EditorAction::ACT_NEXT_DIAGNOSTIC, KEY_ALT(KEY_F(8)), "Alt+F8");
     addBinding(EditorAction::ACT_PREV_DIAGNOSTIC, SHIFTF(8), "Shift+F8");
@@ -139,7 +142,9 @@ int KeyBindings::stringToKey(const std::string& str) {
     // Handle Modifiers
     if (s.find("CTRL+") == 0 && s.length() >= 6) {
         std::string base = s.substr(5);
-        if (base == "INS") return 331; 
+        if (base == "INS") return KEY_CTRL_INSERT;   // not 331: that is plain Insert
+        if (base == "/")   return KEY_CTRL_SLASH;    // not CTRL('/'): that is Ctrl+O
+        if (base == "SPACE") return KEY_CTRL_SPACE;
         if (base.length() == 1) return CTRL(base[0]);
     }
     

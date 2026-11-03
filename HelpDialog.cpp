@@ -1,5 +1,6 @@
 #include "HelpDialog.h"
 #include "curses_compat.h"
+#include "ScrollBar.h"
 #include <algorithm>
 
 void HelpDialog::show(Renderer& renderer, HelpProvider& helpProvider, std::vector<std::string>& help_history) {
@@ -24,6 +25,10 @@ void HelpDialog::show(Renderer& renderer, HelpProvider& helpProvider, std::vecto
     bool zoomed = false;
     int scroll_offset = 0;
     int selected_link_idx = 0;
+    // The view follows the selected link after keyboard navigation, not after
+    // scrolling (wheel, scrollbar, PgUp/PgDn), which would snap back to it.
+    bool follow_link = true;
+    ScrollBar bar;       // on the frame's right edge
 
     while(true) {
         // Restore entire screen from backup before drawing the dialog
@@ -134,7 +139,7 @@ void HelpDialog::show(Renderer& renderer, HelpProvider& helpProvider, std::vecto
 
         int max_view_lines = h - 2;
         
-        if (selected_link_idx != -1 && !all_links.empty()) {
+        if (follow_link && selected_link_idx != -1 && !all_links.empty()) {
             int link_y = all_links[selected_link_idx].y_pos;
             if (link_y < scroll_offset) scroll_offset = link_y;
             if (link_y >= scroll_offset + max_view_lines) scroll_offset = link_y - max_view_lines + 1;
@@ -182,28 +187,10 @@ void HelpDialog::show(Renderer& renderer, HelpProvider& helpProvider, std::vecto
             }
         }
 
-        // Vertical scrollbar
-        bool sb_visible  = (int)render_lines.size() > max_view_lines;
-        int  sb_bar_x    = startx + w - 2;
-        int  sb_arrow_top = starty + 1;
-        int  sb_arrow_bot = starty + h - 2;
-        int  sb_track_top = sb_arrow_top + 1;
-        int  sb_track_h   = max_view_lines - 2;
-
-        if (sb_visible) {
-            attron(COLOR_PAIR(Renderer::CP_HIGHLIGHT));
-            mvaddch(sb_arrow_top, sb_bar_x, ACS_UARROW);
-            mvaddch(sb_arrow_bot, sb_bar_x, ACS_DARROW);
-            for (int i = 0; i < sb_track_h; ++i)
-                mvaddch(sb_track_top + i, sb_bar_x, ACS_CKBOARD);
-            if (sb_track_h > 0) {
-                float proportion = (float)scroll_offset / ((int)render_lines.size() - max_view_lines);
-                if (proportion > 1.0f) proportion = 1.0f;
-                int thumb_y = sb_track_top + (int)((sb_track_h - 1) * proportion);
-                mvaddch(thumb_y, sb_bar_x, ACS_BLOCK);
-            }
-            attroff(COLOR_PAIR(Renderer::CP_HIGHLIGHT));
-        }
+        // Vertical scrollbar, on the frame's right edge
+        bar.layout(startx + w - 1, starty + 1, max_view_lines, true,
+                   (int)render_lines.size(), max_view_lines, scroll_offset);
+        if (bar.needed()) bar.draw(renderer, Renderer::CP_DIALOG);
 
         // Draw custom status line for help
         renderer.drawText(0, screen_h - 1, std::string(screen_w, ' '), Renderer::CP_STATUS_BAR);
@@ -238,6 +225,9 @@ void HelpDialog::show(Renderer& renderer, HelpProvider& helpProvider, std::vecto
                 copywin(stdscr, screen_backup, 0, 0, 0, 0, screen_h - 1, screen_w - 1, FALSE);
             continue;
         }
+
+        if (ch != KEY_MOUSE && ch != (wint_t)ERR)
+            follow_link = !(ch == KEY_PPAGE || ch == KEY_NPAGE);
 
         if (ch == 9 || ch == KEY_RIGHT || ch == KEY_DOWN) {
             if (!all_links.empty()) {
@@ -280,7 +270,19 @@ void HelpDialog::show(Renderer& renderer, HelpProvider& helpProvider, std::vecto
                 bool is_press    = (ev.bstate & (BUTTON1_PRESSED | BUTTON1_CLICKED)) != 0 && !is_pos_rpt;
                 bool scroll_up   = (ev.bstate & BUTTON4_PRESSED) != 0;
                 bool scroll_dn   = (ev.bstate & BUTTON5_PRESSED) != 0;
+                bool is_release  = (ev.bstate & BUTTON1_RELEASED) != 0;
+                bool is_motion   = (ev.bstate & (BUTTON1_MOTION | REPORT_MOUSE_POSITION)) != 0;
                 int  mx = ev.x, my = ev.y;
+
+                // The scrollbar: a click, or a thumb drag's moves and release.
+                int new_top;
+                if ((is_press || bar.dragging()) && bar.needed() &&
+                    bar.mouse(mx, my, is_press, is_motion, is_release, new_top)) {
+                    scroll_offset = new_top;
+                    follow_link   = false;
+                    continue;
+                }
+                if (scroll_up || scroll_dn) follow_link = false;
 
                 // Scroll wheel - 3 lines per tick
                 if (scroll_up || scroll_dn) {
@@ -296,19 +298,6 @@ void HelpDialog::show(Renderer& renderer, HelpProvider& helpProvider, std::vecto
                         break;
                     }
 
-                    // Click on scrollbar arrows / track
-                    if (sb_visible && mx == sb_bar_x) {
-                        if (my == sb_arrow_top) {
-                            if (scroll_offset > 0) --scroll_offset;
-                        } else if (my == sb_arrow_bot) {
-                            if (scroll_offset + max_view_lines < (int)render_lines.size()) ++scroll_offset;
-                        } else if (my > sb_arrow_top && my < sb_arrow_bot && sb_track_h > 1) {
-                            float proportion = (float)(my - sb_track_top) / (sb_track_h - 1);
-                            scroll_offset = (int)(proportion * ((int)render_lines.size() - max_view_lines));
-                            if (scroll_offset < 0) scroll_offset = 0;
-                        }
-                    }
-
                     // Click on a link → follow it
                     for (int li = 0; li < (int)all_links.size(); ++li) {
                         const auto& lnk = all_links[li];
@@ -320,6 +309,7 @@ void HelpDialog::show(Renderer& renderer, HelpProvider& helpProvider, std::vecto
                             help_history.push_back(lnk.segment->target_id);
                             scroll_offset     = 0;
                             selected_link_idx = 0;
+                            follow_link       = true;
                             break;
                         }
                     }

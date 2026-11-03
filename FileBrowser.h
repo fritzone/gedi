@@ -82,9 +82,6 @@ private:
     static void drawInputField  (Renderer&, int x, int y, int w,
                                  const std::string& label,
                                  const std::string& value, bool focused);
-    static void drawFilterCombo (Renderer&, int x, int y, int w,
-                                 const std::vector<FilterEntry>& filters,
-                                 int idx, bool focused);
     static void drawButtons     (Renderer&, int x, int y, int w,
                                  const std::string& ok_text,  bool ok_sel,
                                  const std::string& can_text, bool can_sel,

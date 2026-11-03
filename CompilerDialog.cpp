@@ -381,7 +381,7 @@ void CompilerDialog::onDraw(Renderer& renderer, int sx, int sy)
     std::string cur = "In use: ";
     // "Open Watcom - Open Watcom 2.0 beta" says it twice; the banner alone will do.
     if (!current_desc_.empty() && current_desc_.rfind(current_name_, 0) == 0) cur += current_desc_;
-    else cur += current_name_ + (current_desc_.empty() ? "" : "  \xe2\x80\x94  " + current_desc_);
+    else cur += current_name_ + (current_desc_.empty() ? "" : "  -  " + current_desc_);
     line(CUR_Y, cur, Renderer::CP_DIALOG, A_BOLD);
     line(CURP_Y, config_.toolchain.cxx.empty() ? std::string("        (no compiler recorded)")
                                                : "        " + config_.toolchain.cxx,
@@ -437,25 +437,18 @@ HandleResult CompilerDialog::onKey(wint_t ch)
     if (getFocusedGroup() != GRP_COMPILER) return HandleResult::CONTINUE;
     auto& g = groups()[GRP_COMPILER];
 
-    // An open dropdown takes every key until it closes.
-    if (combo_.dropdown_open) {
-        combo_.handleKey(ch);
-        if (combo_.selected_idx != sel_) select(combo_.selected_idx);
+    // The compiler combo: Up/Down pick a compiler, Ctrl+Space opens the list
+    // (the shared ComboBox behaviour; DialogBase feeds it while it is open).
+    if (g.inner_focus == INNER_KIND) {
+        if (combo_.handleKey(ch) && combo_.selected_idx != sel_) select(combo_.selected_idx);
         return HandleResult::CONTINUE;
     }
 
-    // Up/Down walk the controls: compiler, path field, Browse.
+    // Up/Down walk the other controls: path field, Browse.
     if (ch == KEY_UP || ch == KEY_DOWN) {
         const int last = pathUsable() ? INNER_BROWSE : INNER_KIND;
         if (ch == KEY_DOWN && g.inner_focus < last) ++g.inner_focus;
-        if (ch == KEY_UP   && g.inner_focus > INNER_KIND) --g.inner_focus;
-        return HandleResult::CONTINUE;
-    }
-
-    if (g.inner_focus == INNER_KIND) {
-        if (ch == KEY_ENTER || ch == 10 || ch == 13) combo_.open();
-        else combo_.handleKey(ch);              // Left/Right/Space cycle, Ctrl+Down opens
-        if (combo_.selected_idx != sel_) select(combo_.selected_idx);
+        if (ch == KEY_UP   && g.inner_focus > INNER_PATH) --g.inner_focus;
         return HandleResult::CONTINUE;
     }
 

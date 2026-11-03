@@ -36,6 +36,11 @@ struct Diagnostic {
 struct SemanticCache {
     std::mutex                                           mutex;
     std::shared_ptr<std::vector<std::vector<uint8_t>>>   colors; // [line0][col0] = CP_* (0 = regex fallback)
+    // The text of each line as the parse that produced `colors` saw it, row for
+    // row. A line whose text differs has been edited since, and its colours no
+    // longer fit it: it is drawn with the lexical highlighter until the next
+    // parse, so an edit - commenting a line out, say - shows at once.
+    std::shared_ptr<std::vector<std::string>>             texts;
     // Symbol name → all definition locations visible in this TU (non-system only).
     // Populated by ClangHighlighter; read by GoToDefinition for instant lookup.
     std::unordered_map<std::string, std::vector<SymbolDef>> definition_map;
@@ -45,6 +50,19 @@ struct SemanticCache {
     std::atomic<bool>  dirty{true};
     std::atomic<bool>  in_progress{false};
     std::atomic<int>   version{0};
+
+    // The parsed translation unit, kept for reparsing (ClangHighlighter): with a
+    // precompiled preamble, a reparse only redoes the file itself, not every
+    // header it includes. Opaque here so this header needs no libclang; owned
+    // and touched only by the highlighter's thread (one at a time, in_progress).
+    void*       clang_index = nullptr;    // CXIndex
+    void*       clang_tu    = nullptr;    // CXTranslationUnit
+    std::string clang_args;               // the arguments clang_tu was parsed with
+
+    SemanticCache() = default;
+    SemanticCache(const SemanticCache&) = delete;
+    SemanticCache& operator=(const SemanticCache&) = delete;
+    ~SemanticCache();                     // ClangHighlighter.cpp: disposes the TU
 };
 
 struct Line {

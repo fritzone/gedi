@@ -226,6 +226,9 @@ private:
     // The action fires only if the release happens while still over the same button.
     int  mouse_capture_btn_   = -1;   // index into button_row_.buttons (-1 = none)
     bool mouse_hover_pressed_ = false; // paint captured button as visually pressed
+    // While a scrollbar thumb is dragged: gets the pointer's moves (motion =
+    // true) and the release (motion = false), then is cleared.
+    std::function<void(int x, int y, bool motion)> scroll_drag_;
 
     DialogResult result_;
 

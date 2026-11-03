@@ -353,4 +353,16 @@ int     gui_show_image_overlay(const char* path, int cell_x, int cell_y, int cel
 void    gui_hide_image_overlay(void);
 
 #endif // GEDI_GUI
+
+// Ctrl+Insert (Copy). ncurses has no fixed code for it - a terminal reports it
+// as an extended key whose number differs from one terminfo entry to the next -
+// so gedi gives it one of its own, outside both ncurses' range and the Alt
+// range (KeyBindings.h), and translates to it on input. It must not be
+// KEY_IC: that is plain Insert, which toggles overwrite mode.
+#define KEY_CTRL_INSERT 9001
+
+// Ctrl+Space (opens a combo box's list). Terminals send it as NUL, which
+// Renderer::getChar turns into this; the graphical build sends it directly.
+#define KEY_CTRL_SPACE 9002
+
 #endif // GEDI_CURSES_COMPAT_H

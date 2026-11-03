@@ -140,6 +140,24 @@ DialogResult DialogBase::run(Renderer& renderer)
             continue;
         }
 
+        // An open combo list gets every key first: it navigates, selects or
+        // closes. A lone Escape closes only the list, never the dialog; a key
+        // the list has no use for closes it and then counts as usual.
+        if (ComboBox::s_open && ch != KEY_MOUSE) {
+            ComboBox* cb = ComboBox::s_open;
+            if (ch == 27) {
+                timeout(50);
+                wint_t next = renderer.getChar();
+                timeout(-1);
+                cb->close();
+                if (next == (wint_t)ERR) continue;
+                hr = groups_.empty() ? dispatchAltKey(next) : dispatchGroupAltKey(next);
+                if (hr == HandleResult::CLOSE) break;
+                continue;
+            }
+            if (cb->handleKey(ch)) continue;
+        }
+
         if (ch == KEY_MOUSE) {
             MEVENT ev;
             if (getmouse(&ev) == OK)
@@ -200,6 +218,10 @@ void DialogBase::drawFrame(Renderer& renderer, int sx, int sy, bool pressed)
     // during mouse-hold, before the release actually fires the action.
     bool show_pressed = pressed || mouse_hover_pressed_;
     clearInterior(sx, sy);
+    // A radio list's scrollbar exists while the list is drawn: every frame
+    // starts without, a list drawn below (not on a hidden tab) sets it again.
+    for (auto& g : groups_)
+        for (auto& rl : g.radiolists) rl.has_bar = false;
     onDraw(renderer, sx, sy);
     if (groups_.empty()) {
         drawInputs(renderer, sx, sy);
@@ -598,9 +620,37 @@ HandleResult DialogBase::dispatchMouse(const MEVENT& ev, int startx, int starty)
     bool is_scroll_up = (ev.bstate & BUTTON4_PRESSED)        != 0;
     bool is_scroll_dn = (ev.bstate & BUTTON5_PRESSED)        != 0;
 
+    // A scrollbar thumb being dragged takes every event until the release.
+    if (scroll_drag_) {
+        const bool release = is_release || is_clicked;
+        auto drag = scroll_drag_;
+        if (release) scroll_drag_ = nullptr;
+        drag(ev.x, ev.y, !release);
+        return HandleResult::CONTINUE;
+    }
+
     // Treat position-reports while a button is captured as drag/motion events.
     if (!is_press && !is_release && !is_clicked && !is_scroll_up && !is_scroll_dn) {
         if (mouse_capture_btn_ < 0) return HandleResult::CONTINUE;
+    }
+
+    // An open combo list: a press picks from it, or closes it. A press that
+    // closed it without landing on the combo goes on to whatever was clicked.
+    if (ComboBox::s_open && (is_press || is_clicked)) {
+        ComboBox* cb = ComboBox::s_open;
+        if (cb->handleMouse(startx, starty, ev.x, ev.y)) {
+            if (cb->dropdown_open && cb->scrollDragging())
+                scroll_drag_ = [cb, startx, starty](int x, int y, bool motion) {
+                    if (ComboBox::s_open == cb)
+                        cb->scrollMouse(startx, starty, x, y, false, motion, !motion);
+                };
+            return HandleResult::CONTINUE;
+        }
+    }
+    // ...and the wheel scrolls it.
+    if (ComboBox::s_open && (is_scroll_up || is_scroll_dn)) {
+        ComboBox::s_open->handleWheel(is_scroll_up);
+        return HandleResult::CONTINUE;
     }
 
     // Helper: is the mouse currently over button[i]?
@@ -688,6 +738,83 @@ HandleResult DialogBase::dispatchMouse(const MEVENT& ev, int startx, int starty)
                     return HandleResult::CONTINUE;
                 }
             }
+        }
+    }
+
+    // Combo boxes the framework owns: a click on one focuses it (and on its
+    // arrow, opens it).
+    if (!groups_.empty() && is_press) {
+        for (int g = 0; g < (int)groups_.size(); ++g) {
+            auto& grp = groups_[g];
+            for (int c = 0; c < (int)grp.comboboxes.size(); ++c) {
+                if (grp.comboboxes[c].handleMouse(startx, starty, ev.x, ev.y)) {
+                    group_focus_    = g;
+                    grp.inner_focus = static_cast<int>(grp.checkboxes.size() + grp.spinners.size()) + c;
+                    return HandleResult::CONTINUE;
+                }
+            }
+        }
+    }
+
+    // Radio lists drawn with a scrollbar (the editor font list): clicks on the
+    // bar, and a thumb drag.
+    if (!groups_.empty() && is_press) {
+        for (int g = 0; g < (int)groups_.size(); ++g) {
+            for (auto& rl : groups_[g].radiolists) {
+                int top;
+                if (!rl.has_bar || !rl.bar.mouse(ev.x, ev.y, true, false, false, top)) continue;
+                group_focus_ = g;
+                rl.scrollTo(top);
+                if (rl.bar.dragging()) {
+                    RadioList* rlp = &rl;
+                    scroll_drag_ = [rlp](int x, int y, bool motion) {
+                        int t;
+                        if (rlp->bar.mouse(x, y, false, motion, !motion, t)) rlp->scrollTo(t);
+                    };
+                }
+                return HandleResult::CONTINUE;
+            }
+        }
+    }
+
+    // Option lists (Compile Options): hit-tested by their own rows, like the
+    // tab bar, because they usually live in a borderless group that the box
+    // test further down would skip. A click on an option toggles a checkbox or
+    // picks a radio choice; on a group heading it just focuses the list.
+    if (!groups_.empty() && is_press) {
+        for (int g = 0; g < (int)groups_.size(); ++g) {
+            auto& grp = groups_[g];
+            if (grp.optionlists.empty() || grp.draw_widgets_manually) continue;
+            auto& ol = grp.optionlists[0];
+            // Its scrollbar, just right of the rows.
+            if (ol.scrollMouse(startx, starty, ev.x, ev.y, true, false, false)) {
+                group_focus_ = g;
+                if (ol.scrollDragging()) {
+                    OptionList* olp = &ol;
+                    scroll_drag_ = [olp, startx, starty](int x, int y, bool motion) {
+                        olp->scrollMouse(startx, starty, x, y, false, motion, !motion);
+                    };
+                }
+                return HandleResult::CONTINUE;
+            }
+            const int ox = startx + ol.x;
+            const int ow = ol.width > 0 ? ol.width : w_ - ol.x - 1;
+            if (ev.x < ox || ev.x >= ox + ow) continue;
+            if (ev.y < starty + ol.y || ev.y >= starty + ol.y + ol.visible_rows) continue;
+
+            group_focus_ = g;
+            const auto rows = ol.buildRows();
+            const int abs_row = ol.top_row + (ev.y - (starty + ol.y));
+            if (abs_row >= 0 && abs_row < (int)rows.size() && !rows[abs_row].is_group) {
+                ol.cursor = rows[abs_row].opt_idx;
+                auto& opt = ol.options[ol.cursor];
+                if (!opt.disabled) {
+                    if (opt.is_radio)    *opt.i_val  = opt.radio_val;
+                    else if (opt.ic_val) *opt.ic_val = *opt.ic_val ? 0 : 1;
+                    else                 *opt.b_val  = !*opt.b_val;
+                }
+            }
+            return HandleResult::CONTINUE;
         }
     }
 
@@ -798,13 +925,22 @@ HandleResult DialogBase::dispatchMouse(const MEVENT& ev, int startx, int starty)
         }
     }
 
+    // The wheel over a radio list that has a scrollbar scrolls it.
+    if ((is_scroll_up || is_scroll_dn) && !groups_.empty()) {
+        for (auto& grp : groups_)
+            for (auto& rl : grp.radiolists)
+                if (rl.has_bar && ev.y >= rl.bar.y && ev.y < rl.bar.y + rl.bar.length &&
+                    ev.x >= startx + rl.x && ev.x <= rl.bar.x) {
+                    rl.scrollTo(rl.scrollOffset() + (is_scroll_up ? -3 : 3));
+                    return HandleResult::CONTINUE;
+                }
+    }
+
     // Scroll wheel on OptionList (works regardless of group focus)
     if ((is_scroll_up || is_scroll_dn) && !groups_.empty()) {
         for (int g = 0; g < (int)groups_.size(); ++g) {
             if (!groups_[g].optionlists.empty()) {
-                auto& ol = groups_[g].optionlists[0];
-                if (is_scroll_up && ol.cursor > 0) --ol.cursor;
-                if (is_scroll_dn && ol.cursor < (int)ol.options.size() - 1) ++ol.cursor;
+                groups_[g].optionlists[0].scrollWheel(is_scroll_up);
                 return HandleResult::CONTINUE;
             }
         }

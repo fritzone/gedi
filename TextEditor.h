@@ -3,6 +3,7 @@
 
 #include "EditorBuffer.h"
 #include "Renderer.h"
+#include "ScrollBar.h"
 
 #include <chrono>
 #include <string>
@@ -89,22 +90,40 @@ private:
     bool startDebugSession();        // build + load + apply breakpoints (no run yet)
     void DebugRunToCursor();         // "Go to Cursor" (F4)
 
-    // Variables window: three focusable/scrollable sections (Locals / Watch / Stack).
+    // Debug panel: docked on the right for the whole debug session (the editor
+    // shrinks to make room), with a status line and three focusable, scrollable
+    // sections - Locals / Watch / Call Stack.
     bool m_debug_panel_focused = false;
+    // Watch expression being typed in the panel itself: index of the watch being
+    // edited, or -1 for a new one (the "+ Add watch" row).
+    bool        m_dbg_editing     = false;
+    int         m_dbg_edit_index  = -1;
+    std::string m_dbg_edit_text;
+    int         m_dbg_edit_cursor = 0;
+    std::chrono::steady_clock::time_point m_dbg_last_click_time{};
+    int         m_dbg_last_click_x = -1, m_dbg_last_click_y = -1;
+    int  debugPanelWidth() const;                // columns the panel takes; 0 = none
+    void startWatchEdit(int index);              // -1 = new watch
+    void finishWatchEdit(bool commit);
+    void watchLocal(int index);                  // add a local as a watch
+    bool handleDebugPanelMouse(int mx, int my, bool is_press, bool is_dbl,
+                               bool scroll_up, bool scroll_dn);   // true = consumed
     int  m_dbg_section   = 0;         // 0 = Locals, 1 = Watch, 2 = Call Stack
     int  m_dbg_cursor[3] = {0, 0, 0};
     int  m_dbg_scroll[3] = {0, 0, 0};
+    ScrollBar m_dbg_bar[3];          // each section's, on the panel's right frame edge
+    void debugPanelScrollTo(int sec, int top);
     void FocusDebugPanel();          // give / take keyboard focus to the Variables window
     void handleDebugPanelKey(wint_t ch);
     int  debugSectionCount(int section) const;
     bool promptLine(const std::string& label, std::string& out);  // one-line input
-    // Geometry of the Variables window; false when it isn't shown. Fills the outer
-    // box (x0,y0,Wp,Hp) and, per section, the title row / first content row / content
-    // row count.
+    // Geometry of the debug panel; false when it isn't shown. Fills the outer
+    // box (x0,y0,Wp,Hp) and, per section, the title row / first content row /
+    // content row count. The status line is the first row inside the box.
     bool debugPanelLayout(int& x0, int& y0, int& Wp, int& Hp,
                           int titleRow[3], int contentY[3], int contentH[3]) const;
     void refreshDebugData();         // pull locals / stack / watch values from backend
-    void drawDebugPanel();           // floating "Variables" panel (locals/watch/stack)
+    void drawDebugPanel();           // the docked debug panel (status, locals, watch, stack)
     void DebugStartOrContinue();
     void DebugStepOver();
     void DebugStepInto();
@@ -149,6 +168,24 @@ private:
     bool m_compile_output_visible = false;
     std::vector<CompileMessage> m_compile_output_lines;
     int m_compile_output_scroll_pos = 0;
+    // The framed line lists docked at the bottom (the output window, the
+    // references): where they are on screen (set when drawn), their scrollbar
+    // on the right frame edge, and the cursor the view last followed -
+    // scrolling with the mouse leaves the view alone until the cursor moves.
+    struct ListPane {
+        ScrollBar bar;
+        int x = 0, y = 0, w = 0, h = 0;
+        int seen_cursor = -1;
+    };
+    ListPane m_out_pane, m_refs_pane;
+    // Drawing: keeps scroll valid (following a moved cursor) and lays out the bar.
+    void listPaneFollow(ListPane& p, int x, int y, int w, int h, int& scroll, int cursor, int count);
+    void listPaneBar(ListPane& p, int scroll, int count);
+    // The mouse: the bar, the wheel, a click selecting a line. True when the
+    // event was the pane's.
+    bool listPaneMouse(ListPane& p, bool visible, int& scroll, int& cursor, int count,
+                       int mx, int my, bool press, bool motion, bool release,
+                       bool scroll_up, bool scroll_dn);
     int m_compile_output_cursor_pos = 0;
     ViewState m_pre_compile_view_state;
 
@@ -204,6 +241,20 @@ private:
     void drawMenuBar(int active_menu_id = -1);
     void drawStatusBar();
     void drawScrollbars();
+    // The editor window's scrollbars (right of and below its frame), laid out
+    // by drawScrollbars(); clicks and thumb drags go through scrollbarMouse().
+    ScrollBar m_vbar, m_hbar;
+    // Scrolled with the mouse (wheel, scrollbar): the view stays where it was
+    // put instead of following the cursor, until the cursor moves or a key is
+    // pressed. The cursor it was detached at:
+    bool        m_view_detached = false;
+    const Line* m_detach_line   = nullptr;
+    int         m_detach_col    = 0;
+    int         m_detach_buf    = -1;
+    void detachView();
+    bool scrollbarMouse(int mx, int my, bool press, bool motion, bool release);
+    void scrollToLine(int first_line);   // 0-based line shown at the top
+    int  longestLineLength();
     void drawCompileOutputWindow();
     void findAllReferences();
     void drawRefsWindow();
@@ -305,7 +356,12 @@ private:
     void AboutBox();
     void handleToggleComment();
     void showScrollableOutputDialog(const std::vector<std::string>& lines);
-    CompilationResult runCompilationProcess();
+    // Builds the project, or the current file, in the build window, which shows
+    // the output as it comes and can cancel. Afterwards the window stays on the
+    // result (KeepOpen), or only when the build failed (OpenOnFailure: the
+    // caller goes on with what it built).
+    enum class BuildView { KeepOpen, OpenOnFailure };
+    CompilationResult runCompilationProcess(BuildView view);
     void loadHelpFile();
     void showHelpDialog();
     void NotImplemented() { msgwin("Not Implemented yet."); }
@@ -336,6 +392,8 @@ private:
     bool m_project_panel_focused = false;
     int  m_project_panel_cursor  = 0;
     int  m_project_panel_scroll  = 0;
+    ScrollBar m_panel_bar;           // in the project panel's last column, when it is longer
+    void projectPanelScrollTo(int top);
 
     // Bracket-match flash: set by handleSmartBlockClose, consumed by drawTextArea
     Line* m_flash_match_line = nullptr;

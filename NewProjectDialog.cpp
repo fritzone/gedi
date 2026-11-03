@@ -611,6 +611,11 @@ HandleResult NewProjectDialog::onKey(wint_t ch)
     if (grp == GRP_CFG) {
         auto& g = groups()[GRP_CFG];
 
+        // The C++ Standard / Platform combo: Up/Down pick its items, Ctrl+Space
+        // opens it (the shared ComboBox behaviour); Tab moves on.
+        if (g.inner_focus == 1 && rowCombo().handleKey(ch))
+            return HandleResult::CONTINUE;
+
         if (ch == KEY_UP || ch == KEY_DOWN) {
             if (ch == KEY_DOWN) g.inner_focus = (g.inner_focus + 1) % 3;
             else                g.inner_focus = (g.inner_focus == 0) ? 2 : g.inner_focus - 1;
@@ -805,7 +810,9 @@ bool NewProjectDialog::onTab(bool forward)
         }
         if (active == 0) {
             if (cur == GRP_NAME) { setGroupFocus(GRP_PATH); return true; }
-            if (cur == GRP_PATH) { setGroupFocus(GRP_CFG);  return true; }
+            if (cur == GRP_PATH) { setGroupFocus(GRP_CFG); groups()[GRP_CFG].inner_focus = 0; return true; }
+            // Within Configuration: build system, then the combo, then the checkboxes.
+            if (cur == GRP_CFG && groups()[GRP_CFG].inner_focus < 2) { ++groups()[GRP_CFG].inner_focus; return true; }
             if (cur == GRP_CFG)  { setGroupFocus(btn_row); setGroupBtnFocus(BTN_IDX_CREATE); return true; }
         } else {
             if (cur == GRP_LIB)  { setGroupFocus(btn_row); setGroupBtnFocus(BTN_IDX_CREATE); return true; }
@@ -821,11 +828,13 @@ bool NewProjectDialog::onTab(bool forward)
         // content group of the active tab; otherwise step Cancel → Create.
         if (getBtnInnerFocus() == BTN_IDX_CREATE) {
             setGroupFocus(active == 0 ? GRP_CFG : (isWatcom() ? GRP_TABS : GRP_LIB));
+            if (active == 0) groups()[GRP_CFG].inner_focus = 2;
             return true;
         }
         return false;
     }
     if (active == 0) {
+        if (cur == GRP_CFG && groups()[GRP_CFG].inner_focus > 0) { --groups()[GRP_CFG].inner_focus; return true; }
         if (cur == GRP_CFG)  { setGroupFocus(GRP_PATH); return true; }
         if (cur == GRP_PATH) { setGroupFocus(GRP_NAME); return true; }
         if (cur == GRP_NAME) { setGroupFocus(GRP_TABS); return true; }

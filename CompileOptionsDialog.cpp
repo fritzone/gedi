@@ -28,8 +28,8 @@ CompileOptionsDialog::CompileOptionsDialog(Renderer&          renderer,
                                            const GediProject* project,
                                            const std::string& filename)
     : DialogBase(project
-                     ? ("Build Options \xe2\x80\x94 " + project->name)
-                     : ("Compile Options \xe2\x80\x94 " + buildSystem.definition().name),
+                     ? ("Build Options - " + project->name)
+                     : ("Compile Options - " + buildSystem.definition().name),
                  W, H)
     , renderer_   (renderer)
     , buildSystem_(buildSystem)
@@ -98,7 +98,7 @@ void CompileOptionsDialog::onInit()
         OptionList ol;
         ol.x = 2; ol.y = OPT_Y;
         ol.visible_rows = OPT_ROWS;
-        ol.width = W - 6;
+        ol.width = W - 5;            // its scrollbar in the next column, under the tab line's end
         ol.options = options(0);
         g.optionlists.push_back(std::move(ol));
         addGroup(std::move(g));

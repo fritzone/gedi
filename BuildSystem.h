@@ -1,6 +1,7 @@
 #ifndef BUILDSYSTEM_H
 #define BUILDSYSTEM_H
 
+#include <atomic>
 #include <string>
 #include <vector>
 #include <map>
@@ -19,6 +20,15 @@ struct CompilationResult {
     bool success;
     std::string full_command;
     std::string temp_exe;  // if set, delete this executable after running
+    bool cancelled = false;  // stopped by the user (success is then false)
+};
+
+// Following a build while it runs (the build window): every line of output as
+// it is produced, and a flag that stops the build - its tools are killed.
+// on_line is called on the thread running the build.
+struct BuildMonitor {
+    std::function<void(const std::string&)> on_line;
+    const std::atomic<bool>* cancel = nullptr;
 };
 
 struct CompileMessage {
@@ -34,8 +44,10 @@ class BuildSystem {
 public:
     BuildSystem(const Config& config, std::filesystem::path exe_dir = "");
 
-    CompilationResult runCompilationProcess(EditorBuffer& buffer);
-    CompilationResult runProjectBuild(const GediProject& project);
+    // Both can run on a thread of their own; `monitor` (optional) streams the
+    // output and can cancel.
+    CompilationResult runCompilationProcess(EditorBuffer& buffer, const BuildMonitor* monitor = nullptr);
+    CompilationResult runProjectBuild(const GediProject& project, const BuildMonitor* monitor = nullptr);
     std::vector<CompileMessage> parseCompilerOutput(const std::string& full_output_str,
                                                     std::vector<std::string>& output_lines_out,
                                                     const std::string& base_dir = "");

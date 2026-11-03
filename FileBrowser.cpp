@@ -1,5 +1,6 @@
 #include "FileBrowser.h"
 #include "utils.h"
+#include "Widgets.h"
 
 #include "curses_compat.h"
 #include "platform_compat.h"
@@ -232,38 +233,6 @@ void FileBrowser::drawButtons(Renderer& renderer,
     renderer.drawButton(x + w/2 + 2,  y, can_text, can_sel, pressed && can_sel);
 }
 
-void FileBrowser::drawFilterCombo(Renderer& renderer,
-                                   int x, int y, int w,
-                                   const std::vector<FilterEntry>& filters,
-                                   int idx, bool focused)
-{
-    // Prefix " Type: [ " - 9 ASCII chars → 9 display columns.
-    // Suffix " ▼ ]"      - 6 bytes (▼ = \xe2\x96\xbc), 4 display columns.
-    // Suffix "   ]"      - 4 bytes, 4 display columns.
-    // Use display-column counts for layout, not byte sizes.
-    static constexpr int PREFIX_COLS = 9;
-    static constexpr int SUFFIX_COLS = 4;
-    static const std::string prefix       = " Type: [ ";
-    static const std::string suffix_multi = " \xe2\x96\xbc ]";   // " ▼ ]"
-    static const std::string suffix_one   = "   ]";
-
-    const bool        multi   = (filters.size() > 1);
-    const std::string& suffix = multi ? suffix_multi : suffix_one;
-
-    int content_w = (w - 2) - PREFIX_COLS - SUFFIX_COLS;
-    if (content_w < 4) content_w = 4;
-
-    std::string label = (idx < (int)filters.size()) ? filters[idx].label : "";
-    if ((int)label.size() > content_w)
-        label = label.substr(0, content_w - 3) + "...";
-    label += std::string(content_w - (int)label.size(), ' ');
-
-    int color = focused ? Renderer::CP_LIST_SELECTED : Renderer::CP_LIST_BOX;
-    renderer.drawText(x + 1,                        y, prefix, Renderer::CP_DIALOG);
-    renderer.drawText(x + 1 + PREFIX_COLS,          y, label,  color);
-    renderer.drawText(x + 1 + PREFIX_COLS + content_w, y, suffix, Renderer::CP_DIALOG);
-}
-
 //  Focus constants 
 // FB_FILTER is skipped when there is no filter combo (!has_filter_combo).
 // FB_INPUT  is skipped in SELECT_DIR mode.
@@ -274,6 +243,7 @@ constexpr int FB_FILTER = 2;
 constexpr int FB_OK     = 3;
 constexpr int FB_CANCEL = 4;
 constexpr int FB_COUNT  = 5;
+constexpr int FILTER_COMBO_X = 8;   // the "Type:" combo, after its label
 }
 
 //  Core implementation 
@@ -326,6 +296,7 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
     int selection   = 0;
     int top_of_list = 0;
     int filter_idx  = 0;   // active filter in the combo
+    ScrollBar list_bar;    // in the file list's last column, when it is longer
 
     int focus = (mode == Mode::OPEN) ? FB_LIST
               : (mode == Mode::SAVE) ? FB_INPUT
@@ -355,6 +326,17 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
     const int input_y      = list_end_y + 1;                  // only when has_input
     const int filter_y     = has_filter_combo ? input_y + 2 : -1;
     const int btn_y        = starty + h - 3;
+
+    // The "Type:" filter: the program's shared combo box, opening upward so its
+    // list stays inside the browser window (redrawn whole every frame).
+    ComboBox filter_combo;
+    if (has_filter_combo) {
+        std::vector<std::string> labels;
+        for (const auto& fe : filters) labels.push_back(fe.label);
+        filter_combo = ComboBox(labels, 0, FILTER_COMBO_X, filter_y - starty, w - FILTER_COMBO_X - 2);
+        filter_combo.open_up = true;
+        filter_combo.on_change = [&](int i) { filter_idx = i; filename_buf.clear(); };
+    }
 
     //  Helpers 
     auto next_focus = [&](int f, int step) -> int {
@@ -485,6 +467,9 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
         drawPathHeader(renderer, startx, starty, w, current_path, type_search);
         drawFileList  (renderer, startx + 1, starty + 3, list_w, visible_rows,
                        entries, selection, top_of_list, focus == FB_LIST, dirs_only);
+        list_bar.layout(startx + list_w, starty + 3, visible_rows, true,
+                        (int)entries.size(), visible_rows, top_of_list);
+        if (list_bar.needed() && visible_rows >= 3) list_bar.draw(renderer, Renderer::CP_LIST_BOX);
 
         if (!entries.empty() && selection < (int)entries.size())
             drawFileDetails(renderer, details_x, starty + 3, &entries[selection]);
@@ -493,14 +478,17 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
             drawInputField(renderer, startx + 1, input_y, w - 2,
                            input_label, filename_buf, focus == FB_INPUT);
 
-        if (has_filter_combo)
-            drawFilterCombo(renderer, startx, filter_y, w, filters,
-                            filter_idx, focus == FB_FILTER);
+        if (has_filter_combo) {
+            renderer.drawText(startx + 2, filter_y, "Type:", Renderer::CP_DIALOG);
+            filter_combo.draw(renderer, startx, starty, focus == FB_FILTER);
+        }
 
         drawButtons(renderer, startx, btn_y, w,
                     ok_text,  focus == FB_OK,
                     can_text, focus == FB_CANCEL,
                     pressed || btn_hover_pressed);
+        if (filter_combo.dropdown_open)                  // over everything else
+            filter_combo.drawDropdown(renderer, startx, starty);
 
         if (focus == FB_INPUT && has_input) {
             std::string full_label = " " + input_label + " ";
@@ -519,6 +507,23 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
 
         //  Input 
         wint_t ch = renderer.getChar();
+
+        // The filter combo: an open list gets every key (a lone Esc closes only
+        // the list); a focused, closed one takes Up/Down and Ctrl+Space.
+        if (has_filter_combo && ch != KEY_MOUSE) {
+            if (filter_combo.dropdown_open && ch == 27) {
+                timeout(50);
+                wint_t next = renderer.getChar();
+                timeout(-1);
+                filter_combo.close();
+                if (next == (wint_t)ERR) continue;
+                unget_wch(next);
+                ch = 27;                                     // handled as Alt+<next> below
+            } else if ((filter_combo.dropdown_open || focus == FB_FILTER) &&
+                       filter_combo.handleKey(ch)) {
+                continue;
+            }
+        }
 
         // ESC / Alt-hotkey
         if (ch == 27) {
@@ -560,8 +565,6 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
                 }
             } else if (focus == FB_INPUT) {
                 focus = FB_LIST;
-            } else if (focus == FB_FILTER) {
-                focus = has_input ? FB_INPUT : FB_LIST;
             } else if (focus == FB_OK || focus == FB_CANCEL) {
                 focus = next_focus(FB_OK, -1);
             }
@@ -579,24 +582,18 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
                 }
             } else if (focus == FB_INPUT) {
                 focus = next_focus(FB_INPUT, +1);
-            } else if (focus == FB_FILTER) {
-                focus = FB_OK;
             }
             break;
 
         case KEY_LEFT:
             if (focus == FB_CANCEL) {
                 focus = FB_OK;
-            } else if (focus == FB_FILTER && has_filter_combo) {
-                if (filter_idx > 0) { --filter_idx; filename_buf.clear(); }
             }
             break;
 
         case KEY_RIGHT:
             if (focus == FB_OK) {
                 focus = FB_CANCEL;
-            } else if (focus == FB_FILTER && has_filter_combo) {
-                if (filter_idx < (int)filters.size() - 1) { ++filter_idx; filename_buf.clear(); }
             }
             break;
 
@@ -651,6 +648,18 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
             bool is_scroll_dn = (ev.bstate & BUTTON5_PRESSED)        != 0;
             int mx = ev.x, my = ev.y;
 
+            // The filter combo: an open list takes the press (or closes); a
+            // press on the closed combo focuses it, on its arrow opens it.
+            if (has_filter_combo && (is_press || is_clicked) &&
+                filter_combo.handleMouse(startx, starty, mx, my)) {
+                focus = FB_FILTER;
+                break;
+            }
+            // The wheel scrolls the filter list while it is open.
+            if (has_filter_combo && (is_scroll_up || is_scroll_dn) &&
+                filter_combo.handleWheel(is_scroll_up))
+                break;
+
             // Lambdas for button hit-testing (same coordinates as drawButtons)
             auto overOK  = [&]{ return my == btn_y
                                      && mx >= startx + w/2 - 12
@@ -658,6 +667,33 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
             auto overCan = [&]{ return my == btn_y
                                      && mx >= startx + w/2 + 2
                                      && mx <  startx + w/2 + 2  + (int)can_text.size(); };
+
+            // A drag of the open filter list's thumb.
+            if (has_filter_combo && filter_combo.scrollDragging()) {
+                const bool motion = (ev.bstate & (BUTTON1_MOTION | REPORT_MOUSE_POSITION)) != 0;
+                filter_combo.scrollMouse(startx, starty, mx, my, false, motion, is_release);
+                break;
+            }
+
+            // The file list's scrollbar: a click, or a thumb drag's moves and
+            // release. The selection stays in view, as with the wheel.
+            {
+                const bool pos_rpt = (ev.bstate & REPORT_MOUSE_POSITION) != 0;
+                const bool motion  = (ev.bstate & (BUTTON1_MOTION | REPORT_MOUSE_POSITION)) != 0;
+                const bool press   = is_press && !pos_rpt;
+                int t;
+                if ((press || list_bar.dragging()) && list_bar.needed() && visible_rows >= 3 &&
+                    list_bar.mouse(mx, my, press, motion, is_release, t)) {
+                    top_of_list = t;
+                    if (!entries.empty()) {
+                        selection = std::clamp(selection, top_of_list,
+                                               std::min((int)entries.size(), top_of_list + visible_rows) - 1);
+                        sync_filename(entries);
+                    }
+                    focus = FB_LIST;
+                    break;
+                }
+            }
 
             // Scroll wheel over the file list
             if (is_scroll_up || is_scroll_dn) {
@@ -745,19 +781,6 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
                 break;
             }
 
-            // Filter combo
-            if (has_filter_combo && filter_y >= 0 && my == filter_y) {
-                focus = FB_FILTER;
-                constexpr int PREFIX_COLS = 9;
-                constexpr int SUFFIX_COLS = 4;
-                int suffix_x = startx + 1 + PREFIX_COLS + ((w - 2) - PREFIX_COLS - SUFFIX_COLS);
-                if (mx >= suffix_x && (int)filters.size() > 1) {
-                    filter_idx = (filter_idx + 1) % (int)filters.size();
-                    filename_buf.clear();
-                }
-                break;
-            }
-
             // Button press: capture - show pressed, don't fire yet.
             if (overOK())        { btn_capture = 0; btn_hover_pressed = true; focus = FB_OK;     }
             else if (overCan())  { btn_capture = 1; btn_hover_pressed = true; focus = FB_CANCEL; }
@@ -783,12 +806,6 @@ std::string FileBrowser::run(Renderer& renderer, Mode mode,
                 pressed = true;
             } else if (focus == FB_OK || focus == FB_INPUT) {
                 if (tryAccept()) pressed = true;
-            } else if (focus == FB_FILTER) {
-                // Enter on combo cycles to next filter (wraps around)
-                if (has_filter_combo && filters.size() > 1) {
-                    filter_idx = (filter_idx + 1) % (int)filters.size();
-                    filename_buf.clear();
-                }
             } else if (focus == FB_LIST && selection < (int)entries.size()) {
                 auto& sel = entries[selection];
                 if (sel.is_directory) {
