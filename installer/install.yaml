@@ -92,6 +92,10 @@ components:
         to: icons/gedi_1.0-icon.png
       - from: colors.json
       - from: config.json
+      # The library picker in New Project and the #include guessing both
+      # shell out to these; without them on disk both features are inert.
+      - from: librarian.py
+      - from: cguess.py
       - from: VGA9.F16
       - from: SMVGA.F16
       - dir: fonts

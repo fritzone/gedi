@@ -4369,12 +4369,16 @@ void TextEditor::CreateNewProject()
 
         //  Git init (optional)
         if (temp.init_git) {
+            // Windows: through the no-window shell. std::system() hands the
+            // command to cmd.exe, and a Windows-subsystem process has no
+            // console of its own to lend it, so Windows would put a visible
+            // one on screen for as long as git takes to run.
 #ifdef _WIN32
-            std::string cmd = "git -C \"" + root.string() + "\" init -q 2>NUL";
+            auto t = gedi_shell("git -C \"" + root.string() + "\" init -q 2>NUL");
 #else
             std::string cmd = "git -C \"" + root.string() + "\" init -q 2>/dev/null";
-#endif
             auto t = std::system(cmd.c_str());
+#endif
             (void)t;
 
             std::ofstream gi(root / ".gitignore");

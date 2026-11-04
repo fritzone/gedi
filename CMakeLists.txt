@@ -135,7 +135,7 @@ if(CURSES_FOUND)
     add_executable(gedi ${GEDI_COMMON_SOURCES})
     target_include_directories(gedi PRIVATE ${CURSES_INCLUDE_DIRS} ${CLANG_INCLUDE_DIR})
     target_link_libraries(gedi ${CURSES_LIBRARIES} ${CLANG_LIBRARY})
-    copy_data_files(gedi colors.json config.json help.hlp)
+    copy_data_files(gedi colors.json config.json help.hlp librarian.py cguess.py)
     copy_templates(gedi)
     install(TARGETS gedi DESTINATION bin)
 else()
@@ -219,7 +219,11 @@ if(SDL2_FOUND)
             set_target_properties(gedi-gui PROPERTIES LINK_FLAGS "/ENTRY:mainCRTStartup")
         endif()
     endif()
-    copy_data_files(gedi-gui colors.json config.json help.hlp icons/gedi_1.0-icon.png)
+    # librarian.py / cguess.py are looked for next to the executable first;
+    # without them there they are only found when the working directory happens
+    # to be the source tree.
+    copy_data_files(gedi-gui colors.json config.json help.hlp icons/gedi_1.0-icon.png
+                             librarian.py cguess.py)
     copy_templates(gedi-gui)
     # The VGA fonts live in graphics_engine/; copy them next to the binary.
     add_custom_command(TARGET gedi-gui POST_BUILD
