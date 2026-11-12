@@ -4889,6 +4889,26 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
         disableFor(2, EditorAction::ACT_PROJECT_PROPERTIES);
     }
 
+    // Project > Run (sel 8): runs the project's program. With several
+    // executable targets it opens a sub-menu with one entry per target.
+    const std::vector<std::string> run_targets =
+        (menu_id == 6) ? m_project.runnableTargets() : std::vector<std::string>{};
+    const bool run_submenu = run_targets.size() > 1;
+    if (menu_id == 6) {
+        finalMenuItems.push_back(" -------------- ");                          // sel 7
+        if (run_submenu) {
+            const std::string label = "&Run", arrow = " >";
+            finalMenuItems.push_back(" " + label +
+                std::string(30 - 1 - label.size() - arrow.size(), ' ') + arrow);   // sel 8
+        } else {
+            finalMenuItems.push_back(formatMenuItem("&Run", EditorAction::ACT_RUN)); // sel 8
+        }
+        item_disabled.resize(finalMenuItems.size(), false);
+        item_disabled[7] = m_project.name.empty() || run_targets.empty() ||
+                           !unavailableReason(EditorAction::ACT_RUN).empty();
+    }
+    const bool run_enabled = menu_id == 6 && !item_disabled[7];
+
     if (menu_id == 7) { // Window menu
         finalMenuItems.push_back(" ----------------- ");
         for(size_t i = 0; i < m_bufferManager->bufferCount() && i < 10; ++i) {
@@ -4982,6 +5002,7 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
         case KEY_LEFT:  copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return NAVIGATE_LEFT;
         case KEY_RIGHT:
             if (menu_id == 1 && selection == 7 && !m_config.recent_files.empty()) goto handle_selection;
+            if (menu_id == 6 && selection == 8 && run_enabled && run_submenu) goto handle_selection;
             copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return NAVIGATE_RIGHT;
         case KEY_RESIZE: copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return RESIZE_OCCURRED;
         case 27: {
@@ -5114,6 +5135,28 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
                 }
                 break; // sub-menu dismissed: redraw parent and continue
             }
+            if (menu_id == 6 && selection == 8 && run_submenu) {
+                int item_w = 20;
+                for (const auto& n : run_targets) item_w = std::max(item_w, (int)n.size() + 4);
+                item_w = std::min(item_w, 50);
+                int sub_x = x + w - 1;
+                int sub_y = y + selection;
+                if (sub_x + item_w + 4 > m_renderer->getWidth()) sub_x = x - (item_w + 4);
+                int t_idx = showPopupSubMenu(sub_x, sub_y, run_targets, item_w);
+                if (t_idx == -2) {
+                    // ESC+key queued: close this menu too (see the recent files case)
+                    copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE);
+                    delwin(behind);
+                    nodelay(stdscr, TRUE);
+                    return CLOSE_MENU;
+                }
+                if (t_idx >= 0 && t_idx < (int)run_targets.size()) {
+                    delwin(behind); drawEditorState(-1); nodelay(stdscr, TRUE);
+                    compileAndRun(run_targets[t_idx]);
+                    return ITEM_SELECTED;
+                }
+                break; // sub-menu dismissed: redraw parent and continue
+            }
             delwin(behind); drawEditorState(-1); nodelay(stdscr, TRUE);
             // Re-numbered cases for menu logic
             switch (menu_id) {
@@ -5162,6 +5205,7 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
                 else if (selection == 3) ProjectProperties();
                 else if (selection == 4) CloseProject();
                 else if (selection == 6) AddFileToProject();
+                else if (selection == 8) compileAndRun(run_targets.empty() ? std::string() : run_targets.front());
                 break;
             case 7: // Window
                 if (selection == 1) {
@@ -5213,100 +5257,119 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
 int TextEditor::showRecentFilesSubMenu(int x, int y) {
     const int max_files = std::min((int)m_config.recent_files.size(), 9);
     if (max_files == 0) return -1;
+    std::vector<std::string> names;
+    for (int i = 0; i < max_files; ++i)
+        names.push_back(get_filename_from_path(m_config.recent_files[i]));
+    return showPopupSubMenu(x, y, names, 30);
+}
 
-    const int item_w = 30;  // item string width; box width = item_w + 4 (2-char margin each side)
+int TextEditor::showPopupSubMenu(int x, int y, const std::vector<std::string>& names, int item_w) {
+    const int count = (int)names.size();
+    if (count == 0) return -1;
+
+    // Entries: " &1 name" for the first nine (hotkeys 1-9), "    name" after.
+    // Each one is item_w columns wide on screen ('&' takes none).
     std::vector<std::string> items;
-    items.reserve(max_files);
-    for (int i = 0; i < max_files; ++i) {
-        std::string name = get_filename_from_path(m_config.recent_files[i]);
-        std::string prefix = " &" + std::to_string(i + 1) + " ";
-        int available = item_w - (int)prefix.size() - 1;
+    items.reserve(count);
+    for (int i = 0; i < count; ++i) {
+        const bool hot = i < 9;
+        std::string prefix = hot ? " &" + std::to_string(i + 1) + " " : std::string(3, ' ');
+        std::string name = names[i];
+        const int available = item_w - 3 - 1;   // 3 = shown prefix, 1 = right margin
         if ((int)name.size() > available)
             name = "..." + name.substr(name.size() - (available - 3));
         std::string item = prefix + name;
-        item.resize(item_w - 1, ' ');
-        item += ' ';
+        item.resize(item_w + (hot ? 1 : 0), ' ');
         items.push_back(item);
     }
 
-    int w = item_w + 4;  // same "+4" pattern as CallSubMenu: items fit inside box with margin
-    int h = (int)items.size() + 2;
+    const int scr_h = m_renderer->getHeight();
+    const int visible = std::max(1, std::min(count, scr_h - 3));   // below the menu bar
+    const int w = item_w + 4;   // same "+4" pattern as CallSubMenu: items fit inside box with margin
+    const int h = visible + 2;
 
     if (x + w > m_renderer->getWidth()) x = m_renderer->getWidth() - w;
     if (x < 0) x = 0;
-    if (y + h > m_renderer->getHeight()) y = m_renderer->getHeight() - h;
+    if (y + h > scr_h) y = scr_h - h;
     if (y < 1) y = 1;
 
-    WINDOW* behind = newwin(h + 1, w + 1, y, x);
-    copywin(stdscr, behind, y, x, 0, 0, h, w, FALSE);
+    // Save what the pop-up and its shadow (one more row and column) cover, but
+    // only the part on screen: a list as tall as the screen puts the shadow row
+    // below the last line, and ncurses' newwin() refuses a window that leaves
+    // the screen - copywin() on that NULL crashes the text build.
+    const int save_h = std::min(h + 1, scr_h - y);
+    const int save_w = std::min(w + 1, m_renderer->getWidth() - x);
+    WINDOW* behind = newwin(save_h, save_w, y, x);
+    if (behind) copywin(stdscr, behind, y, x, 0, 0, save_h - 1, save_w - 1, FALSE);
     m_renderer->drawShadow(x, y, w, h);
+    auto close = [&](int result) {
+        if (behind) {
+            copywin(behind, stdscr, 0, 0, y, x, y + save_h - 1, x + save_w - 1, FALSE);
+            delwin(behind);
+        }
+        return result;
+    };
 
-    int selection = 1;
+    int selection = 0;   // index into items
+    int top = 0;         // first entry shown
+    auto select = [&](int idx) {
+        selection = std::clamp(idx, 0, count - 1);
+        if (selection < top) top = selection;
+        if (selection >= top + visible) top = selection - visible + 1;
+    };
     while (true) {
         m_renderer->drawBox(x, y, w, h, Renderer::CP_MENU_ITEM, Renderer::SINGLE);
-        for (int i = 0; i < (int)items.size(); ++i) {
-            m_renderer->drawText(x + 1, y + 1 + i, std::string(w - 2, ' '), Renderer::CP_MENU_ITEM);
-            int color = ((i + 1) == selection) ? Renderer::CP_MENU_SELECTED : Renderer::CP_MENU_ITEM;
-            m_renderer->drawStyledText(x + 2, y + 1 + i, items[i], color);
+        for (int r = 0; r < visible; ++r) {
+            const int i = top + r;
+            m_renderer->drawText(x + 1, y + 1 + r, std::string(w - 2, ' '), Renderer::CP_MENU_ITEM);
+            int color = (i == selection) ? Renderer::CP_MENU_SELECTED : Renderer::CP_MENU_ITEM;
+            m_renderer->drawStyledText(x + 2, y + 1 + r, items[i], color);
         }
+        // More entries above / below than fit: arrows on the right border.
+        wattron(stdscr, COLOR_PAIR(Renderer::CP_MENU_ITEM));
+        if (top > 0)                 mvaddch(y + 1, x + w - 1, ACS_UARROW);
+        if (top + visible < count)   mvaddch(y + h - 2, x + w - 1, ACS_DARROW);
+        wattroff(stdscr, COLOR_PAIR(Renderer::CP_MENU_ITEM));
         m_renderer->refresh();
 
         wint_t ch = m_renderer->getChar();
         switch (ch) {
-        case KEY_UP:
-            if (selection > 1) --selection; else selection = (int)items.size();
-            break;
-        case KEY_DOWN:
-            if (selection < (int)items.size()) ++selection; else selection = 1;
-            break;
-        case KEY_LEFT: {
-            copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE);
-            delwin(behind);
-            return -1;
-        }
+        case KEY_UP:    select(selection > 0 ? selection - 1 : count - 1); break;
+        case KEY_DOWN:  select(selection < count - 1 ? selection + 1 : 0); break;
+        case KEY_PPAGE: select(selection - visible); break;
+        case KEY_NPAGE: select(selection + visible); break;
+        case KEY_HOME:  select(0); break;
+        case KEY_END:   select(count - 1); break;
+        case KEY_LEFT:  return close(-1);
         case 27: {
             timeout(50);
             wint_t next_ch = m_renderer->getChar();
             timeout(-1);
-            copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE);
-            delwin(behind);
             if (next_ch != (wint_t)ERR) {
                 // Push ESC+key back; return -2 so caller closes the parent menu too.
                 // The main loop will then replay the sequence in its own clean context.
                 unget_wch(next_ch);
                 unget_wch(27);
-                return -2;
+                return close(-2);
             }
-            return -1;
+            return close(-1);
         }
-        case KEY_ENTER: case 10: case 13: {
-            int result = selection - 1;
-            copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE);
-            delwin(behind);
-            return result;
-        }
+        case KEY_ENTER: case 10: case 13:
+            return close(selection);
         case KEY_MOUSE: {
             MEVENT mev;
             if (getmouse(&mev) == OK) {
-                if (mev.bstate & (BUTTON1_PRESSED | BUTTON1_CLICKED)) {
-                    if (mev.x >= x+1 && mev.x < x+w-1 && mev.y >= y+1 && mev.y < y+h-1) {
-                        int clicked = mev.y - y;
-                        if (clicked >= 1 && clicked <= (int)items.size()) {
-                            copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE);
-                            delwin(behind);
-                            return clicked - 1;
-                        }
-                    } else {
-                        copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE);
-                        delwin(behind);
-                        return -1;
-                    }
+                const bool inside = mev.x >= x+1 && mev.x < x+w-1 && mev.y >= y+1 && mev.y < y+h-1;
+                const bool is_pos_rpt = (mev.bstate & REPORT_MOUSE_POSITION) != 0;
+                if (mev.bstate & BUTTON4_PRESSED) {
+                    select(selection - 1);
+                } else if (mev.bstate & BUTTON5_PRESSED) {
+                    select(selection + 1);
+                } else if ((mev.bstate & (BUTTON1_PRESSED | BUTTON1_CLICKED)) && !is_pos_rpt) {
+                    if (!inside) return close(-1);
+                    return close(top + (mev.y - y - 1));
                 } else if (mev.bstate & (REPORT_MOUSE_POSITION | BUTTON1_MOTION)) {
-                    if (mev.x >= x+1 && mev.x < x+w-1 && mev.y >= y+1 && mev.y < y+h-1) {
-                        int hovered = mev.y - y;
-                        if (hovered >= 1 && hovered <= (int)items.size())
-                            selection = hovered;
-                    }
+                    if (inside) select(top + (mev.y - y - 1));
                 }
             }
             break;
@@ -5314,11 +5377,7 @@ int TextEditor::showRecentFilesSubMenu(int x, int y) {
         default:
             if (ch >= '1' && ch <= '9') {
                 int idx = (int)(ch - '1');
-                if (idx < max_files) {
-                    copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE);
-                    delwin(behind);
-                    return idx;
-                }
+                if (idx < count) return close(idx);
             }
             break;
         }
@@ -5822,7 +5881,7 @@ void TextEditor::finishRunProgram() {}
 void TextEditor::killRunProgram() {}
 #endif
 
-CompilationResult TextEditor::runCompilationProcess(BuildView view) {
+CompilationResult TextEditor::runCompilationProcess(BuildView view, const std::string& run_target) {
     CompilationResult result;
     result.success = false;
 
@@ -5862,7 +5921,7 @@ CompilationResult TextEditor::runCompilationProcess(BuildView view) {
     std::string base_dir;
     if (!m_project.name.empty()) {
         runInWindow([&](const BuildMonitor& monitor) {
-            return m_buildSystem->runProjectBuild(m_project, &monitor);
+            return m_buildSystem->runProjectBuild(m_project, &monitor, run_target);
         });
         base_dir = m_project.root;
     } else {
@@ -5948,12 +6007,12 @@ CompilationResult TextEditor::runCompilationProcess(BuildView view) {
 }
 
 // --- Modified to show an immediate "Compiling..." message ---
-void TextEditor::compileAndRun() {
+void TextEditor::compileAndRun(const std::string& run_target) {
     if (refuseForProject(EditorAction::ACT_RUN)) return;
     // The build window shows the build as it runs. On failure (or a cancel) it
     // stays on the log so the user can see what went wrong; on success it
     // closes and the program runs - no intermediate dialogs to dismiss first.
-    CompilationResult result = runCompilationProcess(BuildView::OpenOnFailure);
+    CompilationResult result = runCompilationProcess(BuildView::OpenOnFailure, run_target);
     if (!result.success) {
         m_compile_output_visible = true;
         m_renderer->hideCursor();

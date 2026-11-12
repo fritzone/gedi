@@ -138,6 +138,33 @@ struct GediProject {
 
     bool hasExternalBuildFile() const { return !build_file.empty(); }
 
+    // Names of the targets that build a program (the ones Project > Run offers).
+    // An imported makefile's "<dir> (other files)" targets only group sources
+    // no real target claimed (see MakefileImporter) - nothing to run there.
+    std::vector<std::string> runnableTargets() const
+    {
+        static constexpr std::string_view kOtherFiles = " (other files)";
+        std::vector<std::string> names;
+        for (const auto& t : targets) {
+            if (!t.isExecutable()) continue;
+            if (hasExternalBuildFile() && t.name.size() >= kOtherFiles.size() &&
+                t.name.compare(t.name.size() - kOtherFiles.size(), kOtherFiles.size(), kOtherFiles) == 0)
+                continue;
+            names.push_back(t.name);
+        }
+        return names;
+    }
+
+    // The program a plain Run starts: the executable target named after the
+    // project, else the first executable target, else the project's name.
+    std::string defaultRunTarget() const
+    {
+        const std::vector<std::string> names = runnableTargets();
+        for (const auto& n : names)
+            if (n == name) return n;
+        return names.empty() ? name : names.front();
+    }
+
     // Built with Open Watcom's wmake: an imported Watcom makefile, or a
     // project gedi generates a Watcom makefile for.
     bool usesWmake() const { return make_tool == "wmake" || build_system == "watcom"; }

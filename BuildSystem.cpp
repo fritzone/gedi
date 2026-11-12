@@ -410,11 +410,18 @@ static std::string externalMakeCommand(const GediProject& project)
     return cmd;
 }
 
-// The program an imported project produces: its first executable target.
-static std::string externalExecutable(const GediProject& project)
+// The program an imported project produces for the executable target named
+// `target`; the first executable target when no target has that name.
+static std::string externalExecutable(const GediProject& project, const std::string& target)
 {
+    const ProjectTarget* chosen = nullptr;
     for (const auto& t : project.targets) {
         if (!t.isExecutable()) continue;
+        if (!chosen) chosen = &t;
+        if (t.name == target) { chosen = &t; break; }
+    }
+    if (chosen) {
+        const ProjectTarget& t = *chosen;
         std::filesystem::path p = std::filesystem::path(project.root) / t.name;
         if (project.build_system == "watcom" && !project.hasExternalBuildFile()) {
             p += project.watcomPlatform().exe_ext;              // as the generated makefile names it
@@ -517,9 +524,12 @@ static std::string watcomPlatformInclude(const WatcomPlatform& plat, const std::
     return list;
 }
 
-CompilationResult BuildSystem::runProjectBuild(const GediProject& project, const BuildMonitor* monitor) {
+CompilationResult BuildSystem::runProjectBuild(const GediProject& project, const BuildMonitor* monitor,
+                                               const std::string& run_target) {
     CompilationResult result;
     result.success = false;
+    // The program to report as built - see executable_name below.
+    const std::string exe_target = run_target.empty() ? project.defaultRunTarget() : run_target;
 
     const std::string& root = project.root;
     std::string build_dir;
@@ -568,7 +578,7 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project, const
     if (project.hasExternalBuildFile() || project.usesWmake()) {
         build_dir = root;
         build_cmd = externalMakeCommand(project) + " 2>&1";
-        result.executable_name = externalExecutable(project);
+        result.executable_name = externalExecutable(project, exe_target);
         // A makefile gedi generated for an Open Watcom platform compiles with
         // that platform's headers - older ones of those makefiles do not name
         // them, so they come from INCLUDE.
@@ -611,14 +621,14 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project, const
         }
         say("");
         build_cmd = "cmake --build \"" + build_dir + "\" 2>&1";
-        result.executable_name = build_dir + "/" + project.name;
+        result.executable_name = build_dir + "/" + exe_target;
 
     } else if (project.build_system == "make") {
         if (!def.make) return refuse("Make", def);
         build_dir = root;
         build_cmd = "make -C \"" + root + "\" CXX=\"" + m_config.toolchain.cxx + def.argsString() +
                     "\" CXXFLAGS=\"" + cxxflags + "\" 2>&1";
-        result.executable_name = root + "/" + project.name;
+        result.executable_name = root + "/" + exe_target;
 
     } else if (project.build_system == "meson") {
         if (!def.meson) return refuse("Meson", def);
@@ -642,7 +652,7 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project, const
         }
         build_cmd = withEnv("CXXFLAGS", cxxflags,
                             "ninja -C \"" + build_dir + "\"") + " 2>&1";
-        result.executable_name = build_dir + "/" + project.name;
+        result.executable_name = build_dir + "/" + exe_target;
 
     } else {
         say("Unknown build system: " + project.build_system);
@@ -659,7 +669,7 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project, const
         // Replace the pre-build guess with the actual binary location - the
         // guess doesn't account for per-config output subdirectories (CMake's
         // Visual Studio generator) or the platform's executable suffix.
-        std::string found = findBuiltExecutable(build_dir, project.name);
+        std::string found = findBuiltExecutable(build_dir, exe_target);
         if (!found.empty()) result.executable_name = found;
     }
     return result;

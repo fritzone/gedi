@@ -291,6 +291,11 @@ private:
     void addRecentFile(const std::string& path);
     void OpenRecentFile(const std::string& path);
     int  showRecentFilesSubMenu(int x, int y);
+    // A cascading pop-up list beside a menu item; the first nine entries get
+    // the hotkeys 1-9 and a long list scrolls. Returns the chosen index, -1
+    // when dismissed, -2 when an Alt+key was queued for the main loop (the
+    // parent menu should close too). `item_w` is the width of an entry.
+    int  showPopupSubMenu(int x, int y, const std::vector<std::string>& names, int item_w);
     void clearSemanticColors(EditorBuffer& buffer);
     void clearSemanticColorsFrom(EditorBuffer& buffer, int from_line_0based);
     void insertSemanticLine(EditorBuffer& buffer, int split_line_0based);
@@ -336,7 +341,9 @@ private:
     void PreviousWindow();
     void CloseWindow();
     void SwitchToBuffer(int index);
-    void compileAndRun();
+    // Builds, then runs the program. For a project, `run_target` picks which
+    // executable target's program; empty = GediProject::defaultRunTarget().
+    void compileAndRun(const std::string& run_target = {});
     void compileOnly();
     void ShowOutputScreen();
     // Graphical in-window run-output pane.
@@ -361,7 +368,7 @@ private:
     // result (KeepOpen), or only when the build failed (OpenOnFailure: the
     // caller goes on with what it built).
     enum class BuildView { KeepOpen, OpenOnFailure };
-    CompilationResult runCompilationProcess(BuildView view);
+    CompilationResult runCompilationProcess(BuildView view, const std::string& run_target = {});
     void loadHelpFile();
     void showHelpDialog();
     void NotImplemented() { msgwin("Not Implemented yet."); }

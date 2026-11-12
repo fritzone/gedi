@@ -47,7 +47,10 @@ public:
     // Both can run on a thread of their own; `monitor` (optional) streams the
     // output and can cancel.
     CompilationResult runCompilationProcess(EditorBuffer& buffer, const BuildMonitor* monitor = nullptr);
-    CompilationResult runProjectBuild(const GediProject& project, const BuildMonitor* monitor = nullptr);
+    // `run_target` names the executable target whose program goes into the
+    // result's executable_name; empty = the project's default (defaultRunTarget).
+    CompilationResult runProjectBuild(const GediProject& project, const BuildMonitor* monitor = nullptr,
+                                      const std::string& run_target = {});
     std::vector<CompileMessage> parseCompilerOutput(const std::string& full_output_str,
                                                     std::vector<std::string>& output_lines_out,
                                                     const std::string& base_dir = "");
