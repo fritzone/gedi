@@ -524,12 +524,44 @@ static std::string watcomPlatformInclude(const WatcomPlatform& plat, const std::
     return list;
 }
 
+// Whether the makefile `make_cmd` runs has a rule for `goal` itself: the goal
+// appears as a target in make's database (make -pq reads the makefiles and
+// runs nothing but $(MAKE) lines), not just as something a rule needs.
+static bool gnuMakeHasRule(const std::string& make_cmd, const std::string& goal, const BuildMonitor* monitor)
+{
+#ifdef _WIN32
+    const std::string quiet = " 2>nul";
+#else
+    const std::string quiet = " 2>/dev/null";
+#endif
+    bool found = false;
+    std::string prev;
+    proc::runShell(kLocalePrefix + make_cmd + " -pq" + quiet,
+        [&](const std::string& ln) {
+            if (!found && ln.size() > goal.size() && ln.compare(0, goal.size(), goal) == 0 &&
+                ln[goal.size()] == ':' && (ln.size() == goal.size() + 1 || ln[goal.size() + 1] != '=') &&
+                prev != "# Not a target:")
+                found = true;
+            prev = ln;
+        },
+        monitor ? monitor->cancel : nullptr);
+    return found;
+}
+
 CompilationResult BuildSystem::runProjectBuild(const GediProject& project, const BuildMonitor* monitor,
                                                const std::string& run_target) {
     CompilationResult result;
     result.success = false;
     // The program to report as built - see executable_name below.
     const std::string exe_target = run_target.empty() ? project.defaultRunTarget() : run_target;
+    // A target named by the caller (Project > Run) is the only one built: a
+    // broken program elsewhere in the project does not stop this one running.
+    bool only_target = false;
+    if (!run_target.empty())
+        for (const auto& t : project.targets)
+            if (t.isExecutable() && t.name == run_target) only_target = true;
+    auto quoted = [](const std::string& s) { return "\"" + s + "\""; };
+    std::string full_cmd;   // the whole build, when the targeted one finds no rule for it
 
     const std::string& root = project.root;
     std::string build_dir;
@@ -562,7 +594,8 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project, const
         return result;
     };
 
-    say("=== Building project: " + project.name + " ===");
+    say(only_target ? "=== Building " + run_target + " (project " + project.name + ") ==="
+                    : "=== Building project: " + project.name + " ===");
 
     const CompilerSettings& cs = project.compiler_settings;
     const compilers::Definition& def = definition();
@@ -579,6 +612,25 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project, const
         build_dir = root;
         build_cmd = externalMakeCommand(project) + " 2>&1";
         result.executable_name = externalExecutable(project, exe_target);
+        if (only_target) {
+            // make's goal is the target's file: for wmake the program file
+            // (X.exe), for GNU make the target as the makefile names it.
+            const std::string goal = project.usesWmake()
+                ? std::filesystem::path(result.executable_name).lexically_relative(root).generic_string()
+                : run_target;
+            // GNU make would build a goal it has no rule for with a built-in
+            // one ("%: %.c", default compiler and flags) - wrong for a program a
+            // sub-make builds. Only a goal the makefile itself has a rule for
+            // is built alone; the rest build everything, as before.
+            if (!project.usesWmake() && !gnuMakeHasRule(externalMakeCommand(project), goal, monitor)) {
+                say("The makefile has no rule of its own for " + goal + " - building everything.");
+                only_target = false;
+            }
+            if (only_target) {
+                full_cmd  = build_cmd;
+                build_cmd = externalMakeCommand(project) + " " + quoted(goal) + " 2>&1";
+            }
+        }
         // A makefile gedi generated for an Open Watcom platform compiles with
         // that platform's headers - older ones of those makefiles do not name
         // them, so they come from INCLUDE.
@@ -620,14 +672,16 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project, const
             return result;
         }
         say("");
-        build_cmd = "cmake --build \"" + build_dir + "\" 2>&1";
+        build_cmd = "cmake --build \"" + build_dir + "\"" +
+                    (only_target ? " --target " + quoted(run_target) : std::string()) + " 2>&1";
         result.executable_name = build_dir + "/" + exe_target;
 
     } else if (project.build_system == "make") {
         if (!def.make) return refuse("Make", def);
         build_dir = root;
         build_cmd = "make -C \"" + root + "\" CXX=\"" + m_config.toolchain.cxx + def.argsString() +
-                    "\" CXXFLAGS=\"" + cxxflags + "\" 2>&1";
+                    "\" CXXFLAGS=\"" + cxxflags + "\"" +
+                    (only_target ? " " + quoted(run_target) : std::string()) + " 2>&1";
         result.executable_name = root + "/" + exe_target;
 
     } else if (project.build_system == "meson") {
@@ -650,8 +704,14 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project, const
             // Update build type if project already configured
             run_cmd("meson configure \"" + build_dir + "\" --buildtype=" + buildtype + " 2>&1");
         }
+#ifdef _WIN32
+        const std::string ninja_goal = run_target + ".exe";   // ninja names the output file
+#else
+        const std::string ninja_goal = run_target;
+#endif
         build_cmd = withEnv("CXXFLAGS", cxxflags,
-                            "ninja -C \"" + build_dir + "\"") + " 2>&1";
+                            "ninja -C \"" + build_dir + "\"" +
+                            (only_target ? " " + quoted(ninja_goal) : std::string())) + " 2>&1";
         result.executable_name = build_dir + "/" + exe_target;
 
     } else {
@@ -659,7 +719,23 @@ CompilationResult BuildSystem::runProjectBuild(const GediProject& project, const
         return result;
     }
 
+    const size_t first_line = result.output_lines.size();
     result.success = run_cmd(build_cmd, build_env);
+    if (!result.success && !result.cancelled && !full_cmd.empty()) {
+        // An imported makefile may build the target in a sub-make, with no rule
+        // for it at the top: then build everything as before.
+        bool no_rule = false;
+        for (size_t i = first_line; i < result.output_lines.size(); ++i) {
+            const std::string& ln = result.output_lines[i];
+            if (ln.find("No rule to make target") != std::string::npos ||
+                ln.find("not mentioned in any makefile") != std::string::npos) { no_rule = true; break; }
+        }
+        if (no_rule) {
+            say("");
+            say("The makefile has no rule for " + run_target + " itself - building everything.");
+            result.success = run_cmd(full_cmd, build_env);
+        }
+    }
     say("");
     say(result.success   ? "=== Build successful ==="
       : result.cancelled ? "=== Build cancelled ==="
@@ -1156,7 +1232,8 @@ std::string BuildSystem::guessCompileCommand(const std::string& filename) {
 }
 
 std::vector<std::string> BuildSystem::getClangArguments(const std::string& filename,
-                                                        const CompilerSettings& settings) {
+                                                        const CompilerSettings& settings,
+                                                        bool run_guess) {
     std::vector<std::string> args;
     args.push_back("-xc++");
     args.push_back("-std=" + (settings.cpp_standard.empty() ? "c++20" : settings.cpp_standard));
@@ -1176,7 +1253,13 @@ std::vector<std::string> BuildSystem::getClangArguments(const std::string& filen
         }
     };
     pick(compilers::optionalFlags(settings, definition()));
-    pick(guessCompileCommand(filename));
+    if (run_guess) {
+        pick(guessCompileCommand(filename));
+    } else {
+        std::lock_guard<std::mutex> lk(m_cache_mutex);
+        auto it = m_compile_command_cache.find(filename);
+        if (it != m_compile_command_cache.end()) pick(it->second);
+    }
     return args;
 }
 

@@ -136,6 +136,8 @@ struct GediProject {
     std::vector<std::string> include_dirs;     // -I directories, relative to root (code intelligence)
     std::vector<std::string> defines;          // -D definitions (code intelligence)
 
+    int panel_width = 0;   // project panel width in columns, set by resizing it; 0 = default
+
     bool hasExternalBuildFile() const { return !build_file.empty(); }
 
     // Names of the targets that build a program (the ones Project > Run offers).

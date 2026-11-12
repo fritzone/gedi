@@ -6,6 +6,9 @@
 #include "utils.h"
 #include "TemplateEngine.h"
 #include "MakefileImporter.h"
+#include "FileSearch.h"
+#include "QuickOpenDialog.h"
+#include "ClangOutline.h"
 
 #include "curses_compat.h"
 #include <clang-c/Index.h>
@@ -1094,6 +1097,90 @@ void TextEditor::drawStatusBar() {
         return;
     }
 
+    // Dragging the project panel's border: the width.
+    if (m_panel_dragging) {
+        const std::string width = "Panel width: " + std::to_string(panelWidth()) + " ";
+        m_renderer->drawText(1, h - 1, "Release the mouse button to keep this width", Renderer::CP_STATUS_BAR);
+        m_renderer->drawText(w - 1 - (int)width.size(), h - 1, width, Renderer::CP_STATUS_BAR_HIGHLIGHT);
+        return;
+    }
+
+    // Resizing the project panel: its keys and the width.
+    if (m_panel_resizing) {
+        const std::pair<const char*, const char*> keys[] = {
+            // Most needed first: a narrow screen drops the rest.
+            { "Left/Right", "Width" }, { "Enter", "Keep" }, { "Esc", "Cancel" },
+            { "Shift", "x5" }, { "Home/End", "Min/Max" } };
+        const std::string width = "Panel width: " + std::to_string(panelWidth()) + " ";
+        const int right = w - 1 - (int)width.size();
+        m_renderer->drawText(right, h - 1, width, Renderer::CP_STATUS_BAR_HIGHLIGHT);
+        int x = 1;
+        for (const auto& [key, label] : keys) {
+            const int need = (int)strlen(key) + 1 + (int)strlen(label) + 2;
+            if (x + need > right) break;
+            m_renderer->drawText(x, h - 1, key, Renderer::CP_STATUS_BAR_HIGHLIGHT);
+            x += (int)strlen(key) + 1;
+            m_renderer->drawText(x, h - 1, label, Renderer::CP_STATUS_BAR);
+            x += (int)strlen(label) + 2;
+        }
+        return;
+    }
+
+    // The results pane (references, Find in Files) takes the keys while it is open.
+    if (m_refs_visible && !m_project_panel_focused && !m_compile_output_visible) {
+        const std::pair<const char*, const char*> keys[] = {
+            { "Enter", "Go to" }, { "Space", "Show" }, { "Up/Down", "Select" }, { "Esc", "Close" } };
+        int x = 1;
+        for (const auto& [key, label] : keys) {
+            const int need = (int)strlen(key) + 1 + (int)strlen(label) + 2;
+            if (x + need > w - 1) break;
+            m_renderer->drawText(x, h - 1, key, Renderer::CP_STATUS_BAR_HIGHLIGHT);
+            x += (int)strlen(key) + 1;
+            m_renderer->drawText(x, h - 1, label, Renderer::CP_STATUS_BAR);
+            x += (int)strlen(label) + 2;
+        }
+        if (!m_refs_lines.empty()) {
+            const std::string pos = std::to_string(m_refs_cursor_pos + 1) + "/" +
+                                    std::to_string(m_refs_lines.size()) + " ";
+            if (x + (int)pos.size() < w - 1)
+                m_renderer->drawText(w - 1 - (int)pos.size(), h - 1, pos, Renderer::CP_STATUS_BAR);
+        }
+        return;
+    }
+
+    // The project panel has the focus: its keys, as the debug session shows its own.
+    if (m_project_panel_open && m_project_panel_focused) {
+        struct PanelKey { std::string key; const char* label; };
+        // What the keys do on the entry under the cursor.
+        const auto entries = buildPanelEntries();
+        const PanelEntry* cur = (m_project_panel_cursor >= 0 && m_project_panel_cursor < (int)entries.size())
+                              ? &entries[m_project_panel_cursor] : nullptr;
+        std::vector<PanelKey> keys;
+        if (cur && cur->kind == PanelEntry::TARGET_HEADER) {
+            keys.push_back({ "Enter", cur->collapsed ? "Unfold" : "Fold" });
+        } else {
+            keys.push_back({ "Enter", "Open" });
+            if (cur && cur->kind == PanelEntry::SOURCE_FILE) keys.push_back({ "M", "Move" });
+        }
+        keys.push_back({ "+/-", "All" });
+        keys.push_back({ "Ins", "Add" });
+        if (cur && cur->kind != PanelEntry::BUILD_FILE) keys.push_back({ "Del", "Remove" });
+        if (currentBufferIdx() != -1) keys.push_back({ "Tab", "Editor" });
+        keys.push_back({ "Esc", "Close" });
+        const std::string size_key = m_keyBindings->getLabel(EditorAction::ACT_RESIZE_PROJECT_PANEL);
+        if (!size_key.empty()) keys.push_back({ size_key, "Size" });
+        int x = 1;
+        for (const PanelKey& k : keys) {
+            const int need = (int)k.key.size() + 1 + (int)strlen(k.label) + 2;
+            if (x + need > w - 1) break;
+            m_renderer->drawText(x, h - 1, k.key, Renderer::CP_STATUS_BAR_HIGHLIGHT);
+            x += (int)k.key.size() + 1;
+            m_renderer->drawText(x, h - 1, k.label, Renderer::CP_STATUS_BAR);
+            x += (int)strlen(k.label) + 2;
+        }
+        return;
+    }
+
     if (w > 50) {
         m_renderer->drawText(1, h - 1, "F1", Renderer::CP_STATUS_BAR_HIGHLIGHT);
         m_renderer->drawText(4, h - 1, "Help", Renderer::CP_STATUS_BAR);
@@ -1338,7 +1425,7 @@ int TextEditor::msgwin_yesno(const std::string& question, const std::string& inf
 void TextEditor::handleResize() {
     clearok(stdscr, TRUE); clear();
     m_renderer->updateDimensions();
-    m_text_area_start_x = m_project_panel_open ? PANEL_W : 1;
+    m_text_area_start_x = m_project_panel_open ? panelWidth() : 1;
     // The debug panel docks on the right during a debug session.
     m_text_area_end_x = m_renderer->getWidth() - 3 - debugPanelWidth();
     m_text_area_end_y = m_renderer->getHeight() - 4;
@@ -1384,7 +1471,8 @@ void TextEditor::updateMenuLabels() {
         formatMenuItem("Project &Properties...",    EditorAction::ACT_PROJECT_PROPERTIES), // sel 3
         formatMenuItem("&Close Project",            EditorAction::ACT_CLOSE_PROJECT),      // sel 4
         " -------------- ",                                                    // sel 5
-        formatMenuItem("Add &File to Project...",   EditorAction::ACT_ADD_FILE)            // sel 6
+        formatMenuItem("Add &File to Project...",   EditorAction::ACT_ADD_FILE),           // sel 6
+        formatMenuItem("Show File in Pa&nel",       EditorAction::ACT_SHOW_IN_PROJECT_PANEL) // sel 7
     };
 
     m_submenu_edit = {
@@ -1405,8 +1493,11 @@ void TextEditor::updateMenuLabels() {
         formatMenuItem("Find &Next", EditorAction::ACT_FIND_NEXT),
         formatMenuItem("Find Pre&vious", EditorAction::ACT_FIND_PREV),
         formatMenuItem("&Replace...", EditorAction::ACT_REPLACE),
-        " -------------- ",
-        formatMenuItem("&Go To Line...", EditorAction::ACT_GOTO_LINE),
+        formatMenuItem("Find &in Files...", EditorAction::ACT_FIND_IN_FILES),   // 5
+        " -------------- ",                                                    // 6
+        formatMenuItem("&Quick Open...", EditorAction::ACT_QUICK_OPEN),        // 7
+        formatMenuItem("Go to S&ymbol...", EditorAction::ACT_GO_TO_SYMBOL),    // 8
+        formatMenuItem("&Go To Line...", EditorAction::ACT_GOTO_LINE),         // 9
         formatMenuItem("Go To &Definition", EditorAction::ACT_GO_TO_DEFINITION),
         formatMenuItem("Find All &References", EditorAction::ACT_FIND_REFERENCES)
     };
@@ -1484,6 +1575,19 @@ void TextEditor::handleMouseEvent() {
         if (is_release) m_mouse_btn_down = false;
         return;
     }
+    // The project panel's border being dragged: the width follows the pointer.
+    if (m_panel_dragging) {
+        if (is_release || is_press) {   // (a click ends it too, should a release go unreported)
+            m_panel_dragging = false;
+            m_mouse_btn_down = false;
+            savePanelWidth();
+        } else {
+            m_project.panel_width = mx + 1;               // the border is the last column
+            m_project.panel_width = panelWidth();         // ... within what fits
+        }
+        handleResize();
+        return;
+    }
     for (int k = 0; k < 3; ++k) {
         if (!m_dbg_bar[k].dragging()) continue;
         int top;
@@ -1513,6 +1617,19 @@ void TextEditor::handleMouseEvent() {
         is_motion = true;               // treat release position as final drag endpoint
     }
 
+    // A click while resizing the project panel keeps the width it has now.
+    if (m_panel_resizing && (is_press || is_dbl)) finishPanelResize(true);
+
+    // A press on the project panel's right border starts dragging it.
+    if (is_press && m_project_panel_open && !m_panel_resizing && mx == panelWidth() - 1 &&
+        my >= m_text_area_start_y - 1 && my <= m_text_area_end_y + 1) {
+        m_panel_dragging   = true;
+        m_panel_resize_orig = m_project.panel_width;
+        m_mouse_btn_down   = true;
+        handleResize();
+        return;
+    }
+
     // Gutter diagnostic hover popup: update on plain mouse movement (no button);
     // any click/scroll dismisses it.
     if (is_motion && !m_mouse_btn_down && !is_press && !is_release)
@@ -1532,7 +1649,7 @@ void TextEditor::handleMouseEvent() {
 
     // Scroll wheel
     if (is_scroll_up || is_scroll_dn) {
-        if (m_project_panel_open && mx < PANEL_W) {
+        if (m_project_panel_open && mx < panelWidth()) {
             auto entries      = buildPanelEntries();
             int  count        = (int)entries.size();
             int  panel_h      = m_text_area_end_y - m_text_area_start_y + 3;
@@ -1576,7 +1693,7 @@ void TextEditor::handleMouseEvent() {
     }
 
     // Project panel
-    if ((is_press || is_dbl) && m_project_panel_open && mx < PANEL_W) {
+    if ((is_press || is_dbl) && m_project_panel_open && mx < panelWidth()) {
         m_project_panel_focused = true;
         int top;
         if (m_panel_bar.needed() && m_panel_bar.length >= 3 &&
@@ -1602,13 +1719,22 @@ void TextEditor::handleMouseEvent() {
                 m_panel_last_click_x    = mx;
                 m_panel_last_click_y    = my;
 
-                if (is_double) openProjectPanelFile(idx);
+                if (entries[idx].kind == PanelEntry::TARGET_HEADER) {
+                    // The +/- marker folds on a single click (each one: a quick
+                    // second click there unfolds again); the rest of the row on a double click.
+                    if (mx <= 2 || is_double) {
+                        setPanelFolded(entries[idx].target_idx, !entries[idx].collapsed);
+                        m_panel_last_click_time = {};   // no triple-click toggling back
+                    }
+                } else if (is_double) {
+                    openProjectPanelFile(idx);
+                }
             }
         }
         return;
     }
 
-    if (is_press && m_project_panel_open && mx >= PANEL_W && currentBufferIdx() != -1)
+    if (is_press && m_project_panel_open && mx >= panelWidth() && currentBufferIdx() != -1)
         m_project_panel_focused = false;
 
     if (currentBufferIdx() == -1) return;
@@ -1876,7 +2002,9 @@ void TextEditor::main_loop() {
         if (ch != (wint_t)ERR) m_last_keystroke_time = std::chrono::steady_clock::now();
 
         if (ch != (wint_t)ERR) {
-            if (m_debug_panel_focused) {
+            if (m_panel_resizing) {
+                handlePanelResizeKey(ch);
+            } else if (m_debug_panel_focused) {
                 handleDebugPanelKey(ch);
             } else if (m_project_panel_focused && !m_compile_output_visible) {
                 handleProjectPanelKey(ch);
@@ -1957,6 +2085,17 @@ void TextEditor::main_loop() {
                 case KEY_NPAGE:
                     m_refs_cursor_pos = std::min((int)m_refs_lines.size() - 1, m_refs_cursor_pos + 10);
                     break;
+                case KEY_HOME:
+                    m_refs_cursor_pos = 0;
+                    break;
+                case KEY_END:
+                    m_refs_cursor_pos = std::max(0, (int)m_refs_lines.size() - 1);
+                    break;
+                case ' ':   // show it in the editor, the list stays
+                    if (m_refs_cursor_pos < (int)m_refs_lines.size())
+                        showResultLine(m_refs_lines[m_refs_cursor_pos]);
+                    m_renderer->hideCursor();
+                    break;
                 case 27: // ESC (or Alt+<key>)
                     if (handleEscOrAlt()) break;
                     m_refs_visible = false;
@@ -1965,10 +2104,9 @@ void TextEditor::main_loop() {
                     break;
                 case KEY_ENTER: case 10: case 13: {
                     if (m_refs_cursor_pos < (int)m_refs_lines.size()) {
-                        const auto& msg = m_refs_lines[m_refs_cursor_pos];
+                        const CompileMessage msg = m_refs_lines[m_refs_cursor_pos];
                         m_refs_visible = false;
-                        if (!msg.filename.empty())
-                            openFileAtLine(msg.filename, msg.line, msg.col);
+                        showResultLine(msg);
                         m_renderer->showCursor();
                         handleResize();
                     }
@@ -3909,6 +4047,9 @@ void TextEditor::process_key(wint_t ch) {
             case EditorAction::ACT_OPEN:         selectfile();         return;
             case EditorAction::ACT_EXIT:         TryExit();            return;
             case EditorAction::ACT_TOGGLE_PROJECT_PANEL: ToggleProjectPanel(); return;
+            case EditorAction::ACT_RESIZE_PROJECT_PANEL: StartPanelResize();   return;
+            case EditorAction::ACT_FIND_IN_FILES:        FindInFiles();        return;
+            case EditorAction::ACT_QUICK_OPEN:           QuickOpen();          return;
             case EditorAction::ACT_CLOSE_PROJECT:        CloseProject();       return;
             case EditorAction::ACT_SETTINGS:     EditorSettingsDialog(); return;
             case EditorAction::ACT_COMPILER:     ChooseCompilerDialog(); return;
@@ -3956,6 +4097,10 @@ void TextEditor::process_key(wint_t ch) {
                 case EditorAction::ACT_DEBUG_RUN_TO_CURSOR: DebugRunToCursor(); return;
                 case EditorAction::ACT_DEBUG_FOCUS_PANEL: FocusDebugPanel();  return;
                 case EditorAction::ACT_FIND_REFERENCES:  findAllReferences(); return;
+                case EditorAction::ACT_FIND_IN_FILES:    FindInFiles(); return;
+                case EditorAction::ACT_SHOW_IN_PROJECT_PANEL: ShowFileInProjectPanel(); return;
+                case EditorAction::ACT_QUICK_OPEN:       QuickOpen(); return;
+                case EditorAction::ACT_GO_TO_SYMBOL:     GoToSymbol(); return;
                 case EditorAction::ACT_COMPILE: compileOnly(); return;
                 case EditorAction::ACT_RUN: compileAndRun(); return;
                 case EditorAction::ACT_TOGGLE_OUTPUT:
@@ -3989,6 +4134,7 @@ void TextEditor::process_key(wint_t ch) {
                     return;
                 }
                 case EditorAction::ACT_TOGGLE_PROJECT_PANEL: ToggleProjectPanel(); return;
+                case EditorAction::ACT_RESIZE_PROJECT_PANEL: StartPanelResize();   return;
                 case EditorAction::ACT_CLOSE_PROJECT:        CloseProject(); return;
                 default: break;
             }
@@ -4659,33 +4805,34 @@ void TextEditor::CloseProject()
     }
 }
 
-void TextEditor::AddFileToProject()
+bool TextEditor::AddFileToProject(int target_idx, const std::string& start_dir,
+                                  int* added_target, std::string* added_rel)
 {
     namespace fs = std::filesystem;
 
     if (m_project.name.empty()) {
         msgwin("No project loaded. Create or open a project first.");
-        return;
+        return false;
     }
 
     AddFileInfo info;
     info.is_new   = true;
-    info.filepath = m_project.root + "/newfile.cpp";
+    info.filepath = (start_dir.empty() ? m_project.root : start_dir) + "/newfile.cpp";
 
     if (!AddFileDialog::show(*m_renderer, m_project.root, info))
-        return;
+        return false;
 
-    if (info.filepath.empty()) return;
+    if (info.filepath.empty()) return false;
 
     try {
         if (info.is_new) {
             if (fs::exists(info.filepath)) {
                 if (msgwin_yesno("File already exists. Open it anyway?",
                                  info.filepath) != 1)
-                    return;
+                    return false;
             } else {
                 std::ofstream f(info.filepath);
-                if (!f) { msgwin("Cannot create: " + info.filepath); return; }
+                if (!f) { msgwin("Cannot create: " + info.filepath); return false; }
 
                 std::string ext = fs::path(info.filepath).extension().string();
                 if (ext == ".h" || ext == ".hpp" || ext == ".hxx") {
@@ -4703,7 +4850,7 @@ void TextEditor::AddFileToProject()
         } else {
             if (!fs::exists(info.filepath)) {
                 msgwin("File not found: " + info.filepath);
-                return;
+                return false;
             }
         }
 
@@ -4718,9 +4865,10 @@ void TextEditor::AddFileToProject()
             m_project.targets.push_back(t);
         }
 
-        // Pick target (auto-select if only one)
-        int target_idx = PickTargetDialog::show(*m_renderer, m_project.targets, "Select Target", -1);
-        if (target_idx < 0) return;
+        // Pick target (auto-select if only one), unless the caller named it
+        if (target_idx < 0 || target_idx >= (int)m_project.targets.size())
+            target_idx = PickTargetDialog::show(*m_renderer, m_project.targets, "Select Target", -1);
+        if (target_idx < 0) return false;
 
         // Add to project target sources if not already tracked
         bool already = false;
@@ -4759,10 +4907,8 @@ void TextEditor::AddFileToProject()
             }
         }
 
-        // Open the new file in the editor
-        m_bufferManager->addBuffer();
-        currentBuffer().filename = info.filepath;
-        read_file(currentBuffer());
+        // Open the new file in the editor (or go to its window, when it is open)
+        openFileAtLine(fs::path(info.filepath).lexically_normal().string(), 0, 1);
 
         if (m_project.hasExternalBuildFile())
             msgwin("File added to the project.\nRemember to add it to " + m_project.build_file +
@@ -4771,10 +4917,53 @@ void TextEditor::AddFileToProject()
             msgwin("File added to project, but build file could not be updated automatically.");
 
         handleResize();
+        if (added_target) *added_target = target_idx;
+        if (added_rel)    *added_rel    = rel;
+        return true;
 
     } catch (const std::exception& e) {
         msgwin("Error: " + std::string(e.what()));
     }
+    return false;
+}
+
+void TextEditor::addFileFromProjectPanel()
+{
+    namespace fs = std::filesystem;
+    const auto entries = buildPanelEntries();
+
+    // The target the cursor is in (on a build file: ask), and the folder to offer:
+    // the file's under the cursor, or the target's first file's.
+    int ti = -1;
+    std::string dir;
+    if (m_project_panel_cursor >= 0 && m_project_panel_cursor < (int)entries.size()) {
+        const PanelEntry& e = entries[m_project_panel_cursor];
+        if (e.kind != PanelEntry::BUILD_FILE) ti = e.target_idx;
+        std::string near;
+        if (e.kind == PanelEntry::SOURCE_FILE) near = e.display;
+        else if (e.kind == PanelEntry::TARGET_HEADER && ti >= 0 && ti < (int)m_project.targets.size() &&
+                 !m_project.targets[ti].sources.empty())
+            near = m_project.targets[ti].sources.front();
+        if (!near.empty())
+            dir = (fs::path(m_project.root) / near).parent_path().lexically_normal().string();
+    }
+
+    int added_ti = -1;
+    std::string rel;
+    if (!AddFileToProject(ti, dir, &added_ti, &rel)) { handleResize(); return; }
+
+    // Show it in the panel: its target unfolded, the cursor on it; the new
+    // file's window takes the keys.
+    if (added_ti >= 0 && added_ti < (int)m_project.targets.size())
+        m_panel_collapsed.erase(m_project.targets[added_ti].name);
+    const auto after = buildPanelEntries();
+    for (int i = 0; i < (int)after.size(); ++i)
+        if (after[i].kind == PanelEntry::SOURCE_FILE && after[i].target_idx == added_ti &&
+            after[i].display == rel) { m_project_panel_cursor = i; break; }
+    projectPanelKeepCursorVisible();
+    m_project_panel_focused = currentBufferIdx() == -1;
+    if (!m_project_panel_focused) m_renderer->showCursor();
+    handleResize();
 }
 
 void TextEditor::DoNew() {
@@ -4866,6 +5055,8 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
         if (no_project && item_disabled.size() > 2) item_disabled[2] = true; // Project Properties
         if (no_project && item_disabled.size() > 3) item_disabled[3] = true; // Close Project
         if (no_project && item_disabled.size() > 5) item_disabled[5] = true; // Add File
+        if ((no_project || currentBufferIdx() == -1) && item_disabled.size() > 6)
+            item_disabled[6] = true;                                           // Show File in Panel
     }
 
     // Grey out what can't work for the loaded project (see unavailableReason)
@@ -4889,25 +5080,25 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
         disableFor(2, EditorAction::ACT_PROJECT_PROPERTIES);
     }
 
-    // Project > Run (sel 8): runs the project's program. With several
+    // Project > Run (sel 9): runs the project's program. With several
     // executable targets it opens a sub-menu with one entry per target.
     const std::vector<std::string> run_targets =
         (menu_id == 6) ? m_project.runnableTargets() : std::vector<std::string>{};
     const bool run_submenu = run_targets.size() > 1;
     if (menu_id == 6) {
-        finalMenuItems.push_back(" -------------- ");                          // sel 7
+        finalMenuItems.push_back(" -------------- ");                          // sel 8
         if (run_submenu) {
             const std::string label = "&Run", arrow = " >";
             finalMenuItems.push_back(" " + label +
-                std::string(30 - 1 - label.size() - arrow.size(), ' ') + arrow);   // sel 8
+                std::string(30 - 1 - label.size() - arrow.size(), ' ') + arrow);   // sel 9
         } else {
-            finalMenuItems.push_back(formatMenuItem("&Run", EditorAction::ACT_RUN)); // sel 8
+            finalMenuItems.push_back(formatMenuItem("&Run", EditorAction::ACT_RUN)); // sel 9
         }
         item_disabled.resize(finalMenuItems.size(), false);
-        item_disabled[7] = m_project.name.empty() || run_targets.empty() ||
+        item_disabled[8] = m_project.name.empty() || run_targets.empty() ||
                            !unavailableReason(EditorAction::ACT_RUN).empty();
     }
-    const bool run_enabled = menu_id == 6 && !item_disabled[7];
+    const bool run_enabled = menu_id == 6 && !item_disabled[8];
 
     if (menu_id == 7) { // Window menu
         finalMenuItems.push_back(" ----------------- ");
@@ -5002,7 +5193,7 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
         case KEY_LEFT:  copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return NAVIGATE_LEFT;
         case KEY_RIGHT:
             if (menu_id == 1 && selection == 7 && !m_config.recent_files.empty()) goto handle_selection;
-            if (menu_id == 6 && selection == 8 && run_enabled && run_submenu) goto handle_selection;
+            if (menu_id == 6 && selection == 9 && run_enabled && run_submenu) goto handle_selection;
             copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return NAVIGATE_RIGHT;
         case KEY_RESIZE: copywin(behind, stdscr, 0, 0, y, x, y+h, x+w, FALSE); delwin(behind); nodelay(stdscr, TRUE); return RESIZE_OCCURRED;
         case 27: {
@@ -5135,7 +5326,7 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
                 }
                 break; // sub-menu dismissed: redraw parent and continue
             }
-            if (menu_id == 6 && selection == 8 && run_submenu) {
+            if (menu_id == 6 && selection == 9 && run_submenu) {
                 int item_w = 20;
                 for (const auto& n : run_targets) item_w = std::max(item_w, (int)n.size() + 4);
                 item_w = std::min(item_w, 50);
@@ -5181,7 +5372,12 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
             case 3: // Search
                 if (selection == 1) ActivateSearch();
                 else if (selection == 4) ActivateReplace();
-                else if (selection == 6) GoToLineDialog();
+                else if (selection == 5) FindInFiles();
+                else if (selection == 7) QuickOpen();
+                else if (selection == 8) GoToSymbol();
+                else if (selection == 9) GoToLineDialog();
+                else if (selection == 10) GoToDefinition();
+                else if (selection == 11) findAllReferences();
                 break;
             case 4: // Build
                 if (selection == 1) compileAndRun();
@@ -5205,7 +5401,8 @@ MenuAction TextEditor::CallSubMenu(const std::vector<std::string>& menuItems, in
                 else if (selection == 3) ProjectProperties();
                 else if (selection == 4) CloseProject();
                 else if (selection == 6) AddFileToProject();
-                else if (selection == 8) compileAndRun(run_targets.empty() ? std::string() : run_targets.front());
+                else if (selection == 7) ShowFileInProjectPanel();
+                else if (selection == 9) compileAndRun(run_targets.empty() ? std::string() : run_targets.front());
                 break;
             case 7: // Window
                 if (selection == 1) {
@@ -6134,6 +6331,7 @@ void TextEditor::findAllReferences() {
 
     m_refs_token      = token;
     m_refs_lines.clear();
+    m_refs_hl.clear();
     m_refs_scroll_pos = 0;
     m_refs_cursor_pos = 0;
 
@@ -6171,8 +6369,11 @@ void TextEditor::findAllReferences() {
                     msg.line      = ln;
                     msg.col       = (int)pos + 1;
                     msg.type      = CompileMessage::CMSG_NOTE;
-                    msg.full_text = disp_name + ":" + std::to_string(ln) + ": " + trimmed;
+                    const std::string head = disp_name + ":" + std::to_string(ln) + ": ";
+                    msg.full_text = head + trimmed;
                     m_refs_lines.push_back(std::move(msg));
+                    const size_t lead = first_nonspace == std::string::npos ? 0 : first_nonspace;
+                    m_refs_hl.push_back({(int)(head.size() + pos - lead), (int)token.size()});
                 }
                 pos = end_pos;
             }
@@ -6215,7 +6416,9 @@ void TextEditor::findAllReferences() {
         return;
     }
 
+    m_refs_title = " References: " + token + " (" + std::to_string(m_refs_lines.size()) + " found) ";
     m_refs_visible = true;
+    m_project_panel_focused = false;   // the results take the keys
     m_renderer->hideCursor();
     handleResize();
 }
@@ -6227,8 +6430,8 @@ void TextEditor::drawRefsWindow() {
     int startx = m_text_area_start_x - 1;
     int text_height = h - 2;
 
-    std::string title = " References: " + m_refs_token +
-                        " (" + std::to_string(m_refs_lines.size()) + " found) ";
+    std::string title = m_refs_title;
+    if ((int)title.size() > w - 4) title = title.substr(0, w - 7) + "... ";
     m_renderer->drawBoxWithTitle(startx, starty, w, h, Renderer::CP_DIALOG,
                                  Renderer::BoxStyle::DOUBLE, title,
                                  Renderer::CP_DIALOG_TITLE, A_BOLD);
@@ -6258,14 +6461,404 @@ void TextEditor::drawRefsWindow() {
         if ((int)display.size() > w - 4) display = display.substr(0, w - 4);
         m_renderer->drawText(startx + 2, starty + 1 + i, display,
                              selected ? Renderer::CP_HIGHLIGHT : Renderer::CP_DIALOG);
+        // The match itself, marked (byte offsets: columns while the text is ASCII).
+        if (idx < (int)m_refs_hl.size()) {
+            const auto [hs, hn] = m_refs_hl[idx];
+            if (hs >= 0 && hn > 0 && hs < (int)display.size())
+                m_renderer->drawText(startx + 2 + hs, starty + 1 + i,
+                                     display.substr(hs, std::min<int>(hn, (int)display.size() - hs)),
+                                     Renderer::CP_SELECTION);
+        }
     }
 
     listPaneBar(m_refs_pane, m_refs_scroll_pos, (int)m_refs_lines.size());
+    // (its keys are in the status bar - drawStatusBar)
+}
 
-    // Key hint on bottom border
-    const std::string hint = " ↑↓ Navigate  Enter=Jump  Esc=Close ";
-    int hx = startx + (w - (int)hint.size()) / 2;
-    if (hx > startx) m_renderer->drawText(hx, starty + h - 1, hint, Renderer::CP_STATUS_BAR);
+// A file's name as Find in Files and Quick Open show it: relative to `root`
+// when it is inside it, else the full path, with ~ for the home folder.
+static std::string displayPath(const std::string& abs, const std::filesystem::path& root)
+{
+    namespace fs = std::filesystem;
+    if (!root.empty()) {
+        const std::string r = fs::path(abs).lexically_relative(root).generic_string();
+        if (!r.empty() && r.rfind("..", 0) != 0) return r;
+    }
+    if (const char* home = std::getenv("HOME"); home && *home) {
+        const std::string h = home;
+        if (abs.size() > h.size() && abs.compare(0, h.size(), h) == 0 && abs[h.size()] == '/')
+            return "~" + abs.substr(h.size());
+    }
+    return abs;
+}
+
+// The word under the cursor, or the selection when it is on one line - what
+// Find in Files starts with.
+std::string TextEditor::wordOrSelectionAtCursor() {
+    if (currentBufferIdx() == -1) return {};
+    EditorBuffer& buf = currentBuffer();
+    if (!buf.current_line) return {};
+    if (buf.selecting && buf.selection_anchor_line == buf.current_line &&
+        buf.selection_anchor_col != buf.cursor_col) {
+        const int a = std::min(buf.selection_anchor_col, buf.cursor_col);
+        const int b = std::max(buf.selection_anchor_col, buf.cursor_col);
+        return buf.current_line->text.substr(a - 1, b - a);
+    }
+    const std::string& t = buf.current_line->text;
+    auto word = [&](int i) { return i >= 0 && i < (int)t.size() &&
+                             (std::isalnum((unsigned char)t[i]) || t[i] == '_'); };
+    int c = buf.cursor_col - 1;
+    if (!word(c) && word(c - 1)) --c;   // just after a word
+    if (!word(c)) return {};
+    int s = c, e = c;
+    while (word(s - 1)) --s;
+    while (word(e)) ++e;
+    return t.substr(s, e - s);
+}
+
+// Opens a result's file at its line, placed in the upper part of the window so
+// the results pane (over the bottom quarter) does not cover it.
+void TextEditor::showResultLine(const CompileMessage& msg) {
+    if (msg.filename.empty()) return;
+    openFileAtLine(msg.filename, msg.line, msg.col);
+    if (currentBufferIdx() == -1 || msg.line <= 0) return;
+    const int page = m_text_area_end_y - m_text_area_start_y + 1;
+    scrollToLine(std::max(0, msg.line - 1 - page / 4));
+    update_cursor_and_scroll();
+}
+
+void TextEditor::FindInFiles() {
+    namespace fs = std::filesystem;
+
+    // Where it can look. Without a project: the current file's folder.
+    enum Scope { PROJECT_FILES, PROJECT_FOLDER, FILE_FOLDER, OPEN_WINDOWS };
+    std::string cur_dir;
+    if (currentBufferIdx() != -1 && !currentBuffer().is_new_file && !currentBuffer().filename.empty())
+        cur_dir = fs::path(get_full_path(currentBuffer().filename)).parent_path().string();
+    const bool has_project = !m_project.name.empty();
+
+    std::vector<Scope> kinds;
+    std::vector<std::pair<std::string, std::string>> scopes;
+    if (has_project) {
+        kinds.push_back(PROJECT_FILES);
+        scopes.push_back({"Project files", "The project's sources, headers and build files."});
+        kinds.push_back(PROJECT_FOLDER);
+        scopes.push_back({"Project folder", "All files in the project folder, except build/ and hidden ones."});
+    } else if (!cur_dir.empty()) {
+        kinds.push_back(FILE_FOLDER);
+        scopes.push_back({"Current folder", "All files in " + cur_dir + " and below."});
+    }
+    kinds.push_back(OPEN_WINDOWS);
+    scopes.push_back({"Open windows", "The files open in windows, with their unsaved changes."});
+
+    FindInFilesOptions opts = m_fif_opts;
+    const std::string start = wordOrSelectionAtCursor();
+    if (!start.empty()) opts.text = start;
+    opts.scope = 0;
+    for (int i = 0; i < (int)kinds.size(); ++i)
+        if (kinds[i] == m_fif_scope_kind) opts.scope = i;
+
+    if (!FindInFilesDialog::show(*m_renderer, opts, scopes)) { handleResize(); return; }
+    m_fif_opts       = opts;
+    m_fif_scope_kind = kinds[opts.scope];
+    const Scope scope = kinds[opts.scope];
+
+    filesearch::Matcher matcher({opts.text, opts.match_case, opts.whole_word, opts.regex});
+    if (!matcher.ok()) { msgwin(matcher.error()); handleResize(); return; }
+
+    // The files, as absolute paths, and the root their names are shown against.
+    std::vector<std::string> files;
+    fs::path shown_root = has_project ? fs::path(m_project.root) : fs::path(cur_dir);
+    std::set<std::string> seen;
+    auto add = [&](const fs::path& p) {
+        const std::string abs = p.lexically_normal().string();
+        if (seen.insert(abs).second) files.push_back(abs);
+    };
+    switch (scope) {
+    case PROJECT_FILES: {
+        const fs::path root(m_project.root);
+        if (!m_project.buildFile().empty()) add(root / m_project.buildFile());
+        for (const auto& a : m_project.aux_build_files) add(root / a);
+        for (const auto& t : m_project.targets)
+            for (const auto& s : t.sources) add(root / s);
+        break;
+    }
+    case PROJECT_FOLDER:
+    case FILE_FOLDER:
+        for (const auto& rel : filesearch::listFiles(shown_root)) add(shown_root / rel);
+        break;
+    case OPEN_WINDOWS:
+        for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
+            const EditorBuffer& b = m_bufferManager->getBuffer(i);
+            if (!b.filename.empty()) add(fs::path(get_full_path(b.filename)));
+        }
+        break;
+    }
+
+    // Files open in a window are searched as they are there, unsaved changes included.
+    std::map<std::string, size_t> open_buf;
+    for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
+        const EditorBuffer& b = m_bufferManager->getBuffer(i);
+        if (!b.filename.empty())
+            open_buf[fs::path(get_full_path(b.filename)).lexically_normal().string()] = i;
+    }
+
+    // Say so while it works: a big folder takes a moment.
+    {
+        const int h = m_renderer->getHeight(), w = m_renderer->getWidth();
+        m_renderer->drawText(0, h - 1, std::string(w, ' '), Renderer::CP_STATUS_BAR);
+        m_renderer->drawText(1, h - 1, "Searching " + std::to_string(files.size()) + " files...",
+                             Renderer::CP_STATUS_BAR_HIGHLIGHT);
+        m_renderer->refresh();
+    }
+
+    constexpr size_t kMaxResults = 10000;
+    constexpr std::uintmax_t kMaxFileSize = 16u << 20;
+    std::vector<CompileMessage> results;
+    std::vector<std::pair<int, int>> hl;
+    size_t total_hits = 0, files_hit = 0;
+    bool capped = false;
+    std::vector<std::pair<size_t, size_t>> hits;
+
+    for (const std::string& abs : files) {
+        std::vector<std::string> lines;
+        if (auto it = open_buf.find(abs); it != open_buf.end()) {
+            for (const Line* p = m_bufferManager->getBuffer(it->second).document_head; p; p = p->next)
+                lines.push_back(p->text);
+        } else {
+            std::error_code ec;
+            const auto size = fs::file_size(abs, ec);
+            if (ec || size > kMaxFileSize) continue;
+            std::ifstream f(abs, std::ios::binary);
+            if (!f) continue;
+            std::string data((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            if (filesearch::looksBinary(data)) continue;
+            std::size_t s = 0;
+            while (s <= data.size()) {
+                std::size_t e = data.find('\n', s);
+                if (e == std::string::npos) e = data.size();
+                std::string ln = data.substr(s, e - s);
+                if (!ln.empty() && ln.back() == '\r') ln.pop_back();
+                lines.push_back(std::move(ln));
+                s = e + 1;
+            }
+            if (!data.empty() && data.back() == '\n') lines.pop_back();   // no line after the last newline
+        }
+
+        const std::string shown = displayPath(abs, shown_root);
+        bool hit_here = false;
+        for (int ln = 0; ln < (int)lines.size(); ++ln) {
+            matcher.find(lines[ln], hits);
+            if (hits.empty()) continue;
+            total_hits += hits.size();
+            hit_here = true;
+
+            // One row per line, its first match marked. A match far along a
+            // long line is brought into view by cutting the start.
+            const std::string& text = lines[ln];
+            const size_t lead = std::min(text.find_first_not_of(" \t"), text.size());
+            size_t from = lead;
+            std::string snippet_prefix;
+            if (hits[0].first > lead + 50) { from = hits[0].first - 20; snippet_prefix = "..."; }
+            const std::string head = shown + ":" + std::to_string(ln + 1) + ": " + snippet_prefix;
+
+            CompileMessage msg;
+            msg.filename  = abs;
+            msg.line      = ln + 1;
+            msg.col       = (int)hits[0].first + 1;
+            msg.type      = CompileMessage::CMSG_NOTE;
+            msg.full_text = head + text.substr(from);
+            results.push_back(std::move(msg));
+            hl.push_back({(int)(head.size() + hits[0].first - from), (int)hits[0].second});
+            if (results.size() >= kMaxResults) { capped = true; break; }
+        }
+        if (hit_here) ++files_hit;
+        if (capped) break;
+    }
+
+    if (results.empty()) {
+        msgwin("No matches for \"" + opts.text + "\".");
+        handleResize();
+        return;
+    }
+    m_refs_lines      = std::move(results);
+    m_refs_hl         = std::move(hl);
+    m_refs_token      = opts.text;
+    m_refs_title      = " Find in Files: \"" + opts.text + "\" - " + std::to_string(total_hits) +
+                        (total_hits == 1 ? " match" : " matches") + " in " + std::to_string(files_hit) +
+                        (files_hit == 1 ? " file" : " files") + (capped ? " (stopped at 10000 lines)" : "") + " ";
+    m_refs_scroll_pos = 0;
+    m_refs_cursor_pos = 0;
+    m_refs_visible    = true;
+    m_project_panel_focused = false;   // the results take the keys
+    m_renderer->hideCursor();
+    handleResize();
+}
+
+void TextEditor::GoToSymbol() {
+    namespace fs = std::filesystem;
+    if (currentBufferIdx() == -1) return;
+    EditorBuffer& buf = currentBuffer();
+
+    std::vector<std::string> lines;
+    for (const Line* p = buf.document_head; p; p = p->next) lines.push_back(p->text);
+
+    std::vector<OutlineSymbol> syms;
+    std::string typed;   // what was typed while waiting: the search starts with it
+    if (buf.syntax_type == EditorBuffer::ST_C_CPP) {
+        // The background parse's outline, while the file still reads as it did
+        // then (every symbol's name on its line); else a quick parse of its own.
+        bool fresh = false;
+        if (buf.semantic_cache) {
+            std::shared_ptr<std::vector<OutlineSymbol>> cached;
+            {
+                std::lock_guard<std::mutex> lk(buf.semantic_cache->mutex);
+                cached = buf.semantic_cache->outline;
+            }
+            if (cached) {
+                fresh = true;
+                for (const auto& s : *cached)
+                    if (s.line == 0 || s.line > lines.size() ||
+                        lines[s.line - 1].find(s.name) == std::string::npos) { fresh = false; break; }
+                if (fresh) syms = *cached;
+            }
+        }
+        if (!fresh) {
+            struct Job { std::atomic<bool> done{false}; bool ok = false;
+                         std::vector<OutlineSymbol> syms; std::string error; };
+            auto job = std::make_shared<Job>();
+            const std::string abs = get_full_path(buf.filename);
+            std::string content;
+            for (const auto& l : lines) content += l + "\n";
+            const CompilerSettings settings = buf.compiler_settings;
+            BuildSystem* build = m_buildSystem.get();
+            std::thread([job, abs, content, settings, build]() {
+                // Not cguess.py's guess, unless known already: it can take many
+                // seconds, and the file's own declarations need no include paths.
+                const std::vector<std::string> args = build->getClangArguments(abs, settings, false);
+                job->ok = outline::parse(abs, content, args, job->syms, job->error);
+                job->done.store(true);
+            }).detach();
+
+            // Wait with a spinner; Esc gives up (the parse finishes on its own).
+            const char spin[] = {'|', '/', '-', '\\'};
+            int k = 0;
+            while (!job->done.load()) {
+                const int w = m_renderer->getWidth(), h = m_renderer->getHeight();
+                m_renderer->drawText(0, h - 1, std::string(w, ' '), Renderer::CP_STATUS_BAR);
+                m_renderer->drawText(1, h - 1, std::string("Reading the file's symbols ") + spin[k++ % 4] +
+                                     "  (Esc to cancel)", Renderer::CP_STATUS_BAR);
+                m_renderer->refresh();
+                timeout(120);
+                wint_t ch = ERR;
+                wget_wch(stdscr, &ch);
+                timeout(-1);
+                if (ch == 27) { requeueAltKey(); handleResize(); return; }
+                if (ch == KEY_BACKSPACE || ch == 127 || ch == 8) {
+                    if (!typed.empty()) typed.pop_back();
+                } else if (ch != (wint_t)ERR && ch > 31 && ch < 127) {
+                    typed += (char)ch;   // symbol names are ASCII
+                }
+            }
+            drawStatusBar();   // the spinner's line, back to the usual one
+            m_renderer->refresh();
+            if (!job->ok) { msgwin(job->error); handleResize(); return; }
+            syms = std::move(job->syms);
+        }
+        // With the macros, read from the text, in line order.
+        for (auto& m : outline::fromText(lines, EditorBuffer::ST_C_CPP)) syms.push_back(std::move(m));
+        std::stable_sort(syms.begin(), syms.end(), [](const OutlineSymbol& a, const OutlineSymbol& b) {
+            return a.line != b.line ? a.line < b.line : a.col < b.col;
+        });
+    } else {
+        syms = outline::fromText(lines, buf.syntax_type);
+        if (syms.empty() && buf.syntax_type != EditorBuffer::ST_MAKEFILE &&
+            buf.syntax_type != EditorBuffer::ST_ASSEMBLY && buf.syntax_type != EditorBuffer::ST_CMAKE) {
+            msgwin("Go to Symbol works in C/C++ files, makefiles, CMake files and assembly.");
+            handleResize();
+            return;
+        }
+    }
+    const std::string fname = get_filename_from_path(buf.filename);
+    if (syms.empty()) { msgwin("No symbols in " + fname + "."); handleResize(); return; }
+
+    std::vector<QuickOpenItem> items;
+    items.reserve(syms.size());
+    for (const auto& s : syms)
+        items.push_back({s.name, std::string(), false,
+                         s.kind + (s.scope.empty() ? std::string() : "  " + s.scope)});
+    int unused_line = 0;
+    std::string query = typed;
+    const int idx = QuickOpenDialog::show(*m_renderer, items, query, unused_line,
+                                          QuickOpenDialog::Mode::Symbols);
+    if (idx < 0) { handleResize(); return; }
+
+    // To it, in this window, with the line in the upper part of the view.
+    EditorBuffer& b = currentBuffer();
+    const int target = std::clamp((int)syms[idx].line, 1, std::max(1, b.total_lines));
+    ClearSelection();
+    b.current_line     = b.document_head;
+    for (int i = 1; i < target && b.current_line->next; ++i) b.current_line = b.current_line->next;
+    b.current_line_num = target;
+    b.cursor_col       = std::max(1, (int)syms[idx].col);
+    const int page = m_text_area_end_y - m_text_area_start_y + 1;
+    scrollToLine(std::max(0, target - 1 - page / 4));
+    update_cursor_and_scroll();
+    m_renderer->showCursor();
+    handleResize();
+}
+
+void TextEditor::QuickOpen() {
+    namespace fs = std::filesystem;
+
+    // Names are shown relative to the project root (or the current file's folder).
+    fs::path base;
+    if (!m_project.name.empty())
+        base = m_project.root;
+    else if (currentBufferIdx() != -1 && !currentBuffer().is_new_file && !currentBuffer().filename.empty())
+        base = fs::path(get_full_path(currentBuffer().filename)).parent_path();
+
+    std::vector<QuickOpenItem> items;
+    std::set<std::string> seen;
+    auto add = [&](const fs::path& p, bool open) {
+        const std::string abs = p.lexically_normal().string();
+        if (!seen.insert(abs).second) return;
+        items.push_back({displayPath(abs, base), abs, open});
+    };
+
+    // Before anything is typed the list starts with the open windows, then the
+    // recent files, then the project's files and everything else under it.
+    for (size_t i = 0; i < m_bufferManager->bufferCount(); ++i) {
+        const EditorBuffer& b = m_bufferManager->getBuffer(i);
+        if (!b.filename.empty() && !b.is_new_file) add(fs::path(get_full_path(b.filename)), true);
+    }
+    for (const auto& r : m_config.recent_files) {
+        std::error_code ec;
+        if (fs::is_regular_file(r, ec)) add(fs::path(r), false);
+    }
+    if (!m_project.name.empty()) {
+        const fs::path root(m_project.root);
+        if (!m_project.buildFile().empty()) add(root / m_project.buildFile(), false);
+        for (const auto& a : m_project.aux_build_files) add(root / a, false);
+        for (const auto& t : m_project.targets)
+            for (const auto& s : t.sources) add(root / s, false);
+    }
+    if (!base.empty())
+        for (const auto& rel : filesearch::listFiles(base)) add(base / rel, false);
+
+    if (items.empty()) { msgwin("No files to open: open a project or a file first."); return; }
+
+    int line = 0;
+    std::string query;   // starts empty: typing at once is what it is for
+    const int idx = QuickOpenDialog::show(*m_renderer, items, query, line);
+    if (idx < 0) { handleResize(); return; }
+
+    const std::string& abs = items[idx].abs;
+    addRecentFile(abs);
+    openFileAtLine(abs, line, 1);
+    m_project_panel_focused = false;
+    m_renderer->showCursor();
+    handleResize();
 }
 
 void TextEditor::drawCompileOutputWindow() {
@@ -6636,16 +7229,163 @@ void TextEditor::ToggleProjectPanel() {
         msgwin("No project loaded.");
         return;
     }
+    // Open but the editor has the keys: go to the panel, at the current file.
+    if (m_project_panel_open && !m_project_panel_focused && currentBufferIdx() != -1) {
+        m_project_panel_focused = true;
+        revealFileInPanel(false);
+        m_renderer->hideCursor();
+        handleResize();
+        return;
+    }
     m_project_panel_open = !m_project_panel_open;
     if (m_project_panel_open) {
+        initPanelFolding();
         m_project_panel_focused = true;
-        m_project_panel_cursor = 0;
-        m_project_panel_scroll = 0;
+        // It opens at the current file (or at the top when the project does not list it).
+        if (!revealFileInPanel(false)) {
+            m_project_panel_cursor = 0;
+            m_project_panel_scroll = 0;
+        }
     } else {
         m_project_panel_focused = false;
         m_renderer->showCursor();
     }
     handleResize();
+}
+
+bool TextEditor::revealFileInPanel(bool next) {
+    namespace fs = std::filesystem;
+    if (m_project.name.empty() || currentBufferIdx() == -1) return false;
+    const EditorBuffer& buf = currentBuffer();
+    if (buf.is_new_file || buf.filename.empty()) return false;
+    const std::string abs = fs::path(get_full_path(buf.filename)).lexically_normal().string();
+    const fs::path root(m_project.root);
+    auto same = [&](const std::string& rel) { return (root / rel).lexically_normal().string() == abs; };
+
+    // Every place the panel lists it: a build file (no target), or a target's source.
+    struct Place { int ti, si; std::string rel; };
+    std::vector<Place> places;
+    if (!m_project.buildFile().empty() && same(m_project.buildFile()))
+        places.push_back({-1, -1, m_project.buildFile()});
+    for (const auto& a : m_project.aux_build_files)
+        if (same(a)) places.push_back({-1, -1, a});
+    for (int ti = 0; ti < (int)m_project.targets.size(); ++ti)
+        for (int si = 0; si < (int)m_project.targets[ti].sources.size(); ++si)
+            if (same(m_project.targets[ti].sources[si])) places.push_back({ti, si, m_project.targets[ti].sources[si]});
+    if (places.empty()) return false;
+
+    auto at = [](const PanelEntry& e, const Place& p) {
+        return p.ti < 0 ? (e.kind == PanelEntry::BUILD_FILE && e.display == p.rel)
+                        : (e.kind == PanelEntry::SOURCE_FILE && e.target_idx == p.ti && e.source_idx == p.si);
+    };
+    size_t pick = 0;
+    if (next) {   // the place after the one the cursor is on
+        const auto entries = buildPanelEntries();
+        if (m_project_panel_cursor >= 0 && m_project_panel_cursor < (int)entries.size())
+            for (size_t k = 0; k < places.size(); ++k)
+                if (at(entries[m_project_panel_cursor], places[k])) { pick = (k + 1) % places.size(); break; }
+    }
+    const Place& p = places[pick];
+    if (p.ti >= 0) m_panel_collapsed.erase(m_project.targets[p.ti].name);
+
+    const auto entries = buildPanelEntries();
+    for (int i = 0; i < (int)entries.size(); ++i)
+        if (at(entries[i], p)) { m_project_panel_cursor = i; break; }
+    // A third of the way down, so what is around it shows too.
+    m_project_panel_scroll = m_project_panel_cursor - projectPanelVisibleRows() / 3;
+    projectPanelKeepCursorVisible();
+    return true;
+}
+
+void TextEditor::ShowFileInProjectPanel() {
+    if (m_project.name.empty()) { msgwin("No project loaded."); return; }
+    if (currentBufferIdx() == -1 || currentBuffer().is_new_file) { msgwin("No file to show."); return; }
+    const bool was_open = m_project_panel_open;
+    if (!m_project_panel_open) { m_project_panel_open = true; initPanelFolding(); }
+    // Again, with the panel already on it: the next target that lists it.
+    if (!revealFileInPanel(was_open && m_project_panel_focused)) {
+        msgwin(get_filename_from_path(currentBuffer().filename) + " is not part of the project.");
+        if (!was_open) m_project_panel_open = false;
+        handleResize();
+        return;
+    }
+    m_project_panel_focused = true;
+    m_renderer->hideCursor();
+    handleResize();
+}
+
+int TextEditor::panelWidth() const {
+    const int want = m_project.panel_width > 0 ? m_project.panel_width : DEFAULT_PANEL_W;
+    const int most = std::max(MIN_PANEL_W, m_renderer->getWidth() - MIN_EDITOR_W);
+    return std::clamp(want, MIN_PANEL_W, most);
+}
+
+void TextEditor::StartPanelResize() {
+    if (m_project.name.empty()) { msgwin("No project loaded."); return; }
+    if (!m_project_panel_open) ToggleProjectPanel();
+    if (!m_project_panel_open) return;
+    m_panel_resizing        = true;
+    m_panel_resize_orig     = m_project.panel_width;
+    m_project_panel_focused = true;
+    m_renderer->hideCursor();
+}
+
+void TextEditor::handlePanelResizeKey(wint_t ch) {
+    if (ch == KEY_RESIZE) { handleResize(); return; }
+    int step = 0;
+    switch (ch) {
+    case KEY_LEFT:   step = -1; break;
+    case KEY_RIGHT:  step = +1; break;
+    case KEY_SLEFT:  step = -5; break;   // Shift+arrows: bigger steps
+    case KEY_SRIGHT: step = +5; break;
+    case KEY_HOME:   m_project.panel_width = MIN_PANEL_W;     handleResize(); return;
+    case KEY_END:    m_project.panel_width = 1 << 16;         // as wide as the screen allows
+                     m_project.panel_width = panelWidth();    handleResize(); return;
+    case KEY_ENTER: case 10: case 13:
+        finishPanelResize(true);
+        return;
+    case 27: {
+        const wint_t next = readAltFollower();
+        if (next == (wint_t)ERR) { finishPanelResize(false); return; }   // lone Esc: undo
+        // A key the terminal description lacks (Shift+Right under TERM=screen):
+        // decode it and resize with it.
+        if (next == '[' || next == 'O') {
+            const wint_t decoded = readEscSequence(next);
+            if (decoded == 0) return;                                    // nothing to do with it
+            if (decoded != (wint_t)ERR) { handlePanelResizeKey(decoded); return; }
+        }
+        // Alt+key: keep the new width, then let the main loop run the key.
+        finishPanelResize(true);
+        unget_wch(next);
+        unget_wch(27);
+        return;
+    }
+    default:
+        // The resize key again ends it too; anything else is ignored meanwhile.
+        if (m_keyBindings->getAction(ch) == EditorAction::ACT_RESIZE_PROJECT_PANEL)
+            finishPanelResize(true);
+        return;
+    }
+    // Clamped through panelWidth(), so the stored width is always one that fits.
+    m_project.panel_width = panelWidth() + step;
+    m_project.panel_width = panelWidth();
+    handleResize();   // the editor takes the rest of the screen
+}
+
+void TextEditor::finishPanelResize(bool keep) {
+    if (!m_panel_resizing) return;
+    m_panel_resizing = false;
+    if (!keep) m_project.panel_width = m_panel_resize_orig;
+    else       savePanelWidth();
+    handleResize();
+}
+
+void TextEditor::savePanelWidth() {
+    // Into the project's settings. An imported makefile that was not saved
+    // as a .gproj has none - the width lasts for this session then.
+    if (m_project.panel_width != m_panel_resize_orig &&
+        std::filesystem::exists(m_project.projectFilePath()))
+        m_project.save();
 }
 
 std::vector<PanelEntry> TextEditor::buildPanelEntries() const
@@ -6672,13 +7412,74 @@ std::vector<PanelEntry> TextEditor::buildPanelEntries() const
     // One TARGET_HEADER + SOURCE_FILE entries per target
     for (int ti = 0; ti < (int)m_project.targets.size(); ++ti) {
         const auto& tgt = m_project.targets[ti];
-        entries.push_back( PanelEntry{PanelEntry::TARGET_HEADER, tgt.name + " [" + tgt.abbr() + "]", ti} );
+        const bool folded = m_panel_collapsed.count(tgt.name) > 0;
+        entries.push_back( PanelEntry{PanelEntry::TARGET_HEADER, tgt.name + " [" + tgt.abbr() + "]", ti, -1, folded} );
+        if (folded) continue;
 
         for (int si = 0; si < (int)tgt.sources.size(); ++si) {
             entries.push_back( PanelEntry{PanelEntry::SOURCE_FILE, tgt.sources[si], ti, si} );
         }
     }
     return entries;
+}
+
+void TextEditor::initPanelFolding() {
+    const std::string key = m_project.projectFilePath();
+    if (key == m_panel_fold_project) return;
+    m_panel_fold_project = key;
+    m_panel_collapsed.clear();
+    // A list that fits is shown whole; a longer one starts with every target folded.
+    int rows = projectPanelVisibleRows();
+    if (rows <= 0) rows = m_renderer->getHeight() - 6;
+    if ((int)buildPanelEntries().size() > rows)
+        for (const auto& t : m_project.targets) m_panel_collapsed.insert(t.name);
+}
+
+void TextEditor::projectPanelKeepCursorVisible() {
+    const int count   = (int)buildPanelEntries().size();
+    const int visible = std::max(1, projectPanelVisibleRows());
+    m_project_panel_cursor = std::clamp(m_project_panel_cursor, 0, std::max(0, count - 1));
+    if (m_project_panel_cursor < m_project_panel_scroll) m_project_panel_scroll = m_project_panel_cursor;
+    if (m_project_panel_cursor >= m_project_panel_scroll + visible)
+        m_project_panel_scroll = m_project_panel_cursor - visible + 1;
+    m_project_panel_scroll = std::clamp(m_project_panel_scroll, 0, std::max(0, count - visible));
+}
+
+void TextEditor::setPanelFolded(int ti, bool folded) {
+    // The target the cursor is in (on its header or one of its sources) keeps the cursor.
+    auto before = buildPanelEntries();
+    int cur_ti = -1, cur_si = -1;
+    PanelEntry::Kind cur_kind = PanelEntry::BUILD_FILE;
+    if (m_project_panel_cursor >= 0 && m_project_panel_cursor < (int)before.size()) {
+        cur_kind = before[m_project_panel_cursor].kind;
+        cur_ti   = before[m_project_panel_cursor].target_idx;
+        cur_si   = before[m_project_panel_cursor].source_idx;
+    }
+    const int cur_row = m_project_panel_cursor - m_project_panel_scroll;   // keep its screen row
+
+    for (int t = 0; t < (int)m_project.targets.size(); ++t) {
+        if (ti >= 0 && t != ti) continue;
+        if (folded) m_panel_collapsed.insert(m_project.targets[t].name);
+        else        m_panel_collapsed.erase(m_project.targets[t].name);
+    }
+
+    auto after = buildPanelEntries();
+    int idx = -1;
+    for (int i = 0; i < (int)after.size() && idx < 0; ++i) {
+        const PanelEntry& e = after[i];
+        if (cur_kind == PanelEntry::BUILD_FILE) {
+            if (e.kind == PanelEntry::BUILD_FILE && i == m_project_panel_cursor) idx = i;
+        } else if (cur_kind == PanelEntry::SOURCE_FILE && e.kind == PanelEntry::SOURCE_FILE &&
+                   e.target_idx == cur_ti && e.source_idx == cur_si) {
+            idx = i;
+        } else if (e.kind == PanelEntry::TARGET_HEADER && e.target_idx == cur_ti) {
+            idx = i;   // its source is folded away (or it was the header): the header
+            if (cur_kind == PanelEntry::SOURCE_FILE && !e.collapsed) idx = -1;   // look on for the source
+        }
+    }
+    if (idx >= 0) m_project_panel_cursor = idx;
+    m_project_panel_scroll = m_project_panel_cursor - std::max(0, cur_row);
+    projectPanelKeepCursorVisible();
 }
 
 // Shows the project panel's entries from `top` on; the cursor stays in view.
@@ -6695,28 +7496,31 @@ void TextEditor::drawProjectPanel() {
 
     int panel_y      = m_text_area_start_y - 1;
     int panel_h      = m_text_area_end_y - m_text_area_start_y + 3;
-    int inner_w      = PANEL_W - 2;
+    int inner_w      = panelWidth() - 2;
     int visible_count = panel_h - 2;
 
     int title_flags = m_project_panel_focused ? A_BOLD : A_NORMAL;
-    m_renderer->drawBoxWithTitle(0, panel_y, PANEL_W, panel_h,
+    // While it is being resized: a single-line frame, as Turbo's windows do.
+    m_renderer->drawBoxWithTitle(0, panel_y, panelWidth(), panel_h,
                                  Renderer::CP_DIALOG_TITLE,
-                                 Renderer::BoxStyle::DOUBLE,
+                                 (m_panel_resizing || m_panel_dragging) ? Renderer::BoxStyle::SINGLE
+                                                  : Renderer::BoxStyle::DOUBLE,
                                  m_project.name,
                                  Renderer::CP_DIALOG_TITLE,
                                  title_flags);
 
+    initPanelFolding();   // first time this project's panel is shown
     auto entries = buildPanelEntries();
 
     if (entries.empty()) {
         std::string msg = "No files";
-        int mx = (PANEL_W - (int)msg.length()) / 2;
+        int mx = (panelWidth() - (int)msg.length()) / 2;
         m_renderer->drawText(mx, panel_y + 1, msg, Renderer::CP_DEFAULT_TEXT);
         return;
     }
 
     // A list longer than the panel: the scrollbar in its last column.
-    m_panel_bar.layout(PANEL_W - 2, panel_y + 1, visible_count, true,
+    m_panel_bar.layout(panelWidth() - 2, panel_y + 1, visible_count, true,
                        (int)entries.size(), visible_count, m_project_panel_scroll);
     const bool has_bar = m_panel_bar.needed() && visible_count >= 3;
     const int  text_w  = has_bar ? inner_w - 1 : inner_w;
@@ -6734,7 +7538,7 @@ void TextEditor::drawProjectPanel() {
         int attr = A_NORMAL;
 
         if (e.kind == PanelEntry::TARGET_HEADER) {
-            display = "- " + e.display;
+            display = (e.collapsed ? "+ " : "- ") + e.display;
             if (!is_cursor) {
                 pair = Renderer::CP_DIALOG_TITLE;
                 attr = A_BOLD;
@@ -6756,43 +7560,35 @@ void TextEditor::drawProjectPanel() {
         m_renderer->drawText(1, row_y, display, pair, attr);
     }
     if (has_bar) m_panel_bar.draw(*m_renderer, Renderer::CP_DIALOG_TITLE);
-
-    // Scroll indicator
-    if ((int)entries.size() > visible_count) {
-        std::string ind = std::to_string(m_project_panel_cursor + 1) + "/" +
-                          std::to_string((int)entries.size());
-        if ((int)ind.length() > inner_w) ind = ind.substr(0, inner_w);
-        m_renderer->drawText(PANEL_W - 1 - (int)ind.length(),
-                             panel_y + panel_h - 1, ind,
-                             Renderer::CP_STATUS_BAR);
-    }
-
-    // Footer hint on bottom border
-    if (m_project_panel_focused) {
-        const std::string hint = " M=Move Del=Remove ";
-        m_renderer->drawText((PANEL_W - (int)hint.length()) / 2,
-                             panel_y + panel_h - 1, hint,
-                             Renderer::CP_STATUS_BAR);
-    }
+    // (the panel's keys are in the status bar while it has the focus - drawStatusBar)
 
     // Junction connectors where panel's right border meets editor box's left border
-    // (with no window open there is no editor box: keep the panel's own corners)
-    if (currentBufferIdx() == -1) return;
+    // (with no window open there is no editor box: keep the panel's own corners;
+    // a single-line frame while resizing keeps them too)
+    if (currentBufferIdx() == -1 || m_panel_resizing || m_panel_dragging) return;
     cchar_t top_conn, bot_conn;
     setcchar(&top_conn, L"╦", WA_NORMAL, Renderer::CP_DIALOG_TITLE, NULL);
     setcchar(&bot_conn, L"╩", WA_NORMAL, Renderer::CP_DIALOG_TITLE, NULL);
-    mvwadd_wch(stdscr, panel_y,                 PANEL_W - 1, &top_conn);
-    mvwadd_wch(stdscr, panel_y + panel_h - 1,   PANEL_W - 1, &bot_conn);
+    mvwadd_wch(stdscr, panel_y,                 panelWidth() - 1, &top_conn);
+    mvwadd_wch(stdscr, panel_y + panel_h - 1,   panelWidth() - 1, &bot_conn);
 }
 
 void TextEditor::handleProjectPanelKey(wint_t ch) {
     if (ch == KEY_RESIZE) { handleResize(); return; }
 
-    EditorAction action = m_keyBindings->getAction(ch);
+    EditorAction action = m_keyBindings->getAction(normalizeFunctionKey(ch));   // Alt+Fn may arrive as F(n+48)
     if (action == EditorAction::ACT_TOGGLE_PROJECT_PANEL) {
         ToggleProjectPanel();
         return;
     }
+    if (action == EditorAction::ACT_RESIZE_PROJECT_PANEL) {
+        StartPanelResize();
+        return;
+    }
+    if (action == EditorAction::ACT_QUICK_OPEN)    { QuickOpen();   return; }
+    if (ch == KEY_IC) { addFileFromProjectPanel(); return; }   // Insert: add a file here
+    if (action == EditorAction::ACT_FIND_IN_FILES) { FindInFiles(); return; }
+    if (action == EditorAction::ACT_SHOW_IN_PROJECT_PANEL) { ShowFileInProjectPanel(); return; }
 
     auto entries = buildPanelEntries();
     int count         = (int)entries.size();
@@ -6814,12 +7610,64 @@ void TextEditor::handleProjectPanelKey(wint_t ch) {
                 m_project_panel_scroll = m_project_panel_cursor - visible_count + 1;
         }
         break;
+    case KEY_PPAGE: case KEY_NPAGE: case KEY_HOME: case KEY_END: {
+        // A page up/down moves the cursor and the list together, like the editor.
+        if (count == 0) break;
+        const int page = std::max(1, visible_count - 1);
+        int cur = m_project_panel_cursor, top = m_project_panel_scroll;
+        if (ch == KEY_PPAGE)      { cur -= page; top -= page; }
+        else if (ch == KEY_NPAGE) { cur += page; top += page; }
+        else if (ch == KEY_HOME)  { cur = 0; }
+        else                      { cur = count - 1; }
+        cur = std::clamp(cur, 0, count - 1);
+        top = std::clamp(top, 0, std::max(0, count - visible_count));
+        if (cur < top) top = cur;
+        if (cur >= top + visible_count) top = cur - visible_count + 1;
+        m_project_panel_cursor = cur;
+        m_project_panel_scroll = top;
+        break;
+    }
     case KEY_ENTER:
     case 10:
     case 13:
-        if (m_project_panel_cursor < count)
+    case ' ':
+        if (m_project_panel_cursor >= count) break;
+        if (entries[m_project_panel_cursor].kind == PanelEntry::TARGET_HEADER) {   // fold / unfold
+            const PanelEntry& e = entries[m_project_panel_cursor];
+            setPanelFolded(e.target_idx, !e.collapsed);
+        } else if (ch != ' ') {
             openProjectPanelFile(m_project_panel_cursor);
+        }
         break;
+    case KEY_LEFT: {
+        // On a target: fold it. On a source: go to its target.
+        if (m_project_panel_cursor >= count) break;
+        const PanelEntry& e = entries[m_project_panel_cursor];
+        if (e.kind == PanelEntry::TARGET_HEADER) {
+            if (!e.collapsed) setPanelFolded(e.target_idx, true);
+        } else if (e.kind == PanelEntry::SOURCE_FILE) {
+            for (int i = m_project_panel_cursor; i >= 0; --i)
+                if (entries[i].kind == PanelEntry::TARGET_HEADER) { m_project_panel_cursor = i; break; }
+            projectPanelKeepCursorVisible();
+        }
+        break;
+    }
+    case KEY_RIGHT: {
+        // On a folded target: unfold it. On an open one: go to its first source.
+        if (m_project_panel_cursor >= count) break;
+        const PanelEntry& e = entries[m_project_panel_cursor];
+        if (e.kind != PanelEntry::TARGET_HEADER) break;
+        if (e.collapsed) {
+            setPanelFolded(e.target_idx, false);
+        } else if (m_project_panel_cursor + 1 < count &&
+                   entries[m_project_panel_cursor + 1].kind == PanelEntry::SOURCE_FILE) {
+            ++m_project_panel_cursor;
+            projectPanelKeepCursorVisible();
+        }
+        break;
+    }
+    case '+': setPanelFolded(-1, false); break;   // unfold all
+    case '-': setPanelFolded(-1, true);  break;   // fold all
     case KEY_DC: {
         if (m_project_panel_cursor >= count) break;
         const PanelEntry& e = entries[m_project_panel_cursor];

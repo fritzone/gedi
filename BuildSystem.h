@@ -71,8 +71,11 @@ public:
 
     std::vector<std::string> getClangArguments(EditorBuffer& buffer);
     // Thread-safe overload: call this from background threads.
+    // run_guess = false: the cguess.py result only when it is cached already
+    // (the guess can take many seconds the first time; an outline needs none of it).
     std::vector<std::string> getClangArguments(const std::string& filename,
-                                               const CompilerSettings& settings);
+                                               const CompilerSettings& settings,
+                                               bool run_guess = true);
     std::string guessCompileCommand(const std::string& filename);
     std::string get_full_compile_command(const std::string& base_command, const CompilerSettings& settings);
 

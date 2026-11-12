@@ -1,5 +1,6 @@
 #include "GediProject.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -49,6 +50,7 @@ bool GediProject::save() const
     for (const auto& a : aux_build_files) f << "aux_build_file: " << a << "\n";
     for (const auto& d : include_dirs)    f << "include_dir: "    << d << "\n";
     for (const auto& d : defines)         f << "define: "         << d << "\n";
+    if (panel_width > 0) f << "panel_width: " << panel_width << "\n";
 
     // Save targets (new format)
     for (const auto& tgt : targets) {
@@ -154,6 +156,9 @@ bool GediProject::load(const std::string& path, GediProject& out)
             else if (key == "aux_build_file") proj.aux_build_files.push_back(val);
             else if (key == "include_dir")    proj.include_dirs.push_back(val);
             else if (key == "define")         proj.defines.push_back(val);
+            else if (key == "panel_width") {
+                try { proj.panel_width = std::max(0, std::stoi(val)); } catch (...) {}
+            }
             else if (key == "cpp_standard") {
                 proj.cpp_standard = val;
                 proj.compiler_settings.cpp_standard = val;  // legacy compat

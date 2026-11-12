@@ -90,6 +90,28 @@ Return to [[main|Main Menu]].
 **Go To Line:**
 * Jump directly to a specific line number via **Alt+S -> G**.
 
+**Find in Files (Alt+F7):**
+Searches many files at once and lists every line that matches.
+* **Text to find** starts with the word under the cursor (or the selection); typing replaces it.
+* **Options**: **Match case**, **Whole words**, **Regular expression** (ECMAScript syntax, e.g. `TIMER_C(LO|HI)`).
+* **Where**: **Project files** (the project's sources, headers and makefiles), **Project folder** (every text file under the project's folder, except `build/`, `builddir/`, `cmake-build-*` and hidden folders), or **Open windows**. Without a project, **Current folder** searches the current file's folder.
+* Files open in a window are searched as they are there, unsaved changes included. Binary files and files over 16 MB are skipped; the list stops at 10000 lines.
+* **Enter** searches from anywhere in the dialog; **Space** ticks the boxes.
+In the results: **Enter** goes to the match and closes the list, **Space** shows it in the editor and keeps the list, **Up/Down/PgUp/PgDn/Home/End** move, **Esc** closes.
+
+**Quick Open (Ctrl+P):**
+Opens a file by typing a few letters of its name.
+* The letters are matched in order anywhere in the path, so `intpod` finds `basic/interp_pod.c`. Matches in the file name, at word starts and in runs rank first.
+* Type `name:120` to open the file at line 120.
+* The list holds the open windows (marked •), the recent files, the project's files and everything else under the project's folder.
+* **Up/Down/PgUp/PgDn** choose, **Enter** or a click opens, **Esc** cancels.
+
+**Go to Symbol (Ctrl+T):**
+Lists what the current file declares and jumps to the one you pick - type a few letters of its name to narrow the list, as in Quick Open.
+* C and C++: functions, methods, constructors, classes, structs, unions, enums, namespaces, global and static variables, fields, type aliases and macros, each with its kind and the namespace or class it is in. A function declared and defined in the file is listed once, at its definition.
+* Makefiles: targets. Assembly: labels. CMake: functions, macros and targets.
+* The list is usually ready at once (from the background parse used for Advanced highlighting); otherwise the file is read quickly on its own first. What you type meanwhile is kept.
+
 Return to [[main|Main Menu]].
 
 [building]
@@ -99,6 +121,7 @@ Gedi uses automatic build detection via an integrated build system and `cguess.p
 
 * **Compile Only** (**Shift+F9**): Builds the current file and shows the output.
 * **Compile and Run** (**F9**): Builds and immediately executes the program if successful.
+* **Project > Run**: Runs one of the project's programs (a sub-menu lists them when there are several). Only that program and what it needs are built, so an error in another program does not stop it - **F9** still builds the whole project. An imported makefile builds the program alone when it has a rule for it; a program it leaves to a sub-make builds everything.
 
 **Build Output:**
 If compilation fails, the output window will highlight errors. You can navigate through the output and press **Enter** on an error message to jump directly to that line in your code.
@@ -525,7 +548,10 @@ Return to [[main|Main Menu]] or see [[project_panel|Project Panel]].
 The Project Panel is a side panel that displays your project's structure and lets you navigate its files quickly.
 
 **Toggling the Panel:**
-* Press **Alt+0** to show or hide the Project Panel.
+* Press **Alt+0** to show the Project Panel: it opens at the file you are editing, its target unfolded. With the panel open and the editor in use, **Alt+0** goes back to the panel, again at the current file; pressed in the panel, it hides it.
+* **Project > Show File in Panel** does the same from the menu. A file listed in several targets: choose it again to go to the next one.
+* Press **Ctrl+F5** to resize it: **Left**/**Right** make it narrower or wider (**Shift** for 5 columns at a time, **Home**/**End** for the narrowest/widest), and the editor next to it follows. **Enter** keeps the new width, **Esc** puts the old one back. The width is saved in the project's `.gproj` file.
+* Or drag the panel's right border with the mouse: the editor follows as you drag, and the width you release at is kept (and saved the same way).
 * The panel requires an open project; it will show a message if no project is loaded.
 
 **Panel Structure:**
@@ -536,13 +562,25 @@ The panel shows three levels:
 
 **Navigation:**
 * **Up/Down arrow keys**: Move the cursor through the list.
+* **PgUp/PgDn**: Move a page up or down. **Home/End**: Go to the first or last entry.
 * **Enter**: Open the highlighted file in the editor.
 * **Tab**: Move focus back to the editor without closing the panel.
 * **Escape**: Close the Project Panel.
 
+While the panel has the focus, the status bar shows the keys that work on the highlighted entry.
+
+**Folding Targets:**
+A target's files can be folded away, so a large project fits in the panel. A folded target shows **+** before its name, an open one **-**.
+* **Enter** or **Space** on a target: Fold or unfold it.
+* **Left**: Fold the target; on a source file, go to its target. **Right**: Unfold the target; on an open target, go to its first file.
+* **+** / **-**: Unfold or fold all targets.
+* **Mouse**: Click the **+**/**-** marker, or double-click the target's name.
+* A project whose list doesn't fit in the panel starts with all its targets folded.
+
 **Editing the Project:**
 * **Del**: Remove the selected item. Selecting a source file removes it from its target (with confirmation). Selecting a target removes it and all its sources (with confirmation). The build file cannot be removed.
 * **M**: Move the selected source file to a different target. A picker lets you choose the destination target.
+* **Ins**: Add a new or existing file to the target under the cursor (on a build file, a picker asks which target). The file name offered is in the folder of the highlighted file. The new file opens in the editor and the panel shows it.
 
 All changes are saved to the `.gproj` file and the build file on disk immediately.
 
@@ -658,9 +696,12 @@ DEL       - Delete Fwd
 **Search & Navigation**
 Ctrl+F   - Find (inline)  Ctrl+R   - Replace Dialog
 Alt+S->G - Go To Line     F12      - Go to Definition
+Alt+F7   - Find in Files  Ctrl+P   - Quick Open
+Ctrl+T   - Go to Symbol
 
 **Project**
 Alt+0    - Toggle Project Panel
+Ctrl+F5  - Resize Project Panel
 
 **Build & Run**
 Alt+F9   - Compile Only  Ctrl+F9  - Compile & Run

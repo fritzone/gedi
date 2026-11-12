@@ -4,6 +4,7 @@
 #include "utils.h"
 
 #include <clang-c/Index.h>
+#include "ClangOutline.h"
 #include <thread>
 #include <memory>
 #include <cstdint>
@@ -281,6 +282,9 @@ void ClangHighlighter::requestHighlight(EditorBuffer& buffer, BuildSystem* build
                 },
                 def_map.get());
 
+            // The file's outline, for Go to Symbol.
+            auto outline_syms = std::make_shared<std::vector<OutlineSymbol>>(outline::fromTranslationUnit(tu));
+
             // Collect errors/warnings for the main file (inline diagnostics).
             // Split the parsed snapshot into lines so point-diagnostics (those with
             // no source range) can be widened to cover their whole identifier token.
@@ -357,6 +361,7 @@ void ClangHighlighter::requestHighlight(EditorBuffer& buffer, BuildSystem* build
                     cache->definition_map[name] = std::move(defs);
                 cache->has_diagnostics.store(!diags->empty());
                 cache->diagnostics = std::move(diags);
+                cache->outline = std::move(outline_syms);
             }
         }
         cache->in_progress.store(false);

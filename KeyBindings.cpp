@@ -52,6 +52,9 @@ void KeyBindings::loadDefaults() {
     addBinding(EditorAction::ACT_GOTO_LINE, -1, "");
     addBinding(EditorAction::ACT_GO_TO_DEFINITION, KEY_F(12), "F12");
     addBinding(EditorAction::ACT_FIND_REFERENCES,  KEY_F(24), "Shift+F12");
+    addBinding(EditorAction::ACT_FIND_IN_FILES,    KEY_ALT(KEY_F(7)), "Alt+F7");
+    addBinding(EditorAction::ACT_QUICK_OPEN,       CTRL('P'), "Ctrl+P");
+    addBinding(EditorAction::ACT_GO_TO_SYMBOL,     CTRL('T'), "Ctrl+T");
     addBinding(EditorAction::ACT_COMPILE, KEY_ALT(KEY_F(9)), "Alt+F9"); 
     addBinding(EditorAction::ACT_RUN, -1, "");   // run/go is the debugger's Ctrl+F9 (Turbo-style)
     addBinding(EditorAction::ACT_COMPILE_OPTIONS, -1, "");
@@ -65,6 +68,8 @@ void KeyBindings::loadDefaults() {
     addBinding(EditorAction::ACT_ABOUT, -1, "");
     addBinding(EditorAction::ACT_TOGGLE_COMMENT, KEY_CTRL_SLASH, "Ctrl+/");
     addBinding(EditorAction::ACT_TOGGLE_PROJECT_PANEL, KEY_ALT('0'), "Alt+0");
+    addBinding(EditorAction::ACT_RESIZE_PROJECT_PANEL, CTRLF(5), "Ctrl+F5");
+    addBinding(EditorAction::ACT_SHOW_IN_PROJECT_PANEL, -1, "");   // menu (and Alt+0)
     addBinding(EditorAction::ACT_CLOSE_PROJECT, -1, "");
     addBinding(EditorAction::ACT_PROJECT_PROPERTIES, -1, "");
     addBinding(EditorAction::ACT_AUTOCOMPLETE, KEY_CTRL_SPACE, "Ctrl+Space");

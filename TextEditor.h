@@ -21,6 +21,7 @@
 #include "CompletionEngine.h"
 #include "debugger/Debugger.h"
 #include "MessageDialog.h"
+#include "FindInFilesDialog.h"
 #include <map>
 #include <set>
 #include "AboutDialog.h"
@@ -46,6 +47,7 @@ struct PanelEntry {
     std::string display;
     int target_idx = -1;  // index into GediProject::targets
     int source_idx = -1;  // index into ProjectTarget::sources
+    bool collapsed = false; // TARGET_HEADER: its sources are folded away
 };
 
 struct ViewState {
@@ -56,7 +58,12 @@ struct ViewState {
 
 class TextEditor final {
 private:
-    static constexpr int PANEL_W = 30;  // project panel width including borders
+    // Project panel width including borders: the project's own (resized with
+    // Ctrl+F5) or the default, always leaving the editor MIN_EDITOR_W columns.
+    static constexpr int DEFAULT_PANEL_W = 30;
+    static constexpr int MIN_PANEL_W     = 16;
+    static constexpr int MIN_EDITOR_W    = 20;
+    int panelWidth() const;
 
     bool main_loop_running = true;
 
@@ -189,12 +196,23 @@ private:
     int m_compile_output_cursor_pos = 0;
     ViewState m_pre_compile_view_state;
 
-    // Find All References panel
+    // Results pane: Find All References and Find in Files
     bool m_refs_visible = false;
     std::vector<CompileMessage> m_refs_lines;
+    std::vector<std::pair<int, int>> m_refs_hl;   // per line: the match in full_text (start, length)
     int  m_refs_scroll_pos = 0;
     int  m_refs_cursor_pos = 0;
     std::string m_refs_token;
+    std::string m_refs_title;                     // the pane's title
+    void showResultLine(const CompileMessage& msg);   // open msg's file there, line in view
+
+    // Find in Files (Alt+F7) and Quick Open (Ctrl+P); the last choices are kept
+    FindInFilesOptions m_fif_opts;
+    void FindInFiles();
+    void QuickOpen();
+    void GoToSymbol();                            // Ctrl+T: the current file's outline
+    int                m_fif_scope_kind = 0;      // the place last searched (FindInFiles' Scope)
+    std::string wordOrSelectionAtCursor();        // to start a search with
 
     // Empty-desktop maze (generated once, stable between redraws)
     std::vector<uint8_t> m_desktop_maze;
@@ -330,7 +348,17 @@ private:
     std::string unavailableReason(EditorAction action) const;
     // Shows the reason and returns true when `action` is unavailable.
     bool refuseForProject(EditorAction action);
-    void AddFileToProject();
+    // Adds a new or existing file to a target: `target_idx` < 0 asks which one;
+    // the file name offered starts in `start_dir` (default: the project root).
+    // Returns the target and the path relative to the root it was added as.
+    bool AddFileToProject(int target_idx = -1, const std::string& start_dir = {},
+                          int* added_target = nullptr, std::string* added_rel = nullptr);
+    void addFileFromProjectPanel();   // Insert in the project panel
+    // The current file in the project panel: its target unfolded, the cursor on
+    // it. `next`: the next place it is listed (a file in several targets).
+    // False when the project does not list it.
+    bool revealFileInPanel(bool next);
+    void ShowFileInProjectPanel();    // Project > Show File in Panel
     void DoNew();
     void selectfile();
     void OpenFileBrowser();
@@ -401,6 +429,28 @@ private:
     int  m_project_panel_scroll  = 0;
     ScrollBar m_panel_bar;           // in the project panel's last column, when it is longer
     void projectPanelScrollTo(int top);
+    // Folded targets, by name: their sources are hidden in the panel. Set up
+    // once per project (initPanelFolding): all folded when the full list is
+    // longer than the panel.
+    std::set<std::string> m_panel_collapsed;
+    std::string           m_panel_fold_project;   // project file the folding belongs to
+    void initPanelFolding();
+    // Fold / unfold one target (ti) or all of them (ti = -1); the cursor stays
+    // on the target it was in.
+    void setPanelFolded(int ti, bool folded);
+    int  projectPanelVisibleRows() const { return m_text_area_end_y - m_text_area_start_y + 1; }
+    void projectPanelKeepCursorVisible();
+    // Resizing the panel (Ctrl+F5): Left/Right change the width, the editor
+    // follows; Enter keeps it (saved in the .gproj), Esc puts the old one back.
+    bool m_panel_resizing    = false;
+    int  m_panel_resize_orig = 0;     // the project's panel_width before resizing
+    void StartPanelResize();
+    void handlePanelResizeKey(wint_t ch);
+    void finishPanelResize(bool keep);
+    // Dragging the panel's right border with the mouse does the same: the
+    // width follows the pointer, the release keeps it.
+    bool m_panel_dragging = false;
+    void savePanelWidth();            // into the .gproj, when it changed (m_panel_resize_orig)
 
     // Bracket-match flash: set by handleSmartBlockClose, consumed by drawTextArea
     Line* m_flash_match_line = nullptr;

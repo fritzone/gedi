@@ -38,6 +38,9 @@ enum class EditorAction {
     ACT_GOTO_LINE,         // Search > Go To Line           - opens go-to-line dialog
     ACT_GO_TO_DEFINITION,  // Search > Go To Definition / F12 - jumps to symbol via libclang
     ACT_FIND_REFERENCES,   // Search > Find All References / Shift+F12 - lists every occurrence of token
+    ACT_FIND_IN_FILES,     // Search > Find in Files / Alt+F7 - searches the project's files
+    ACT_QUICK_OPEN,        // Search > Quick Open / Ctrl+P    - opens a file by part of its name
+    ACT_GO_TO_SYMBOL,      // Search > Go to Symbol / Ctrl+T  - the current file's outline
 
     //  Run menu 
     ACT_COMPILE,           // Run > Compile / Alt+F9        - builds without running
@@ -50,6 +53,8 @@ enum class EditorAction {
     ACT_PREV_BUFFER,       // Window > Previous Window / Shift+F6 - switches to previous buffer
     ACT_CLOSE_BUFFER,      // Window > Close Window / Ctrl+W - closes the active buffer
     ACT_TOGGLE_PROJECT_PANEL, // Window > Project Panel / Alt+0 - shows/hides the project panel
+    ACT_RESIZE_PROJECT_PANEL, // Ctrl+F5 - resize the project panel with Left/Right (Turbo "Size")
+    ACT_SHOW_IN_PROJECT_PANEL,// Project > Show File in Panel - the current file in the project panel
 
     //  Options menu 
     ACT_SETTINGS,          // Options > Editor Settings...  - opens the settings dialog
@@ -124,7 +129,12 @@ class KeyBindings {
         ActionMapping{EditorAction::ACT_TOGGLE_COMMENT,     "toggle_comment"},
         ActionMapping{EditorAction::ACT_GO_TO_DEFINITION,   "go_to_definition"},
         ActionMapping{EditorAction::ACT_FIND_REFERENCES,    "find_references"},
+        ActionMapping{EditorAction::ACT_FIND_IN_FILES,      "find_in_files"},
+        ActionMapping{EditorAction::ACT_QUICK_OPEN,         "quick_open"},
+        ActionMapping{EditorAction::ACT_GO_TO_SYMBOL,       "go_to_symbol"},
         ActionMapping{EditorAction::ACT_TOGGLE_PROJECT_PANEL,"toggle_project_panel"},
+        ActionMapping{EditorAction::ACT_RESIZE_PROJECT_PANEL,"resize_project_panel"},
+        ActionMapping{EditorAction::ACT_SHOW_IN_PROJECT_PANEL,"show_in_project_panel"},
         ActionMapping{EditorAction::ACT_CLOSE_PROJECT,      "close_project"},
         ActionMapping{EditorAction::ACT_PROJECT_PROPERTIES, "project_properties"},
         ActionMapping{EditorAction::ACT_AUTOCOMPLETE,       "autocomplete"},

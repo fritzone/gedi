@@ -64,6 +64,9 @@ protected:
 
     //  Optional hooks 
     virtual HandleResult onKey(wint_t ch) { (void)ch; return HandleResult::CONTINUE; }
+    // Sees every key (not Esc / Alt+key) before the dialog handles it; true =
+    // consumed. E.g. a pre-filled field whose first typed key replaces it.
+    virtual bool onKeyFirst(wint_t ch) { (void)ch; return false; }
 
     // Called from placeCursor before the default logic runs.
     // Return true to take over cursor placement (hides/shows cursor yourself).

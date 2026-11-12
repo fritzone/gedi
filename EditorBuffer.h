@@ -18,6 +18,16 @@ struct SymbolDef {
     unsigned    col  = 0;
 };
 
+// One entry of a file's outline (Search > Go to Symbol): a function, class,
+// global, macro... declared in the file itself.
+struct OutlineSymbol {
+    std::string name;
+    std::string kind;    // "function", "class", "macro", "target", ...
+    std::string scope;   // enclosing namespaces / classes ("ns::Cls"), may be empty
+    unsigned    line = 0;
+    unsigned    col  = 0;
+};
+
 // A compiler diagnostic (error/warning) located in THIS buffer's file, produced
 // by the background libclang parse. Columns are 1-based; the span [col_start,
 // col_end) is clamped to the diagnostic's line.
@@ -44,6 +54,8 @@ struct SemanticCache {
     // Symbol name → all definition locations visible in this TU (non-system only).
     // Populated by ClangHighlighter; read by GoToDefinition for instant lookup.
     std::unordered_map<std::string, std::vector<SymbolDef>> definition_map;
+    // The file's outline from the last parse (ClangOutline), for Go to Symbol.
+    std::shared_ptr<std::vector<OutlineSymbol>> outline;
     // Errors/warnings in this file from the last parse (lock-free snapshot via ptr).
     std::shared_ptr<std::vector<Diagnostic>> diagnostics;
     std::atomic<bool>  has_diagnostics{false};   // lock-free "any diagnostics?" flag

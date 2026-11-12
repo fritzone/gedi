@@ -91,6 +91,10 @@ set(GEDI_COMMON_SOURCES
     ProjectPropertiesDialog.cpp
     TargetDialog.cpp
     PickTargetDialog.cpp
+    FileSearch.cpp
+    FindInFilesDialog.cpp
+    QuickOpenDialog.cpp
+    ClangOutline.cpp
     utils.cpp
     TemplateEngine.cpp
     DialogBase.cpp
@@ -100,6 +104,14 @@ set(GEDI_COMMON_SOURCES
     debugger/DebuggerFactory.cpp
     debugger/GdbDebugger.cpp
 )
+
+# Find in Files runs std::regex over every line of a project; unoptimised, the
+# regex templates instantiated here are ~7x slower (seconds on a large tree).
+# Optimise this one file whatever the build type. (Not MSVC: /O2 clashes with
+# the /RTC1 checks of its Debug builds.)
+if(NOT MSVC)
+    set_source_files_properties(FileSearch.cpp PROPERTIES COMPILE_OPTIONS "-O2")
+endif()
 
 # Helper that copies the runtime data files next to a freshly built target.
 function(copy_data_files target)

@@ -187,7 +187,7 @@ DialogResult DialogBase::run(Renderer& renderer)
                 hr = groups_.empty() ? dispatchAltKey(next)
                                      : dispatchGroupAltKey(next);
             }
-        } else {
+        } else if (!onKeyFirst(ch)) {
             hr = groups_.empty() ? dispatchKey(ch)
                                  : dispatchGroupKey(ch);
         }
